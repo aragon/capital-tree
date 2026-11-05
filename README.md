@@ -228,7 +228,7 @@ Leaves extend `LeafAction`: they spend their whole input and output nothing.
 |---|---|---|
 | `TransferAction` | Sends the input to a fixed recipient | The recipient's balance rose by the amount |
 | `TransferToBeneficiaryAction` | Sends the input to the flow's beneficiary; reverts if none was set | Same as above |
-| `BurnAction` | Calls `burn(amount)` on an `ERC20Burnable` token; rejects native ETH | The plugin's balance check |
+| `BurnAction` | Calls `burn(amount)` on an `ERC20Burnable` token; rejects native ETH | The DAO's balance dropped by the amount |
 | `KeepAction` | Nothing: the input stays in the DAO, so keeping funds is an explicit choice | — |
 
 The transfer check catches tokens that return `false` instead of reverting. Fee-on-transfer and

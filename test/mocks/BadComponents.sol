@@ -90,3 +90,14 @@ contract FalseReturnToken is ERC20 {
         return super.transfer(_to, _amount);
     }
 }
+
+/// @notice Accepts unknown calls in its fallback, like WETH9, so `burn(uint256)` succeeds without burning
+contract FallbackToken is ERC20 {
+    constructor() ERC20("Fallback", "FALLBACK") {}
+
+    function mint(address _to, uint256 _amount) external {
+        _mint(_to, _amount);
+    }
+
+    fallback() external {}
+}

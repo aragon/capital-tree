@@ -15,7 +15,7 @@ import {KeepAction} from "../src/actions/KeepAction.sol";
 import {Input, Movement} from "../src/lib/types.sol";
 import {NATIVE} from "../src/lib/tokens.sol";
 import {Fixture} from "./helpers/Fixture.sol";
-import {FalseReturnToken} from "./mocks/BadComponents.sol";
+import {FalseReturnToken, FallbackToken} from "./mocks/BadComponents.sol";
 
 contract LeafActionsTest is Fixture {
     BalanceBudget internal budget;
@@ -83,6 +83,26 @@ contract LeafActionsTest is Fixture {
         _plugin.trigger(noData);
 
         assertEq(tokenA.totalSupply(), _supply - DAO_A);
+    }
+
+    function test_BurnPostconditionMeasuresTheDao() public view {
+        Movement memory _movement = Movement(tokenA, 7 ether, tokenA, 0, address(0));
+
+        Action[] memory _checks = burn.postconditions(address(0), _movement);
+
+        assertEq(_checks.length, 1);
+        assertEq(_checks[0].to, address(burn));
+        assertEq(_checks[0].data, abi.encodeCall(BurnAction.assertBurned, (IERC20(tokenA), DAO_A - 7 ether)));
+    }
+
+    function test_RevertWhen_TheTokenIgnoresBurn() public {
+        FallbackToken _token = new FallbackToken();
+        _token.mint(address(dao), 100 ether);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_token))), _one(burn));
+
+        // Action 0 is the burn (a no-op), action 1 the postcondition, which catches it
+        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
+        _plugin.trigger(noData);
     }
 
     function test_RevertWhen_BurningNativeEth() public {
