@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
@@ -11,6 +12,7 @@ import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetu
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
+import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
@@ -22,6 +24,7 @@ import {Deploy} from "../script/Deploy.s.sol";
 import {Recipes} from "../script/Recipes.sol";
 import {Fixture, METADATA_URIS} from "./helpers/Fixture.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
+import {CapSplitter} from "./mocks/MockSplitter.sol";
 
 contract CapitalPipelinePluginSetupTest is Fixture {
     ComponentRegistry internal registry;
@@ -84,6 +87,32 @@ contract CapitalPipelinePluginSetupTest is Fixture {
 
         assertEq(tokenA.balanceOf(alice), 9.5 ether);
         assertEq(tokenA.balanceOf(bob), 0.5 ether);
+    }
+
+    /// A payroll whose branch caps alice at 3 A with a splitter (a recipe component) instead of weights
+    function test_InstallsASplitter() public {
+        dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
+        registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
+        CapitalPipelinePluginSetup.InstallParams memory _params =
+            Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights());
+        CapitalPipelinePluginSetup.Component[] memory _components = new CapitalPipelinePluginSetup.Component[](4);
+        for (uint256 i; i < 3; ++i) {
+            _components[i] = _params.components[i];
+        }
+        _components[3] = CapitalPipelinePluginSetup.Component(
+            "CapSplitter@1", abi.encodeCall(CapSplitter.initialize, (IDAO(DAO_REF), 3 ether))
+        );
+        _params.components = _components;
+        _params.nodes[0].weights = new uint32[](0);
+        _params.nodes[0].splitter = ISplitter(ref(3));
+
+        (CapitalPipelinePlugin _plugin, address[] memory _helpers) = _install(_params);
+        vm.warp(block.timestamp + EPOCH);
+        _plugin.trigger(noData);
+
+        assertEq(address(_plugin.nodes()[0].splitter), _helpers[3]);
+        assertEq(tokenA.balanceOf(alice), 3 ether);
+        assertEq(tokenA.balanceOf(bob), RATE - 3 ether);
     }
 
     // =========================================================================================

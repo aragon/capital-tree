@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
+import {ISplitter} from "../interfaces/ISplitter.sol";
 
 /// @notice What a node receives: the budget at the root, a share of its parent's output elsewhere
 /// @param beneficiary Who the amount belongs to, once an action sets it (a Merkle claim).
@@ -28,9 +29,13 @@ struct Movement {
 ///        children): the node then passes its input to its children unchanged.
 /// @param children Indexes of the child nodes, each greater than this node's index. None makes
 ///        the node a leaf, whose action must output nothing.
-/// @param weights One per child when there are 2+ children, summing to RATIO_BASE. Empty otherwise.
+/// @param weights One per child when there are 2+ children, summing to RATIO_BASE. Empty otherwise,
+///        or when a splitter divides the output.
+/// @param splitter Divides the output among 2+ children when the flow runs, in place of weights.
+///        address(0) for fixed weights.
 struct Node {
     INodeAction action;
     uint32[] children;
     uint32[] weights;
+    ISplitter splitter;
 }

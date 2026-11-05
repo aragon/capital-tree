@@ -1,8 +1,8 @@
 # Capital Pipeline
 
 Aragon OSx plugin that runs one treasury flow per install: a **budget** feeding a **tree of
-actions**. Every node passes its output to its children, split by fixed weights when there are
-several, and every branch ends in a leaf that consumes what it receives (transfer, burn, keep).
+actions**. Every node passes its output to its children, split by fixed weights or a splitter when
+there are several, and every branch ends in a leaf that consumes what it receives (transfer, burn, keep).
 Each node runs in its own `dao.execute`, followed by balance checks, so a node can only ever spend
 what the budget released or what its parent really produced.
 
@@ -29,10 +29,11 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 | Term | Meaning |
 |---|---|
 | **Budget** | How much of one token the flow may spend right now. Read once at the start of a trigger, committed once at the end. |
-| **Node** | One step of the tree: an action, its children, and the weights that split its output among them. Node 0 is the root and receives the budget. |
+| **Node** | One step of the tree: an action, its children, and how its output is split among them (weights or a splitter). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
 | **Leaf** | A node without children. Its action consumes its whole input and outputs nothing. |
+| **Splitter** | A contract that divides a branch's output among its children when the flow runs, in place of fixed weights. It only returns amounts: the children stay nodes of the tree. |
 
 Amounts move down the tree as two structs:
 
@@ -68,14 +69,15 @@ sequenceDiagram
         Action-->>Plugin: check actions
         Plugin->>DAO: execute(actions, then checks)
         Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
-        Note over Plugin: split outAmount among the children by weight
+        Note over Plugin: split outAmount among the children (weights or splitter)
     end
     Plugin->>Budget: commitActions()
     Plugin->>DAO: execute(commit actions)
 ```
 
 Any failure reverts the whole trigger: a flow never runs halfway. When a node has several
-children, the rounding remainder of the split goes to the child with the largest weight.
+children, the rounding remainder of the split goes to the child with the largest weight. A
+splitter can give a child nothing, which skips it.
 
 ### What the plugin enforces
 
@@ -86,14 +88,15 @@ When a node runs:
 3. Once an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more.
+6. A splitter returns one amount per child, adding up to the node's output. Only a splitter can give a child nothing (the child is skipped); any other empty input reverts.
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
 1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
 2. A node without an action has at least 2 children.
-3. Weights appear only on nodes with 2+ children: one per child, none zero, summing to 1,000,000.
+3. A node with 2+ children splits by weights (one per child, none zero, summing to 1,000,000) or by a splitter, never both. Other nodes have neither.
 4. An action bound to a budget (OpenFill, MerkleClaim) must be fed by that same budget: the root, or a node below branches without an action.
-5. The budget and every action are clones bound to this plugin's DAO.
+5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 
 ## Components
 
@@ -233,6 +236,30 @@ Leaves extend `LeafAction`: they spend their whole input and output nothing.
 
 The transfer check catches tokens that return `false` instead of reverting. Fee-on-transfer and
 rebasing tokens fail it by design.
+
+### Splitters
+
+A branch can divide its output with a splitter instead of fixed weights, for shares that depend on
+the run: a cap for the first child, a top-up to a target balance, shares that change over time.
+
+```solidity
+interface ISplitter {
+    function split(address caller, Movement calldata movement, uint256 childCount)
+        external view returns (uint256[] memory amounts);
+}
+```
+
+- **Amounts only:** one per child, in the order of the node's children. A splitter can't pick
+  other nodes, so the tree's shape stays what `setFlow` checked.
+- **Checked by the plugin:** the amounts must add up to the node's output (`InvalidSplit`).
+- **Skipping:** a child that gets 0 doesn't run. With fixed weights, a share that rounds to zero
+  still reverts.
+- **View only:** a split changes no state.
+- **Setters:** a splitter with its own setters gives its shares to whoever the recipe grants that
+  permission. With fixed weights, only the DAO can change the shares.
+
+No splitter ships yet: one is a component like any other (a clone bound to the DAO, registered in
+the `ComponentRegistry`, referenced as `ref(i)` in a recipe).
 
 ## Example flows
 

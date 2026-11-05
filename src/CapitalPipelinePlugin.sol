@@ -12,6 +12,7 @@ import {
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "./interfaces/IBudget.sol";
 import {INodeAction} from "./interfaces/INodeAction.sol";
+import {ISplitter} from "./interfaces/ISplitter.sol";
 import {Input, Movement, Node} from "./lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
@@ -25,11 +26,12 @@ import {tokenBalance, isToken} from "./lib/tokens.sol";
 /// @title CapitalPipelinePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget is read once; the root
 ///         node takes up to what it allows; every node passes its output to its children (split by
-///         fixed weights when there are several); leaves consume what they receive (transfer, burn,
-///         keep). The budget commits once, after the whole tree ran.
-/// @dev Every node must succeed: a node fed by the budget (the root, or one below branches without
-///      an action) takes a non-zero amount, every other node takes exactly its input, and leaves
-///      output nothing. Anything else reverts the whole trigger.
+///         fixed weights or a splitter when there are several); leaves consume what they receive
+///         (transfer, burn, keep). The budget commits once, after the whole tree ran.
+/// @dev Every node that receives something must succeed: a node fed by the budget (the root, or one
+///      below branches without an action) takes a non-zero amount, every other node takes exactly
+///      its input, and leaves output nothing. Anything else reverts the whole trigger. Only a
+///      splitter can give a child nothing, which skips it.
 ///      Each node with an action is built (view) right after its parent ran and executes in its
 ///      own `dao.execute`, followed by balance checks: the DAO spent no more than the node's input
 ///      and received at least its declared output. Recipient checks are the actions' own postconditions.
@@ -58,6 +60,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error InvalidChild(uint256 nodeIndex, uint256 childIndex);
     error UnreachableNode(uint256 nodeIndex);
     error InvalidWeights(uint256 nodeIndex);
+    error InvalidSplitter(uint256 nodeIndex);
     error BudgetMismatch(uint256 nodeIndex);
 
     // Trigger errors
@@ -66,6 +69,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error InputTokenMismatch(uint256 nodeIndex);
     error InAmountExceedsInput(uint256 nodeIndex, uint256 inAmount, uint256 input);
     error NodeIncomplete(uint256 nodeIndex, uint256 inAmount, uint256 input);
+    error InvalidSplit(uint256 nodeIndex);
     error LeafLeftOutput(uint256 nodeIndex, uint256 outAmount);
     error InvalidOutToken(uint256 nodeIndex);
     error BeneficiaryChanged(uint256 nodeIndex);
@@ -126,12 +130,16 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             _movement = _runAction(_index, _node.action, _input, _nodeData, _node.children.length == 0, _callNonce);
         }
 
-        _runChildren(_node, _movement, _data, _callNonce);
+        _runChildren(_index, _node, _movement, _data, _callNonce);
     }
 
-    function _runChildren(Node storage _node, Movement memory _movement, bytes[] calldata _data, uint256 _callNonce)
-        internal
-    {
+    function _runChildren(
+        uint256 _index,
+        Node storage _node,
+        Movement memory _movement,
+        bytes[] calldata _data,
+        uint256 _callNonce
+    ) internal {
         uint256 _count = _node.children.length;
         if (_count == 0) return;
         if (_count == 1) {
@@ -139,8 +147,13 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             return;
         }
 
-        uint256[] memory _amounts = _weighted(_movement.outAmount, _node.weights);
+        ISplitter _splitter = _node.splitter;
+        bool _custom = address(_splitter) != address(0);
+        uint256[] memory _amounts =
+            _custom ? _split(_index, _splitter, _movement, _count) : _weighted(_movement.outAmount, _node.weights);
         for (uint256 k; k < _count; ++k) {
+            // A splitter leaves a child out by giving it nothing
+            if (_custom && _amounts[k] == 0) continue;
             _runNode(_node.children[k], _childInput(_movement, _amounts[k]), _data, _callNonce);
         }
     }
@@ -260,6 +273,22 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _amounts[_largest] += _amount - _assigned;
     }
 
+    /// @dev The splitter's amounts, which must be one per child and add up to the output
+    function _split(uint256 _index, ISplitter _splitter, Movement memory _movement, uint256 _count)
+        internal
+        view
+        returns (uint256[] memory _amounts)
+    {
+        _amounts = _splitter.split(msg.sender, _movement, _count);
+        if (_amounts.length != _count) revert InvalidSplit(_index);
+
+        uint256 _sum;
+        for (uint256 k; k < _count; ++k) {
+            _sum += _amounts[k];
+        }
+        if (_sum != _movement.outAmount) revert InvalidSplit(_index);
+    }
+
     /// @dev Whether node `_index` receives untouched budget tokens, according to the bitmap `_fed`
     function _isBudgetFed(uint256 _fed, uint256 _index) internal pure returns (bool) {
         return (_fed & (1 << _index)) != 0;
@@ -300,6 +329,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             _stored.action = _newNodes[i].action;
             _stored.children = _newNodes[i].children;
             _stored.weights = _newNodes[i].weights;
+            _stored.splitter = _newNodes[i].splitter;
         }
         for (uint256 i = 1; i < _len; ++i) {
             if (!_hasParent[i]) revert UnreachableNode(i);
@@ -311,7 +341,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     }
 
     /// @dev Children come after their parent and have exactly one parent, so the nodes form a tree
-    ///      rooted at node 0 with no cycles. Weights are only for branches and sum to RATIO_BASE.
+    ///      rooted at node 0 with no cycles. A branch splits by weights summing to RATIO_BASE, or by
+    ///      a splitter of this DAO with no weights.
     ///      A bound action must be fed by the flow's budget (bit set in `_fed`). Returns `_fed` with
     ///      this node's children added when it's a branch without an action fed by the budget.
     function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent, uint256 _fed)
@@ -340,6 +371,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (_passesBudgetOn) _fed |= 1 << _child;
         }
 
+        if (address(_node.splitter) != address(0)) {
+            if (_count < 2 || _node.weights.length != 0) revert InvalidSplitter(_index);
+            _checkOwnDao(address(_node.splitter));
+            return _fed;
+        }
         if (_count < 2) {
             if (_node.weights.length != 0) revert InvalidWeights(_index);
             return _fed;

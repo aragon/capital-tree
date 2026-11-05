@@ -14,6 +14,7 @@ import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
+import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {Node} from "../src/lib/types.sol";
 import {CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
@@ -21,6 +22,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
 import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
 import {BadAction} from "./mocks/BadComponents.sol";
+import {CapSplitter, FixedSplitter} from "./mocks/MockSplitter.sol";
 
 contract CapitalPipelinePluginTest is Fixture {
     FundedStreamBudget internal budget;
@@ -423,6 +425,85 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     // =========================================================================================
+    // Splitters
+    // =========================================================================================
+
+    function test_ASplitterDividesABranchOutput() public {
+        CapitalPipelinePlugin _plugin =
+            _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, 30 ether)));
+
+        _plugin.trigger(noData);
+
+        assertEq(tokenA.balanceOf(alice), 30 ether);
+        assertEq(tokenA.balanceOf(bob), DAO_A - 30 ether);
+    }
+
+    /// The splitter sees what the action produced: the 1,000 B of the fill
+    function test_ASplitterDividesAnActionOutput() public {
+        Node[] memory _tree = _splitBy(_capSplitter(dao, 100 ether));
+        _tree[0].action = action;
+        MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
+        tokenB.mint(address(_filler), DEMAND);
+
+        _filler.fillWithoutData();
+
+        assertEq(tokenB.balanceOf(alice), 100 ether);
+        assertEq(tokenB.balanceOf(bob), DEMAND - 100 ether);
+    }
+
+    /// Without the skip, bob's empty leaf would revert with EmptyInput
+    function test_ASplitterSkipsAChildItGivesNothing() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, DAO_A)));
+
+        _plugin.trigger(noData);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A);
+        assertEq(tokenA.balanceOf(bob), 0);
+    }
+
+    function test_RevertWhen_ASplitDoesNotAddUp() public {
+        uint256[] memory _amounts = new uint256[](2);
+        (_amounts[0], _amounts[1]) = (DAO_A / 2, DAO_A / 2 - 1);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplit.selector, 0));
+        _plugin.trigger(noData);
+    }
+
+    function test_RevertWhen_ASplitHasTheWrongLength() public {
+        uint256[] memory _amounts = new uint256[](1);
+        _amounts[0] = DAO_A;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplit.selector, 0));
+        _plugin.trigger(noData);
+    }
+
+    function test_RevertWhen_ASplitterIsNotOnABranch() public {
+        Node[] memory _tree = _chain(_bad(BadAction.Mode.Pass), keep);
+        _tree[0].splitter = _capSplitter(dao, 1);
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
+    }
+
+    function test_RevertWhen_ASplitterComesWithWeights() public {
+        Node[] memory _tree = _fork(NO_ACTION, 500_000, keep, 500_000, keep);
+        _tree[0].splitter = _capSplitter(dao, 1);
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
+    }
+
+    function test_RevertWhen_ASplitterBelongsToAnotherDao() public {
+        ISplitter _foreign = _capSplitter(IDAO(makeAddr("otherDao")), 1);
+
+        _expectInitRevert(
+            budget,
+            _splitBy(_foreign),
+            abi.encodeWithSelector(CapitalPipelinePlugin.ForeignComponent.selector, address(_foreign))
+        );
+    }
+
+    // =========================================================================================
     // Guards
     // =========================================================================================
 
@@ -491,6 +572,31 @@ contract CapitalPipelinePluginTest is Fixture {
         _tree[1] = _leaf(_deployTransfer(alice));
         _tree[2] = _then(action, 3);
         _tree[3] = _leaf(keep);
+    }
+
+    /// @dev A branch without an action, divided by `_splitter` between transfers to alice and bob
+    function _splitBy(ISplitter _splitter) internal returns (Node[] memory _tree) {
+        _tree = new Node[](3);
+        _tree[0].children = new uint32[](2);
+        (_tree[0].children[0], _tree[0].children[1]) = (1, 2);
+        _tree[0].splitter = _splitter;
+        (_tree[1], _tree[2]) = (_leaf(_deployTransfer(alice)), _leaf(_deployTransfer(bob)));
+    }
+
+    function _capSplitter(IDAO _dao, uint256 _cap) internal returns (ISplitter) {
+        return ISplitter(
+            ProxyLib.deployMinimalProxy(
+                address(new CapSplitter()), abi.encodeCall(CapSplitter.initialize, (_dao, _cap))
+            )
+        );
+    }
+
+    function _fixedSplitter(uint256[] memory _amounts) internal returns (ISplitter) {
+        return ISplitter(
+            ProxyLib.deployMinimalProxy(
+                address(new FixedSplitter()), abi.encodeCall(FixedSplitter.initialize, (dao, _amounts))
+            )
+        );
     }
 
     function _expectInitRevert(IBudget _budget, Node[] memory _tree, bytes memory _error) internal {
