@@ -105,12 +105,14 @@ contract CapitalPipelinePluginSetupTest is Fixture {
         _params.components = _components;
         _params.nodes[0].weights = new uint32[](0);
         _params.nodes[0].splitter = ISplitter(ref(3));
+        _params.nodes[2].skipWhenEmpty = true;
 
         (CapitalPipelinePlugin _plugin, address[] memory _helpers) = _install(_params);
         vm.warp(block.timestamp + EPOCH);
         _plugin.trigger(noData);
 
         assertEq(address(_plugin.nodes()[0].splitter), _helpers[3]);
+        assertTrue(_plugin.nodes()[2].skipWhenEmpty);
         assertEq(tokenA.balanceOf(alice), 3 ether);
         assertEq(tokenA.balanceOf(bob), RATE - 3 ether);
     }

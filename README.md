@@ -29,7 +29,7 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 | Term | Meaning |
 |---|---|
 | **Budget** | How much of one token the flow may spend right now. Read once at the start of a trigger, committed once at the end. |
-| **Node** | One step of the tree: an action, its children, and how its output is split among them (weights or a splitter). Node 0 is the root and receives the budget. |
+| **Node** | One step of the tree: an action, its children, how its output is split among them (weights or a splitter), and whether it may be skipped when it receives nothing. Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
 | **Leaf** | A node without children. Its action consumes its whole input and outputs nothing. |
@@ -76,8 +76,9 @@ sequenceDiagram
 ```
 
 Any failure reverts the whole trigger: a flow never runs halfway. When a node has several
-children, the rounding remainder of the split goes to the child with the largest weight. A
-splitter can give a child nothing, which skips it.
+children, the rounding remainder of the split goes to the child with the largest weight. A node
+that receives nothing reverts the trigger too, unless it's marked `skipWhenEmpty`: then neither it
+nor anything below it runs.
 
 ### What the plugin enforces
 
@@ -88,7 +89,8 @@ When a node runs:
 3. Once an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more.
-6. A splitter returns one amount per child, adding up to the node's output. Only a splitter can give a child nothing (the child is skipped); any other empty input reverts.
+6. A splitter returns one amount per child, adding up to the node's output.
+7. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
@@ -97,6 +99,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 3. A node with 2+ children splits by weights (one per child, none zero, summing to 1,000,000) or by a splitter, never both. Other nodes have neither.
 4. An action bound to a budget (OpenFill, MerkleClaim) must be fed by that same budget: the root, or a node below branches without an action.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
+6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
 
 ## Components
 
@@ -252,8 +255,8 @@ interface ISplitter {
 - **Amounts only:** one per child, in the order of the node's children. A splitter can't pick
   other nodes, so the tree's shape stays what `setFlow` checked.
 - **Checked by the plugin:** the amounts must add up to the node's output (`InvalidSplit`).
-- **Skipping:** a child that gets 0 doesn't run. With fixed weights, a share that rounds to zero
-  still reverts.
+- **Empty shares:** a child that gets 0 reverts the trigger, unless it's marked `skipWhenEmpty`:
+  then it and everything below it are skipped, as with a weight that rounds down.
 - **View only:** a split changes no state.
 - **Setters:** a splitter with its own setters gives its shares to whoever the recipe grants that
   permission. With fixed weights, only the DAO can change the shares.

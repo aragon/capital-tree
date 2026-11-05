@@ -30,8 +30,9 @@ import {tokenBalance, isToken} from "./lib/tokens.sol";
 ///         (transfer, burn, keep). The budget commits once, after the whole tree ran.
 /// @dev Every node that receives something must succeed: a node fed by the budget (the root, or one
 ///      below branches without an action) takes a non-zero amount, every other node takes exactly
-///      its input, and leaves output nothing. Anything else reverts the whole trigger. Only a
-///      splitter can give a child nothing, which skips it.
+///      its input, and leaves output nothing. Anything else reverts the whole trigger. A node that
+///      receives nothing reverts it too, unless it's marked `skipWhenEmpty`: then neither it nor
+///      anything below it runs.
 ///      Each node with an action is built (view) right after its parent ran and executes in its
 ///      own `dao.execute`, followed by balance checks: the DAO spent no more than the node's input
 ///      and received at least its declared output. Recipient checks are the actions' own postconditions.
@@ -56,6 +57,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error NoBudget();
     error ForeignComponent(address component);
     error InvalidNodeCount(uint256 count);
+    error SkippableRoot();
     error MissingAction(uint256 nodeIndex);
     error InvalidChild(uint256 nodeIndex, uint256 childIndex);
     error UnreachableNode(uint256 nodeIndex);
@@ -118,9 +120,13 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     /// @dev Runs node `_index` on `_input`, then its children, depth first
     function _runNode(uint256 _index, Input memory _input, bytes[] calldata _data, uint256 _callNonce) internal {
-        if (_input.amount == 0) revert EmptyInput(_index);
-
         Node storage _node = _nodes[_index];
+        if (_input.amount == 0) {
+            // Skipping a node skips everything below it
+            if (_node.skipWhenEmpty) return;
+            revert EmptyInput(_index);
+        }
+
         Movement memory _movement;
         if (address(_node.action) == address(0)) {
             // A branch without an action passes its input on
@@ -148,12 +154,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
 
         ISplitter _splitter = _node.splitter;
-        bool _custom = address(_splitter) != address(0);
-        uint256[] memory _amounts =
-            _custom ? _split(_index, _splitter, _movement, _count) : _weighted(_movement.outAmount, _node.weights);
+        uint256[] memory _amounts = address(_splitter) == address(0)
+            ? _weighted(_movement.outAmount, _node.weights)
+            : _split(_index, _splitter, _movement, _count);
         for (uint256 k; k < _count; ++k) {
-            // A splitter leaves a child out by giving it nothing
-            if (_custom && _amounts[k] == 0) continue;
             _runNode(_node.children[k], _childInput(_movement, _amounts[k]), _data, _callNonce);
         }
     }
@@ -318,6 +322,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _checkOwnDao(address(_budget));
         uint256 _len = _newNodes.length;
         if (_len == 0 || _len > MAX_NODES) revert InvalidNodeCount(_len);
+        // A trigger with nothing to do reverts
+        if (_newNodes[0].skipWhenEmpty) revert SkippableRoot();
 
         delete _nodes;
         bool[] memory _hasParent = new bool[](_len);
@@ -330,6 +336,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             _stored.children = _newNodes[i].children;
             _stored.weights = _newNodes[i].weights;
             _stored.splitter = _newNodes[i].splitter;
+            _stored.skipWhenEmpty = _newNodes[i].skipWhenEmpty;
         }
         for (uint256 i = 1; i < _len; ++i) {
             if (!_hasParent[i]) revert UnreachableNode(i);

@@ -226,6 +226,7 @@ export function encodeRecipe(ctx, recipe) {
       children: wrap(`node ${i} children`, () => numbers(n.children)),
       weights: wrap(`node ${i} weights`, () => numbers(n.weights)),
       splitter: zeroAddress, // no splitter component is registered yet
+      skipWhenEmpty: false,
     })),
     grants: recipe.grants.map((g, i) => ({
       where: wrap(`grant ${i} where`, () => target(g.where)),

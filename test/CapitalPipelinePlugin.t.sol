@@ -349,7 +349,7 @@ contract CapitalPipelinePluginTest is Fixture {
         filler.fillWithoutData();
     }
 
-    /// Every node must run, so a share that rounds to zero reverts the whole trigger
+    /// A node that can't be skipped must run, so a share that rounds to zero reverts the whole trigger
     function test_RevertWhen_AShareRoundsToZero() public {
         ERC20Mock _dust = new ERC20Mock("Dust", "D");
         _dust.mint(address(dao), 19); // 5% of 19 rounds to 0
@@ -360,6 +360,42 @@ contract CapitalPipelinePluginTest is Fixture {
 
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 2));
         _plugin.trigger(noData);
+    }
+
+    /// The rounding remainder goes to the largest weight, so alice gets all 19
+    function test_AShareThatRoundsToZeroIsSkippedWhenTheChildMaySkip() public {
+        ERC20Mock _dust = new ERC20Mock("Dust", "D");
+        _dust.mint(address(dao), 19);
+        Node[] memory _tree = _fork(NO_ACTION, 950_000, _deployTransfer(alice), 50_000, _deployTransfer(bob));
+        _tree[2].skipWhenEmpty = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_dust))), _tree);
+
+        _plugin.trigger(noData);
+
+        assertEq(_dust.balanceOf(alice), 19);
+        assertEq(_dust.balanceOf(bob), 0);
+    }
+
+    /// Node 3 never runs: had it run on nothing, it would revert with EmptyInput
+    function test_SkippingANodeSkipsEverythingBelowIt() public {
+        Node[] memory _tree = new Node[](4);
+        _tree[0] = _splitBy(_capSplitter(dao, DAO_A))[0];
+        _tree[1] = _leaf(_deployTransfer(alice));
+        _tree[2] = _then(_bad(BadAction.Mode.Pass), 3);
+        _tree[2].skipWhenEmpty = true;
+        _tree[3] = _leaf(keep);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _plugin.trigger(noData);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A);
+    }
+
+    function test_RevertWhen_TheRootMaySkip() public {
+        Node[] memory _tree = _one(keep);
+        _tree[0].skipWhenEmpty = true;
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.SkippableRoot.selector));
     }
 
     function test_RevertWhen_TheRootTakesNothing() public {
@@ -451,14 +487,22 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(tokenB.balanceOf(bob), DEMAND - 100 ether);
     }
 
-    /// Without the skip, bob's empty leaf would revert with EmptyInput
-    function test_ASplitterSkipsAChildItGivesNothing() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, DAO_A)));
+    function test_ASplitterCanLeaveOutAChildThatMaySkip() public {
+        Node[] memory _tree = _splitBy(_capSplitter(dao, DAO_A));
+        _tree[2].skipWhenEmpty = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger(noData);
 
         assertEq(tokenA.balanceOf(alice), DAO_A);
         assertEq(tokenA.balanceOf(bob), 0);
+    }
+
+    function test_RevertWhen_ASplitterGivesNothingToAChildThatCannotSkip() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, DAO_A)));
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 2));
+        _plugin.trigger(noData);
     }
 
     function test_RevertWhen_ASplitDoesNotAddUp() public {

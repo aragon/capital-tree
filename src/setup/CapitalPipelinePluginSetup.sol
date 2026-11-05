@@ -119,7 +119,13 @@ contract CapitalPipelinePluginSetup is PluginSetup {
         for (uint256 i; i < _nodes.length; ++i) {
             address _action = _resolve(address(_nodes[i].action), _ctx);
             address _splitter = _resolve(address(_nodes[i].splitter), _ctx);
-            _resolved[i] = Node(INodeAction(_action), _nodes[i].children, _nodes[i].weights, ISplitter(_splitter));
+            _resolved[i] = Node(
+                INodeAction(_action),
+                _nodes[i].children,
+                _nodes[i].weights,
+                ISplitter(_splitter),
+                _nodes[i].skipWhenEmpty
+            );
         }
     }
 

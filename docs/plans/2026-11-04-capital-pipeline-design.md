@@ -45,7 +45,7 @@ commit  writeCheckpoint                   once, after the whole tree
 ```solidity
 struct Input { IERC20 token; uint256 amount; address beneficiary; }   // what a node receives
 struct Movement { IERC20 inToken; uint256 inAmount; IERC20 outToken; uint256 outAmount; address beneficiary; }   // what it spends and produces
-struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter splitter; }
+struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter splitter; bool skipWhenEmpty; }
 
 interface IBudget {
     function token() external view returns (IERC20);
@@ -62,7 +62,7 @@ interface INodeAction {
 }
 
 interface ISplitter {
-    // one amount per child, in order, summing to movement.outAmount; a 0 skips that child
+    // one amount per child, in order, summing to movement.outAmount
     function split(address caller, Movement calldata movement, uint256 childCount)
         external view returns (uint256[] memory amounts);
 }
@@ -72,7 +72,8 @@ interface ISplitter {
 
 - Node 0 is the root and receives the budget. Children always have a higher index than their parent and exactly one parent, so the nodes form a tree with no cycles.
 - A node with 2+ children is a branch: its output is split by `weights` (summing to 1,000,000), the rounding remainder going to the largest weight, or by a `splitter` instead (no weights). A branch may have no action, in which case it splits its input unchanged.
-- A splitter only returns amounts, one per child in order, adding up to the output. It can't pick other nodes, so the shape checks made at `setFlow` still hold. A child it gives 0 is skipped.
+- A splitter only returns amounts, one per child in order, adding up to the output. It can't pick other nodes, so the shape checks made at `setFlow` still hold.
+- A node marked `skipWhenEmpty` that receives 0 (a weight that rounds down, a splitter's 0, a parent that produced nothing) is skipped with everything below it. Any other node that receives 0 reverts. The root can't be marked.
 - A node with no children is a leaf: its action must output nothing.
 - At most 16 nodes.
 
@@ -84,7 +85,7 @@ trigger(bytes[] data)                                   nonReentrant, whenNotPau
   dao.execute(budget.commitActions())                  once, after the whole tree
 
 run(node, input)                                        depth first
-  input == 0                     → revert EmptyInput
+  input == 0                     → skipWhenEmpty: skip it and its subtree; else revert EmptyInput
   no action (branch)             → movement = input, passed on
   otherwise
     action.preconditions(input) → action.build(input) → movement
@@ -95,7 +96,6 @@ run(node, input)                                        depth first
     snapshot DAO balances → dao.execute(acts) → verify DAO balances
   children get movement.out (split by weights or the splitter for a branch)
   splitter: one amount per child, summing to movement.out      else revert InvalidSplit
-            a child that gets 0 is skipped
 ```
 
 ### Balance checks (after every node)
@@ -120,12 +120,12 @@ budget  FundedStreamBudget(USDC)             budget  FundedStreamBudget(ETH)
    └─ 20% → Transfer(carol)
 ```
 
-Rejected shapes: a bound action below a node with an action (`BudgetMismatch`), a Merkle claim below a branch (`NotTheWholeBudget` at trigger), weights not summing to 100% (`InvalidWeights`), a splitter on a node with fewer than 2 children or next to weights (`InvalidSplitter`), a split that isn't one amount per child adding up to the output (`InvalidSplit` at trigger), an action-less leaf (`MissingAction`), a leaf that outputs something (`LeafLeftOutput` at trigger), a node that takes part of its input (`NodeIncomplete` at trigger).
+Rejected shapes: a bound action below a node with an action (`BudgetMismatch`), a Merkle claim below a branch (`NotTheWholeBudget` at trigger), weights not summing to 100% (`InvalidWeights`), a splitter on a node with fewer than 2 children or next to weights (`InvalidSplitter`), a split that isn't one amount per child adding up to the output (`InvalidSplit` at trigger), a skippable root (`SkippableRoot`), an action-less leaf (`MissingAction`), a leaf that outputs something (`LeafLeftOutput` at trigger), a node that takes part of its input (`NodeIncomplete` at trigger).
 
 ## Rules
 
 1. **Preconditions and postconditions belong to the action interface.** The plugin calls all three hooks on every node with an action.
-2. **Every node that receives something must succeed.** A node fed by the budget (the root, or one below branches without an action) takes a non-zero amount, up to its input; every other node takes exactly its input; leaves output nothing. Only a splitter can give a child nothing, which skips it; a weight that rounds to zero still reverts. A trigger with nothing to do reverts.
+2. **Every node that receives something must succeed.** A node fed by the budget (the root, or one below branches without an action) takes a non-zero amount, up to its input; every other node takes exactly its input; leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
 3. **The budget is read once and committed once, after the whole tree,** so a stream checkpoint sees the final balance.
 4. **Planning is view-only.** Every state change is a DAO action; each node is planned right before its own `execute`.
 5. **Actions declare their output in `build`.** Branch weights or a splitter divide the declared output. Swap surplus above the declared minimum stays in the DAO.
@@ -213,7 +213,7 @@ Aragon's framework contracts import ENS, so `lib/ens-contracts` (v0.0.8) is a de
 - Any revert in any node, hook or balance check reverts the whole `trigger`.
 - Paused plugin: `Pausable: paused`. Re-entry: `ReentrancyGuard: reentrant call`.
 - Setup errors: `UnknownComponent` (registry), `UnknownReference`, `GrantOutsideInstallation`, `ReservedPermission`, `GrantsMismatch` (uninstall).
-- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidWeights`, `InvalidSplitter`, `BudgetMismatch`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InAmountExceedsInput`, `NodeIncomplete`, `InvalidSplit`, `InputTokenMismatch`, `LeafLeftOutput`, `InvalidOutToken`, `BeneficiaryChanged`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`).
+- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidWeights`, `InvalidSplitter`, `BudgetMismatch`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InAmountExceedsInput`, `NodeIncomplete`, `InvalidSplit`, `InputTokenMismatch`, `LeafLeftOutput`, `InvalidOutToken`, `BeneficiaryChanged`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`).
 
 ## Constraints and known limits
 

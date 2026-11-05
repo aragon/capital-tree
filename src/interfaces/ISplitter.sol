@@ -10,7 +10,8 @@ import {Movement} from "../lib/types.sol";
 ///      (`DaoAuthorizableUpgradeable`). The plugin rejects splitters bound to another DAO or to none.
 interface ISplitter {
     /// @notice One amount per child, in the order of the node's children, summing to
-    ///         `movement.outAmount`. A child that gets 0 is skipped.
+    ///         `movement.outAmount`. A child that gets 0 reverts the trigger, unless it's marked
+    ///         `skipWhenEmpty`.
     function split(address caller, Movement calldata movement, uint256 childCount)
         external
         view
