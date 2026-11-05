@@ -1,4 +1,6 @@
-# Capital Pipeline
+# Capital Tree
+
+<img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/9534626e-b42e-4a96-975a-b205429d842f" />
 
 Aragon OSx plugin that runs one treasury flow per install: a **budget** feeding a **tree of
 actions**. Every node passes its output to its children, split by fixed weights when there are
