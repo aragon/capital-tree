@@ -142,15 +142,11 @@ function uniqueErrors(abi) {
 // Recipes
 
 const component = (id, args) => ({ id, args: { dao: "DAO", ...args } });
-const stream = (token) =>
-  component("FundedStreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget: "0", epochInterval: "86400" });
+const stream = (token, maxBudget = "0") =>
+  component("FundedStreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
+// 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
 const openFill = (tokenB) =>
-  component("OpenFillAction@1", {
-    budget: "ref(0)",
-    demandedToken: tokenB,
-    demandPerFill: "1000e18",
-    minDemandedPerOffered: "50e18",
-  });
+  component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
 const leaf = (action) => ({ action, children: "", weights: "" });
 const swapGrants = (manager) => [
   { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
@@ -165,13 +161,13 @@ const swapGrants = (manager) => [
 export function templates({ tokenA, tokenB, account }) {
   return {
     "Buy and burn": {
-      components: [stream(tokenA), openFill(tokenB), component("BurnAction@1", {})],
+      components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {})],
       budget: 0,
       nodes: [{ action: 1, children: "1", weights: "" }, leaf(2)],
       grants: swapGrants(account),
     },
     "Buyback with a fee": {
-      components: [stream(tokenA), openFill(tokenB), component("BurnAction@1", {}), component("TransferAction@1", { to: BOB })],
+      components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {}), component("TransferAction@1", { to: BOB })],
       budget: 0,
       nodes: [{ action: 1, children: "1, 2", weights: "950000, 50000" }, leaf(2), leaf(3)],
       grants: swapGrants(account),
@@ -377,11 +373,13 @@ export async function describeComponent(ctx, address) {
     details.push(`available ${units(await get("available"))} ${sym}`);
     if (name === "FundedStreamBudget") {
       details.push(`${units(await get("amountPerEpoch"))} ${sym} per ${await get("epochInterval")}s`);
+      const cap = await get("maxBudget");
+      if (cap > 0n) details.push(`capped at ${units(cap)} ${sym}`);
     }
   } else if (name === "OpenFillAction") {
     const demanded = await symbol(ctx, await get("demandedToken"));
     details.push(`demands ${units(await get("demandPerFill"))} ${demanded} per fill`);
-    details.push(`offers at most ${units(await get("maxOffered"))}`);
+    details.push("offers its whole input");
   } else if (name === "MerkleClaimAction") {
     details.push(`root ${(await get("root")).slice(0, 10)}…`);
   } else if (name === "TransferAction") {
@@ -423,7 +421,7 @@ export async function readFlow(ctx, plugin) {
 
 // Running flows
 
-/** The playground filler takes the root OpenFill offer, paying from its own balance */
+/** The playground filler takes the flow's OpenFill offer, paying from its own balance */
 export const fill = (ctx, plugin) =>
   write(ctx, { address: ctx.deployment.filler, abi: ctx.abis.filler, functionName: "fill", args: [plugin] });
 

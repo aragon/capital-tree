@@ -7,7 +7,7 @@ export const BRANCH = "branch";
 const KINDS = {
   FundedStreamBudget: "budget",
   BalanceBudget: "budget",
-  OpenFillAction: "root",
+  OpenFillAction: "action",
   MerkleClaimAction: "root",
   TransferAction: "leaf",
   TransferToBeneficiaryAction: "leaf",
@@ -21,7 +21,7 @@ const nameOf = (id) => id.split("@")[0];
 const key = (inputName) => inputName.toLowerCase();
 const lowerKeys = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [key(k), v]));
 export const kindOf = (id) => (id === BRANCH ? "branch" : (KINDS[nameOf(id)] ?? "leaf"));
-export const ports = (id) => ({ budget: [0, 1], root: [1, 1], branch: [1, 1], leaf: [1, 0] })[kindOf(id)];
+export const ports = (id) => ({ budget: [0, 1], root: [1, 1], action: [1, 1], branch: [1, 1], leaf: [1, 0] })[kindOf(id)];
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -40,9 +40,9 @@ export function nodeHtml(id, meta) {
 /** Default settings for a new box */
 export function defaultData(id, { tokenA, tokenB }) {
   const defaults = {
-    FundedStreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "0", epochInterval: "86400" },
+    FundedStreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "20e18", epochInterval: "86400" },
     BalanceBudget: { token: tokenA },
-    OpenFillAction: { demandedToken: tokenB, demandPerFill: "1000e18", minDemandedPerOffered: "50e18" },
+    OpenFillAction: { demandedToken: tokenB, demandPerFill: "1000e18" },
     MerkleClaimAction: { root: "0x" + "00".repeat(32) },
     TransferAction: { to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" },
   };

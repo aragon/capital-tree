@@ -40,7 +40,8 @@ top to bottom. Each box holds its component's settings, and every box but the bu
 | Box | Ports | Components |
 |---|---|---|
 | Budget | output | FundedStreamBudget, BalanceBudget |
-| Root action | input, output | OpenFillAction, MerkleClaimAction (bound to the budget) |
+| Root action | input, output | MerkleClaimAction (bound to the budget) |
+| Action | input, output | OpenFillAction (anywhere; the stream's cap limits its offer) |
 | Branch | input, output | No action: splits its input by the children's shares |
 | Leaf | input | TransferAction, TransferToBeneficiaryAction, BurnAction, KeepAction |
 

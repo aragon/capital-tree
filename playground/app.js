@@ -60,7 +60,8 @@ async function refresh() {
 
 const GROUPS = [
   ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1"]],
-  ["Root actions", ["OpenFillAction@1", "MerkleClaimAction@1"]],
+  ["Root actions", ["MerkleClaimAction@1"]],
+  ["Actions", ["OpenFillAction@1"]],
   ["Splits", [graph.BRANCH]],
   ["Leaves", ["TransferAction@1", "TransferToBeneficiaryAction@1", "BurnAction@1", "KeepAction@1"]],
 ];
@@ -180,7 +181,7 @@ async function renderFlows() {
       const root = f.nodes[0];
       const tree = lib.describeTree(f.nodes, (n) => [n.name, ...n.details].join(" · "));
       let run = `<button data-trigger="${f.plugin}">Trigger</button>`;
-      if (root.name === "OpenFillAction") run = `<button data-fill="${f.plugin}">Fill with the playground filler</button>`;
+      if (f.nodes.some((n) => n.name === "OpenFillAction")) run = `<button data-fill="${f.plugin}">Fill with the playground filler</button>`;
       if (root.name === "MerkleClaimAction") {
         run = `<input data-cumulative="${f.plugin}" value="100e18" title="Cumulative amount in the tree">
           <button data-claim="${f.plugin}" data-nodes="${f.nodes.length}">Claim</button>`;
