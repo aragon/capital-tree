@@ -22,22 +22,23 @@ import {Recipes} from "./Recipes.sol";
 ///         `metadata/uris.json` holds the metadata links: upload the files in `metadata/` to IPFS
 ///         and fill it in first.
 /// @dev Run: `forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast` with
-///      - `MANAGING_DAO`: maintains the registry, and the plugin repo unless `PLUGIN_REPO_MAINTAINER` is set
-///      - `PLUGIN_REPO_FACTORY`: Aragon's `PluginRepoFactory` on that network
+///      - `MANAGEMENT_DAO_ADDRESS`: maintains the registry and, by default, the plugin repo
+///      - `PLUGIN_REPO_FACTORY_ADDRESS`: Aragon's factory on that network
 ///      - `PLUGIN_REPO_SUBDOMAIN` (optional): defaults to `capital-pipeline`
+///      - `DEPLOYER_KEY`: signing key for the deployment
 contract Deploy is Script {
     /// @notice Thrown when a metadata link is empty. Registry entries and plugin repo versions
     ///         can't be changed later, so nothing is published without one.
     error MissingMetadata(string key);
 
     function run() external returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup, PluginRepo repo) {
-        IDAO _managingDao = IDAO(vm.envAddress("MANAGING_DAO"));
-        PluginRepoFactory _factory = PluginRepoFactory(vm.envAddress("PLUGIN_REPO_FACTORY"));
+        IDAO _managingDao = IDAO(vm.envAddress("MANAGEMENT_DAO_ADDRESS"));
+        PluginRepoFactory _factory = PluginRepoFactory(vm.envAddress("PLUGIN_REPO_FACTORY_ADDRESS"));
         string memory _subdomain = vm.envOr("PLUGIN_REPO_SUBDOMAIN", string("capital-pipeline"));
         address _maintainer = vm.envOr("PLUGIN_REPO_MAINTAINER", address(_managingDao));
         string memory _uris = vm.readFile("metadata/uris.json");
 
-        vm.startBroadcast();
+        vm.startBroadcast(vm.envUint("DEPLOYER_KEY"));
         (registry, setup) = deploy(_managingDao, _uris);
         repo = publish(_factory, setup, _subdomain, _maintainer, _uris);
         vm.stopBroadcast();
