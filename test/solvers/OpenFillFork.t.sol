@@ -43,7 +43,8 @@ contract GenericOpenFillForkTest is Test {
         uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
         if (forkBlock == 0) vm.createSelectFork(rpc);
         else vm.createSelectFork(rpc, forkBlock);
-        // Runtime only: current routes can use Osaka opcodes; compilation stays on Cancun.
+        // Live routes can enter Ekubo V3, whose CLZ opcode requires Osaka.
+        // Runtime only: compilation stays on Cancun.
         vm.setEvmVersion(vm.envOr("FORK_EVM_VERSION", string("osaka")));
         console2.log("Mainnet fork block", block.number);
         // Accrue before the fork's timestamp, so live API deadlines remain valid.
