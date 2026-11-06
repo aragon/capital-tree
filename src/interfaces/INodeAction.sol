@@ -22,7 +22,8 @@ interface INodeAction {
     /// @notice What the node spends from `input` (`inAmount`: a node fed by the budget may take less
     ///         than its input, every other node all of it), what it produces (`outToken`/`outAmount`,
     ///         zero for a leaf) and optionally a `beneficiary`, plus the actions that do the work.
-    /// @dev `outAmount` must be known here: it is divided among the children before they run
+    /// @dev `outAmount` is the least the node produces, checked after it runs. The children get
+    ///      `outAmount`, or everything that arrived when the node is marked `forwardSurplus`.
     function build(address caller, bytes calldata data, Input calldata input)
         external
         view

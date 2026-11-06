@@ -124,7 +124,8 @@ contract CapitalPipelinePluginSetup is PluginSetup {
                 _nodes[i].children,
                 _nodes[i].weights,
                 ISplitter(_splitter),
-                _nodes[i].skipWhenEmpty
+                _nodes[i].skipWhenEmpty,
+                _nodes[i].forwardSurplus
             );
         }
     }

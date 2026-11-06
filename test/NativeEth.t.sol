@@ -9,7 +9,7 @@ import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
-import {Input} from "../src/lib/types.sol";
+import {Input, Node} from "../src/lib/types.sol";
 import {NATIVE} from "../src/lib/tokens.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
@@ -74,6 +74,23 @@ contract NativeEthTest is Fixture {
         assertEq(BURN.balance, 950 ether);
         assertEq(fee.balance, 50 ether);
         assertEq(address(dao).balance, DAO_ETH, "pre-existing ETH untouched");
+    }
+
+    function test_EthDeliveredAboveTheDemandIsSplitToo() public {
+        FundedStreamBudget _budget = _deployBudget(RATE, 0); // token A
+        Node[] memory _tree = _splitToBurnAndFee(_deployOpenFill(_budget, NATIVE));
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _tree);
+        MockFiller _filler = new MockFiller(_plugin);
+        vm.deal(address(_filler), DEMAND + 100 ether);
+        _filler.setFillDelta(100 ether);
+        vm.warp(block.timestamp + EPOCH);
+
+        _filler.fillWithoutData();
+
+        assertEq(BURN.balance, 1045 ether);
+        assertEq(fee.balance, 55 ether);
+        assertEq(address(dao).balance, DAO_ETH);
     }
 
     function test_MerkleClaimPaysEth() public {

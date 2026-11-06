@@ -23,8 +23,11 @@ import {MockFiller} from "./mocks/MockFiller.sol";
 import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
 import {BadAction} from "./mocks/BadComponents.sol";
 import {CapSplitter, FixedSplitter} from "./mocks/MockSplitter.sol";
+import {IncomeAction, IncomeSource} from "./mocks/MockIncome.sol";
 
 contract CapitalPipelinePluginTest is Fixture {
+    IERC20 internal constant NO_TOKEN = IERC20(address(0));
+
     FundedStreamBudget internal budget;
     OpenFillAction internal action;
     CapitalPipelinePlugin internal plugin;
@@ -318,6 +321,123 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(budget.available(), RATE, "offer not consumed");
     }
 
+    // =========================================================================================
+    // Forwarding the surplus
+    // =========================================================================================
+
+    /// The filler sends 100 B above the demand. Without forwardSurplus they stay in the DAO.
+    function test_ADeclaredNodePassesItsOutputAndKeepsTheSurplus() public {
+        filler.setFillDelta(100 ether);
+
+        filler.fill("");
+
+        assertEq(tokenB.balanceOf(BURN), 950 ether, "95% of the demanded 1,000 B");
+        assertEq(tokenB.balanceOf(fee), 50 ether, "5% of the demanded 1,000 B");
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 100 ether, "the surplus stays in the treasury");
+    }
+
+    function test_TheNextNodeGetsEverythingTheFillerDelivers() public {
+        Node[] memory _tree = _chain(action, _deployTransfer(alice));
+        _tree[0].forwardSurplus = true;
+        MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
+        tokenB.mint(address(_filler), DEMAND + 1 ether);
+        _filler.setFillDelta(1 ether);
+
+        _filler.fillWithoutData();
+
+        assertEq(tokenB.balanceOf(alice), DEMAND + 1 ether);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B, "no surplus left in the treasury");
+    }
+
+    function test_WeightsSplitEverythingTheFillerDelivers() public {
+        Node[] memory _tree = _splitToBurnAndFee(action);
+        _tree[0].forwardSurplus = true;
+        MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
+        tokenB.mint(address(_filler), DEMAND + 100 ether);
+        _filler.setFillDelta(100 ether);
+
+        _filler.fillWithoutData();
+
+        assertEq(tokenB.balanceOf(BURN), 1045 ether, "95% of 1,100 B");
+        assertEq(tokenB.balanceOf(fee), 55 ether, "5% of 1,100 B");
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B);
+    }
+
+    /// One token: the children get the whole input plus what came in
+    function test_AOneTokenNodeForwardsItsInputAndItsIncome() public {
+        Node[] memory _tree = _chain(_income(NO_TOKEN, 3 ether, 0, 0), _deployTransfer(alice));
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _plugin.trigger(noData);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A + 3 ether);
+        assertEq(tokenA.balanceOf(address(dao)), 0);
+    }
+
+    function test_AOneTokenDeclaredNodeKeepsItsIncome() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(
+            _deployBalanceBudget(tokenA), _chain(_income(NO_TOKEN, 3 ether, 0, 0), _deployTransfer(alice))
+        );
+
+        _plugin.trigger(noData);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A);
+        assertEq(tokenA.balanceOf(address(dao)), 3 ether, "the income stays in the treasury");
+    }
+
+    /// The action can't promise any B, so it declares 0. The children still get the 20 B that came in.
+    function test_ATwoTokenNodeWithNoMinimumForwardsWhatArrived() public {
+        Node[] memory _tree = _chain(_income(tokenB, 20 ether, 0, 0), _deployTransfer(alice));
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _plugin.trigger(noData);
+
+        assertEq(tokenB.balanceOf(alice), 20 ether);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A, "the A input wasn't spent");
+    }
+
+    function test_RevertWhen_AOneTokenForwardingNodePassesOnLessThanItsInput() public {
+        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 0, -1), keep);
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputBelowInput.selector, 0, DAO_A - 1, DAO_A));
+        _plugin.trigger(noData);
+    }
+
+    function test_RevertWhen_AOneTokenForwardingNodeLosesTokens() public {
+        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 1 ether, 0), keep);
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapitalPipelinePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A, DAO_A - 1 ether
+            )
+        );
+        _plugin.trigger(noData);
+    }
+
+    function test_RevertWhen_ALeafForwardsSurplus() public {
+        Node[] memory _tree = _chain(_bad(BadAction.Mode.Pass), keep);
+        _tree[1].forwardSurplus = true;
+
+        _expectInitRevert(
+            budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidForwardSurplus.selector, 1)
+        );
+    }
+
+    function test_RevertWhen_ABranchWithoutActionForwardsSurplus() public {
+        Node[] memory _tree = _fork(NO_ACTION, 500_000, keep, 500_000, keep);
+        _tree[0].forwardSurplus = true;
+
+        _expectInitRevert(
+            budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidForwardSurplus.selector, 0)
+        );
+    }
+
     function test_PreconditionsCanBlockANode() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Block), keep));
 
@@ -487,6 +607,21 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(tokenB.balanceOf(bob), DEMAND - 100 ether);
     }
 
+    /// The splitter sees the 1,050 B delivered, not the 1,000 B demanded
+    function test_ASplitterDividesEverythingTheFillerDelivers() public {
+        Node[] memory _tree = _splitBy(_capSplitter(dao, 100 ether));
+        _tree[0].action = action;
+        _tree[0].forwardSurplus = true;
+        MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
+        tokenB.mint(address(_filler), DEMAND + 50 ether);
+        _filler.setFillDelta(50 ether);
+
+        _filler.fillWithoutData();
+
+        assertEq(tokenB.balanceOf(alice), 100 ether);
+        assertEq(tokenB.balanceOf(bob), DEMAND - 50 ether);
+    }
+
     function test_ASplitterCanLeaveOutAChildThatMaySkip() public {
         Node[] memory _tree = _splitBy(_capSplitter(dao, DAO_A));
         _tree[2].skipWhenEmpty = true;
@@ -607,6 +742,14 @@ contract CapitalPipelinePluginTest is Fixture {
 
     function _bad(BadAction.Mode _mode) internal returns (INodeAction) {
         return new BadAction(_mode, address(dao), tokenB);
+    }
+
+    /// @dev An action that claims `_income` of `_outToken` (NO_TOKEN: its input token) and loses `_loss`
+    function _income(IERC20 _outToken, uint256 _amount, uint256 _loss, int256 _extra) internal returns (INodeAction) {
+        IncomeSource _source = new IncomeSource();
+        tokenA.mint(address(_source), 1_000 ether);
+        tokenB.mint(address(_source), 1_000 ether);
+        return new IncomeAction(_source, address(dao), _outToken, _amount, _loss, _extra);
     }
 
     /// @dev A branch without an action: 50% to alice (grants), 50% to the auction, whose proceeds are kept

@@ -62,6 +62,23 @@ contract CapitalPipelinePluginSetupTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
+    /// The recipe marks the swap node forwardSurplus, so the 100 B the filler overpays are split too
+    function test_InstallsAForwardingNode() public {
+        CapitalPipelinePluginSetup.InstallParams memory _params = _buyback();
+        _params.nodes[0].forwardSurplus = true;
+        (CapitalPipelinePlugin _plugin,) = _install(_params);
+        MockFiller _filler = _newFiller(_plugin);
+        _filler.setFillDelta(100 ether);
+        uint256 _supply = tokenB.totalSupply();
+
+        _filler.fill("");
+
+        assertTrue(_plugin.nodes()[0].forwardSurplus);
+        assertEq(tokenB.totalSupply(), _supply - 1045 ether, "95% of 1,100 B burned");
+        assertEq(tokenB.balanceOf(fee), 55 ether);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B);
+    }
+
     function test_MerkleClaimPaysTheAccount() public {
         bytes32 _aliceLeaf = _leafHash(alice, 10 ether);
         bytes32 _bobLeaf = _leafHash(bob, 30 ether);

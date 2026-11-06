@@ -29,7 +29,7 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 | Term | Meaning |
 |---|---|
 | **Budget** | How much of one token the flow may spend right now. Read once at the start of a trigger, committed once at the end. |
-| **Node** | One step of the tree: an action, its children, how its output is split among them (weights or a splitter), and whether it may be skipped when it receives nothing. Node 0 is the root and receives the budget. |
+| **Node** | One step of the tree: an action, its children, how its output is split among them (weights or a splitter), whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
 | **Leaf** | A node without children. Its action consumes its whole input and outputs nothing. |
@@ -69,7 +69,7 @@ sequenceDiagram
         Action-->>Plugin: check actions
         Plugin->>DAO: execute(actions, then checks)
         Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
-        Note over Plugin: split outAmount among the children (weights or splitter)
+        Note over Plugin: split outAmount among the children (weights or splitter), or everything that arrived with forwardSurplus
     end
     Plugin->>Budget: commitActions()
     Plugin->>DAO: execute(commit actions)
@@ -88,9 +88,10 @@ When a node runs:
 2. A node spends the token it received; a leaf outputs nothing; any output is native ETH or a contract.
 3. Once an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
-5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more.
+5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more. The children get `outAmount`; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
 6. A splitter returns one amount per child, adding up to the node's output.
 7. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
+8. A node marked `forwardSurplus` gives its children everything that arrived: the output token's increase with two tokens, its input plus the net change with one. With one token it must pass its whole input on (`outAmount ≥ inAmount`, `OutputBelowInput`).
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
@@ -100,6 +101,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 4. An action bound to a budget (OpenFill, MerkleClaim) must be fed by that same budget: the root, or a node below branches without an action.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
+7. Only a node with an action and children can be marked `forwardSurplus` (`InvalidForwardSurplus`).
 
 ## Components
 
@@ -172,7 +174,8 @@ from zero, and the DAO demands a flat `demandPerFill` of token B for it. The pri
 `demandPerFill / minDemandedPerOffered`. Whoever finds the trade worth it first calls `trigger()`
 and fills it.
 
-- **Moves**: offers `min(input, maxOffered())` of A, outputs `demandPerFill` of B to its children.
+- **Moves**: offers `min(input, maxOffered())` of A and outputs `demandPerFill` of B to its children.
+  On a node marked `forwardSurplus`, the children get all the B the filler sent instead.
 - **Placement**: the root, or below branches without an action, where its input is its share of
   the budget (see "Grants and an auction" below). Every node of the flow then waits for a fill, and
   changing the price terms restarts the whole budget, not just the auction's share.
@@ -201,7 +204,7 @@ sequenceDiagram
     Filler->>DAO: send D of token B
     DAO->>TokenA: approve(filler, 0)
     DAO->>Fill: assertReceived(B, balance before + D)
-    Note over Plugin: balance check, then the children share D
+    Note over Plugin: balance check, then the children share D (all the B that arrived, with forwardSurplus)
 ```
 
 The filler implements `IFiller.fillOffer`, which has the same selector as capital-router's

@@ -23,6 +23,8 @@ import {NATIVE, tokenBalance, isToken} from "../lib/tokens.sol";
 ///      worst acceptable price. Price terms are 1e18-scaled: `demanded_raw * 1e18 / offered_raw`.
 ///      Changing either price term restarts the auction, so a filler cannot take an offer that
 ///      accumulated under the old terms at the new price.
+///      `demandPerFill` is a minimum. On a node marked `forwardSurplus`, the children get everything
+///      the filler sent; otherwise they get `demandPerFill` and the rest stays in the DAO.
 ///
 ///      Native ETH (`NATIVE`) works on either side, never both: a native offer is sent as call
 ///      value with the callback (no approvals); a native demand is measured on the DAO's ETH balance.

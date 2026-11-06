@@ -35,7 +35,9 @@ import {tokenBalance, isToken} from "./lib/tokens.sol";
 ///      anything below it runs.
 ///      Each node with an action is built (view) right after its parent ran and executes in its
 ///      own `dao.execute`, followed by balance checks: the DAO spent no more than the node's input
-///      and received at least its declared output. Recipient checks are the actions' own postconditions.
+///      and received at least its declared output. The children get that declared output, or
+///      everything that arrived when the node is marked `forwardSurplus`. Recipient checks are the
+///      actions' own postconditions.
 contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice What the flow may spend; read at the start, committed at the end
     IBudget public budget;
@@ -64,6 +66,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error InvalidWeights(uint256 nodeIndex);
     error InvalidSplitter(uint256 nodeIndex);
     error BudgetMismatch(uint256 nodeIndex);
+    error InvalidForwardSurplus(uint256 nodeIndex);
 
     // Trigger errors
     error DataLengthMismatch(uint256 expected, uint256 actual);
@@ -74,6 +77,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error InvalidSplit(uint256 nodeIndex);
     error LeafLeftOutput(uint256 nodeIndex, uint256 outAmount);
     error InvalidOutToken(uint256 nodeIndex);
+    error OutputBelowInput(uint256 nodeIndex, uint256 outAmount, uint256 inAmount);
     error BeneficiaryChanged(uint256 nodeIndex);
     error ActionTargetsDao(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 nodeIndex, uint256 actionIndex);
@@ -173,10 +177,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         Action[] memory _actions;
         (_movement, _actions) = _buildAction(_index, _action, _input, _data, _leaf);
 
-        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_movement);
+        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_index, _movement);
         bytes32 _executionId = keccak256(abi.encode(address(this), _callNonce, _index));
         _execute(_index, _actions, _executionId);
         _verify(_index, _movement, _inBefore, _outBefore);
+        _movement.outAmount = _forwarded(_index, _movement, _inBefore, _outBefore);
 
         emit NodeExecuted(_index, msg.sender, _executionId, _movement);
     }
@@ -201,10 +206,20 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
         if (_movement.inToken != _input.token) revert InputTokenMismatch(_index);
         if (_leaf && _movement.outAmount != 0) revert LeafLeftOutput(_index, _movement.outAmount);
-        if (_movement.outAmount != 0 && !isToken(_movement.outToken)) revert InvalidOutToken(_index);
+        _checkOutput(_index, _movement);
         _movement.beneficiary = _keepBeneficiary(_index, _input.beneficiary, _movement.beneficiary);
 
         _actions = _concat(_work, _action.postconditions(msg.sender, _movement));
+    }
+
+    /// @dev An output that will be measured must be a token, and a node that forwards its surplus
+    ///      with one token passes its whole input on
+    function _checkOutput(uint256 _index, Movement memory _movement) internal view {
+        bool _forwards = _nodes[_index].forwardSurplus;
+        if ((_movement.outAmount != 0 || _forwards) && !isToken(_movement.outToken)) revert InvalidOutToken(_index);
+        if (_forwards && _movement.outToken == _movement.inToken && _movement.outAmount < _movement.inAmount) {
+            revert OutputBelowInput(_index, _movement.outAmount, _movement.inAmount);
+        }
     }
 
     function _execute(uint256 _index, Action[] memory _actions, bytes32 _executionId) internal {
@@ -230,10 +245,14 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Balance checks
 
-    function _snapshot(Movement memory _movement) internal view returns (uint256 _inBefore, uint256 _outBefore) {
+    function _snapshot(uint256 _index, Movement memory _movement)
+        internal
+        view
+        returns (uint256 _inBefore, uint256 _outBefore)
+    {
         address _dao = address(dao());
         _inBefore = tokenBalance(_movement.inToken, _dao);
-        if (_movement.outToken != _movement.inToken && _movement.outAmount != 0) {
+        if (_movement.outToken != _movement.inToken && (_movement.outAmount != 0 || _nodes[_index].forwardSurplus)) {
             _outBefore = tokenBalance(_movement.outToken, _dao);
         }
     }
@@ -246,6 +265,20 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             _checkDao(_index, _movement.inToken, _inBefore, _movement.inAmount);
             if (_movement.outAmount != 0) _checkDao(_index, _movement.outToken, _outBefore + _movement.outAmount, 0);
         }
+    }
+
+    /// @dev What the children share: `outAmount`, or everything that arrived when the node forwards
+    ///      its surplus. With two tokens that's the output token's increase; with one, the input
+    ///      plus the net change. `_verify` and `OutputBelowInput` keep both at or above `outAmount`.
+    function _forwarded(uint256 _index, Movement memory _movement, uint256 _inBefore, uint256 _outBefore)
+        internal
+        view
+        returns (uint256)
+    {
+        if (!_nodes[_index].forwardSurplus) return _movement.outAmount;
+        uint256 _balance = tokenBalance(_movement.outToken, address(dao()));
+        if (_movement.outToken == _movement.inToken) return _movement.inAmount + (_balance - _inBefore);
+        return _balance - _outBefore;
     }
 
     /// @dev Reverts unless `balance + spent >= target`
@@ -337,6 +370,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             _stored.weights = _newNodes[i].weights;
             _stored.splitter = _newNodes[i].splitter;
             _stored.skipWhenEmpty = _newNodes[i].skipWhenEmpty;
+            _stored.forwardSurplus = _newNodes[i].forwardSurplus;
         }
         for (uint256 i = 1; i < _len; ++i) {
             if (!_hasParent[i]) revert UnreachableNode(i);
@@ -367,6 +401,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (address(_bound) != address(0) && (!_isBudgetFed(_fed, _index) || _bound != _budget)) {
                 revert BudgetMismatch(_index);
             }
+        }
+        // Only an action can receive more than it declared, and only children can be given it
+        if (_node.forwardSurplus && (address(_node.action) == address(0) || _count == 0)) {
+            revert InvalidForwardSurplus(_index);
         }
 
         for (uint256 k; k < _count; ++k) {

@@ -45,7 +45,7 @@ commit  writeCheckpoint                   once, after the whole tree
 ```solidity
 struct Input { IERC20 token; uint256 amount; address beneficiary; }   // what a node receives
 struct Movement { IERC20 inToken; uint256 inAmount; IERC20 outToken; uint256 outAmount; address beneficiary; }   // what it spends and produces
-struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter splitter; bool skipWhenEmpty; }
+struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter splitter; bool skipWhenEmpty; bool forwardSurplus; }
 
 interface IBudget {
     function token() external view returns (IERC20);
@@ -74,6 +74,7 @@ interface ISplitter {
 - A node with 2+ children is a branch: its output is split by `weights` (summing to 1,000,000), the rounding remainder going to the largest weight, or by a `splitter` instead (no weights). A branch may have no action, in which case it splits its input unchanged.
 - A splitter only returns amounts, one per child in order, adding up to the output. It can't pick other nodes, so the shape checks made at `setFlow` still hold.
 - A node marked `skipWhenEmpty` that receives 0 (a weight that rounds down, a splitter's 0, a parent that produced nothing) is skipped with everything below it. Any other node that receives 0 reverts. The root can't be marked.
+- A node marked `forwardSurplus` gives its children everything that arrived instead of its declared `outAmount`: the output token's increase with two tokens, its input plus the net change with one. With one token it passes its whole input on (`outAmount ≥ inAmount`). Only a node with an action and children can be marked. See `2026-11-06-forward-surplus-design.md`.
 - A node with no children is a leaf: its action must output nothing.
 - At most 16 nodes.
 
@@ -95,12 +96,13 @@ run(node, input)                                        depth first
     reject acts targeting the DAO or the plugin
     snapshot DAO balances → dao.execute(acts) → verify DAO balances
   children get movement.out (split by weights or the splitter for a branch)
+            forwardSurplus: everything that arrived instead
   splitter: one amount per child, summing to movement.out      else revert InvalidSplit
 ```
 
 ### Balance checks (after every node)
 
-The DAO spent no more than the node's `inAmount` and received at least its `outAmount` (combined into one check when input and output are the same token). Recipient checks are the leaf actions' own postconditions (`assertReceived`), measured around their own `dao.execute`, so they never see another node's movements. Together these make each node's declared output a verified fact before its children spend it.
+The DAO spent no more than the node's `inAmount` and received at least its `outAmount` (combined into one check when input and output are the same token). Recipient checks are the leaf actions' own postconditions (`assertReceived`), measured around their own `dao.execute`, so they never see another node's movements. Together these make each node's declared output a verified fact before its children spend it. On a node marked `forwardSurplus`, the children get the measured amount instead, which may exceed `outAmount`.
 
 ### Example flows
 
@@ -128,7 +130,7 @@ Rejected shapes: a bound action below a node with an action (`BudgetMismatch`), 
 2. **Every node that receives something must succeed.** A node fed by the budget (the root, or one below branches without an action) takes a non-zero amount, up to its input; every other node takes exactly its input; leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
 3. **The budget is read once and committed once, after the whole tree,** so a stream checkpoint sees the final balance.
 4. **Planning is view-only.** Every state change is a DAO action; each node is planned right before its own `execute`.
-5. **Actions declare their output in `build`.** Branch weights or a splitter divide the declared output. Swap surplus above the declared minimum stays in the DAO.
+5. **Actions declare their output in `build`.** The declared output is a minimum. Branch weights or a splitter divide it, and anything above it stays in the DAO, unless the recipe marks the node `forwardSurplus`: then they divide everything that arrived.
 6. **A beneficiary, once set, can't change.** Only `MerkleClaimAction` sets one; it flows down every branch.
 7. **Bound actions (OpenFill, MerkleClaim) must be fed by their budget:** the root, or a node below branches without an action, whose input is still untouched budget tokens. What such a node doesn't take never left the DAO. `MerkleClaimAction` stays at the root: below a branch its siblings would take a share of the whole budget on every claim, so it reverts unless its input is the whole budget.
 8. **No action may target the DAO or the plugin itself**, so no node can grant permissions, upgrade the DAO or reconfigure the flow mid-trigger. `setFlow` is also `nonReentrant`.
@@ -213,7 +215,7 @@ Aragon's framework contracts import ENS, so `lib/ens-contracts` (v0.0.8) is a de
 - Any revert in any node, hook or balance check reverts the whole `trigger`.
 - Paused plugin: `Pausable: paused`. Re-entry: `ReentrancyGuard: reentrant call`.
 - Setup errors: `UnknownComponent` (registry), `UnknownReference`, `GrantOutsideInstallation`, `ReservedPermission`, `GrantsMismatch` (uninstall).
-- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidWeights`, `InvalidSplitter`, `BudgetMismatch`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InAmountExceedsInput`, `NodeIncomplete`, `InvalidSplit`, `InputTokenMismatch`, `LeafLeftOutput`, `InvalidOutToken`, `BeneficiaryChanged`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`).
+- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidWeights`, `InvalidSplitter`, `BudgetMismatch`, `InvalidForwardSurplus`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InAmountExceedsInput`, `NodeIncomplete`, `InvalidSplit`, `InputTokenMismatch`, `LeafLeftOutput`, `InvalidOutToken`, `OutputBelowInput`, `BeneficiaryChanged`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`).
 
 ## Constraints and known limits
 
