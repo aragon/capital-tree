@@ -27,11 +27,10 @@ import {
 ///         node takes up to what it allows; every node passes its output to its children (split by
 ///         fixed weights or a splitter when there are several); leaves consume what they receive
 ///         (transfer, burn, keep). The budget commits once, after the whole tree ran.
-/// @dev Every node that receives something must succeed: a node fed by the budget (the root, or one
-///      below branches without an action) takes a non-zero amount, every other node takes exactly
-///      its input, and leaves output nothing. Anything else reverts the whole trigger. A node that
-///      receives nothing reverts it too, unless it's marked `skipWhenEmpty`: then neither it nor
-///      anything below it runs.
+/// @dev Every node that receives something must succeed: the root takes a non-zero amount up to its
+///      input, every other node takes exactly its input, and leaves output nothing. Anything else
+///      reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
+///      `skipWhenEmpty`: then neither it nor anything below it runs.
 ///      Each node with an action is built (view) right after its parent ran and executes in its
 ///      own `dao.execute`, followed by balance checks: the DAO spent no more than the node's input
 ///      and received at least its declared output. The children get that declared output, or
@@ -42,10 +41,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     IBudget public budget;
 
     Node[] internal _nodes;
-
-    /// @dev Bit i is set when node i receives untouched budget tokens: it's the root, or every node
-    ///      above it is a branch without an action
-    uint256 internal _budgetFed;
 
     /// @dev Makes every execution ID unique
     uint256 internal _nonce;
@@ -200,9 +195,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         if (_movement.inAmount > _input.amount) {
             revert InAmountExceedsInput(_index, _movement.inAmount, _input.amount);
         }
-        // A node fed by the budget may take less than its input (but something): the rest never
-        // left the DAO. Every other node takes all of it.
-        if (_movement.inAmount == 0 || (!_isBudgetFed(_budgetFed, _index) && _movement.inAmount != _input.amount)) {
+        // The root may take less than the budget allows (but something): the rest never left the
+        // DAO. Every other node takes all of it.
+        if (_movement.inAmount == 0 || (_index != 0 && _movement.inAmount != _input.amount)) {
             revert NodeIncomplete(_index, _movement.inAmount, _input.amount);
         }
         if (_movement.inToken != _input.token) revert InputTokenMismatch(_index);
@@ -347,11 +342,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         if (_sum != _record.forwarded) revert InvalidSplit(_index);
     }
 
-    /// @dev Whether node `_index` receives untouched budget tokens, according to the bitmap `_fed`
-    function _isBudgetFed(uint256 _fed, uint256 _index) internal pure returns (bool) {
-        return (_fed & (1 << _index)) != 0;
-    }
-
     /// @dev Once set, the beneficiary carries on; an action may leave it unset but not change it
     function _keepBeneficiary(uint256 _index, address _current, address _proposed) internal pure returns (address) {
         if (_current == address(0) || _proposed == _current) return _proposed;
@@ -381,9 +371,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
         delete _nodes;
         bool[] memory _hasParent = new bool[](_len);
-        uint256 _fed = 1; // the root receives the budget
         for (uint256 i; i < _len; ++i) {
-            _fed = _checkNode(i, _newNodes[i], _budget, _hasParent, _fed);
+            _checkNode(i, _newNodes[i], _budget, _hasParent);
 
             Node storage _stored = _nodes.push();
             _stored.action = _newNodes[i].action;
@@ -397,31 +386,21 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (!_hasParent[i]) revert UnreachableNode(i);
         }
         budget = _budget;
-        _budgetFed = _fed;
 
         emit FlowUpdated(_budget, _newNodes);
     }
 
     /// @dev Children come after their parent and have exactly one parent, so the nodes form a tree
     ///      rooted at node 0 with no cycles. A branch splits by weights summing to RATIO_BASE, or by
-    ///      a splitter of this DAO with no weights.
-    ///      A bound action must be fed by the flow's budget (bit set in `_fed`). Returns `_fed` with
-    ///      this node's children added when it's a branch without an action fed by the budget.
-    function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent, uint256 _fed)
-        internal
-        view
-        returns (uint256)
-    {
-        bool _passesBudgetOn = _isBudgetFed(_fed, _index) && address(_node.action) == address(0);
+    ///      a splitter of this DAO with no weights. A bound action must be bound to the flow's budget.
+    function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent) internal view {
         uint256 _count = _node.children.length;
         if (address(_node.action) == address(0)) {
             if (_count < 2) revert MissingAction(_index);
         } else {
             _checkOwnDao(address(_node.action));
             IBudget _bound = _node.action.budget();
-            if (address(_bound) != address(0) && (!_isBudgetFed(_fed, _index) || _bound != _budget)) {
-                revert BudgetMismatch(_index);
-            }
+            if (address(_bound) != address(0) && _bound != _budget) revert BudgetMismatch(_index);
         }
         // Only an action can receive more than it declared, and only children can be given it
         if (_node.forwardSurplus && (address(_node.action) == address(0) || _count == 0)) {
@@ -434,17 +413,16 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
                 revert InvalidChild(_index, _child);
             }
             _hasParent[_child] = true;
-            if (_passesBudgetOn) _fed |= 1 << _child;
         }
 
         if (address(_node.splitter) != address(0)) {
             if (_count < 2 || _node.weights.length != 0) revert InvalidSplitter(_index);
             _checkOwnDao(address(_node.splitter));
-            return _fed;
+            return;
         }
         if (_count < 2) {
             if (_node.weights.length != 0) revert InvalidWeights(_index);
-            return _fed;
+            return;
         }
         if (_node.weights.length != _count) revert InvalidWeights(_index);
         uint256 _sum;
@@ -453,7 +431,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             _sum += _node.weights[k];
         }
         if (_sum != RATIO_BASE) revert InvalidWeights(_index);
-        return _fed;
     }
 
     /// @dev Every component is a clone initialized for this plugin's DAO. Implementations (bound to

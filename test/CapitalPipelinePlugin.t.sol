@@ -155,25 +155,16 @@ contract CapitalPipelinePluginTest is Fixture {
         );
     }
 
-    function test_ABoundActionCanSitBelowNestedBranchesWithoutAction() public {
-        Node[] memory _tree = new Node[](6);
+    function test_RevertWhen_ABoundActionBelowTheRootUsesAnotherBudget() public {
+        Node[] memory _tree = new Node[](4);
         _tree[0] = _branch(NO_ACTION, 1, 500_000, 2, 500_000);
         _tree[1] = _leaf(keep);
-        _tree[2] = _branch(NO_ACTION, 3, 500_000, 5, 500_000);
-        _tree[3] = _then(action, 4);
-        (_tree[4], _tree[5]) = (_leaf(keep), _leaf(keep));
-
-        assertEq(address(_deployPlugin(budget, _tree).nodes()[3].action), address(action));
-    }
-
-    function test_RevertWhen_ABoundActionIsBelowAnAction() public {
-        Node[] memory _tree = new Node[](5);
-        _tree[0] = _then(_bad(BadAction.Mode.Pass), 1);
-        _tree[1] = _branch(NO_ACTION, 2, 500_000, 4, 500_000);
         _tree[2] = _then(action, 3);
-        (_tree[3], _tree[4]) = (_leaf(keep), _leaf(keep));
+        _tree[3] = _leaf(keep);
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.BudgetMismatch.selector, 2));
+        _expectInitRevert(
+            _deployBudget(RATE, 0), _tree, abi.encodeWithSelector(CapitalPipelinePlugin.BudgetMismatch.selector, 2)
+        );
     }
 
     function test_RevertWhen_ANodeIsAnImplementation() public {
@@ -309,6 +300,19 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(tokenA.balanceOf(address(_filler)), STREAM_CAP, "the auction offers 20 A");
         assertEq(tokenA.balanceOf(address(dao)), DAO_A - STREAM_CAP, "the rest never leaves the DAO");
         assertEq(_budget.available(), 0, "the stream restarts");
+    }
+
+    /// OpenFill offers whatever its parent passes on, wherever it sits
+    function test_AnAuctionBelowAnActionOffersItsWholeInput() public {
+        Node[] memory _tree = new Node[](3);
+        (_tree[0], _tree[1], _tree[2]) = (_then(_bad(BadAction.Mode.Pass), 1), _then(action, 2), _leaf(keep));
+        MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
+        tokenB.mint(address(_filler), DEMAND);
+
+        _filler.fillWithoutData();
+
+        assertEq(tokenA.balanceOf(address(_filler)), RATE, "the filler gets the whole 10 A");
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND, "the proceeds stay in the treasury");
     }
 
     function test_RevertWhen_FillerUnderDelivers() public {
@@ -531,6 +535,16 @@ contract CapitalPipelinePluginTest is Fixture {
         );
 
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 1, DAO_A / 2, DAO_A));
+        _plugin.trigger(noData);
+    }
+
+    /// Only the root may take part of its input, even below a branch without an action
+    function test_RevertWhen_ANodeBelowABranchTakesPartOfItsInput() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(
+            _deployBalanceBudget(tokenA), _fork(NO_ACTION, 500_000, _bad(BadAction.Mode.TakeHalf), 500_000, keep)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 1, DAO_A / 4, DAO_A / 2));
         _plugin.trigger(noData);
     }
 
