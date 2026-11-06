@@ -297,18 +297,18 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(budget.available(), 0, "the stream restarts for both");
     }
 
-    /// The auction offers at most maxOffered(); the rest of its share never leaves the DAO
-    function test_AnAuctionBelowABranchMayTakePartOfItsShare() public {
-        MockFiller _filler = new MockFiller(_deployPlugin(budget, _grantsAndAuction()));
+    /// The stream's cap, not the action, limits the offer
+    function test_TheStreamCapLimitsTheOffer() public {
+        FundedStreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
+        MockFiller _filler = new MockFiller(_deployPlugin(_budget, _chain(_deployAction(_budget), keep)));
         tokenB.mint(address(_filler), DEMAND);
-        vm.warp(block.timestamp + 5 * EPOCH); // 60 A: 30 for grants, 30 for the auction
+        vm.warp(block.timestamp + 5 * EPOCH); // 50 A streamed, capped at 20
 
         _filler.fillWithoutData();
 
-        assertEq(tokenA.balanceOf(alice), 30 ether, "grants get their whole share");
-        assertEq(tokenA.balanceOf(address(_filler)), action.maxOffered(), "the auction offers 20 A");
-        assertEq(tokenA.balanceOf(address(dao)), DAO_A - 50 ether, "10 A stay in the DAO");
-        assertEq(budget.available(), 0, "the stream restarts");
+        assertEq(tokenA.balanceOf(address(_filler)), STREAM_CAP, "the auction offers 20 A");
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A - STREAM_CAP, "the rest never leaves the DAO");
+        assertEq(_budget.available(), 0, "the stream restarts");
     }
 
     function test_RevertWhen_FillerUnderDelivers() public {

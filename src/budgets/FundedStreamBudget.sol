@@ -45,7 +45,7 @@ import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.
 ///
 ///      **Residual case.** If funds leave the DAO by another path and come back before any sync,
 ///      `lastSeenBalance` is stale and the growth accrued meanwhile is released, bounded by that
-///      stale balance and, in an auction, the action's `maxOffered()`. Proposals that spend the
+///      stale balance and, in an auction, the stream's `maxBudget`. Proposals that spend the
 ///      token should include a `sync()` action.
 ///
 ///      One flow per instance.
@@ -155,7 +155,7 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     /// @notice Restarts the amount from zero and records the DAO balance
     /// @dev Executed by the DAO after the whole flow ran, so the recorded balance is what is left
     ///      after the tokens have been handed over. Also called by a bound action to restart its
-    ///      auction when its price terms change.
+    ///      auction when its demand changes.
     function writeCheckpoint() external virtual auth(CHECKPOINT_PERMISSION_ID) {
         _writeCheckpoint();
     }

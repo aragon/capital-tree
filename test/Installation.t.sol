@@ -94,7 +94,7 @@ contract InstallationTest is Fixture {
 
     function test_ConfigBuildsTheSameRecipe() public view {
         Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, 0, EPOCH);
-        Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND, MIN_PRICE);
+        Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND);
 
         assertEq(
             abi.encode(installer.recipe(_buyAndBurnConfig())), abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
@@ -129,8 +129,6 @@ contract InstallationTest is Fixture {
             vm.toString(address(tokenB)),
             '","demandPerFill":"',
             vm.toString(DEMAND),
-            '","minDemandedPerOffered":"',
-            vm.toString(MIN_PRICE),
             '"}}'
         );
     }

@@ -63,17 +63,9 @@ contract Handler is Test {
     }
 
     function setDemandPerFill(uint256 _demand) external {
-        // Keeps maxOffered() >= 1, and at least 20 wei so the 5% branch is never empty
-        uint256 _lowest = action.minDemandedPerOffered() / 1e18 + 1;
-        if (_lowest < 20) _lowest = 20;
+        // At least 20 wei so the 5% branch is never empty
         vm.prank(manager);
-        action.setDemandPerFill(bound(_demand, _lowest, 2_000_000 ether));
-    }
-
-    function setMinDemandedPerOffered(uint256 _price) external {
-        uint256 _highest = action.demandPerFill() * 1e18; // keeps maxOffered() >= 1
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(bound(_price, 1, _highest));
+        action.setDemandPerFill(bound(_demand, 20, 2_000_000 ether));
     }
 }
 

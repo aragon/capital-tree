@@ -46,7 +46,7 @@ abstract contract Fixture is Test {
     uint256 internal constant RATE = 10 ether; // offer growth per epoch
     uint256 internal constant EPOCH = 1 days;
     uint256 internal constant DEMAND = 1000 ether; // B demanded per fill
-    uint256 internal constant MIN_PRICE = 50 ether; // 50 B per A, 1e18-scaled → maxOffered = 20 A
+    uint256 internal constant STREAM_CAP = 20 ether; // 1,000 B for at most 20 A: 50 B per A or better
 
     address internal manager = makeAddr("manager");
     address internal fee = makeAddr("fee");
@@ -122,7 +122,7 @@ abstract contract Fixture is Test {
 
     // Actions
 
-    /// @dev Demands token B. Bound to `_budget`, which it may restart when its price terms change.
+    /// @dev Demands token B. Bound to `_budget`, which it restarts when its demand changes.
     function _deployAction(FundedStreamBudget _budget) internal returns (OpenFillAction) {
         return _deployOpenFill(_budget, tokenB);
     }
@@ -132,7 +132,7 @@ abstract contract Fixture is Test {
         _action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
                 address(new OpenFillAction()),
-                abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND, MIN_PRICE))
+                abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND))
             )
         );
         dao.grant(address(_action), manager, MANAGER_PERMISSION_ID);

@@ -48,7 +48,6 @@ library Recipes {
     struct Swap {
         IERC20 demandedToken;
         uint256 demandPerFill;
-        uint256 minDemandedPerOffered;
     }
 
     /// @notice Stream → OpenFill → burn all the proceeds.
@@ -172,13 +171,7 @@ library Recipes {
             OPEN_FILL,
             abi.encodeCall(
                 OpenFillAction.initialize,
-                (
-                    IDAO(DAO_REF),
-                    ICheckpointedBudget(ref(0)),
-                    _swap.demandedToken,
-                    _swap.demandPerFill,
-                    _swap.minDemandedPerOffered
-                )
+                (IDAO(DAO_REF), ICheckpointedBudget(ref(0)), _swap.demandedToken, _swap.demandPerFill)
             )
         );
     }

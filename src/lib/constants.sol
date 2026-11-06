@@ -21,6 +21,3 @@ uint256 constant MAX_NODES = 16;
 
 /// @dev Ratios are fractions of 1_000_000
 uint256 constant RATIO_BASE = 1_000_000;
-
-/// @dev Prices are 1e18-scaled: demanded_raw * 1e18 / offered_raw
-uint256 constant EXCHANGE_RATE_SCALE = 1e18;

@@ -40,7 +40,7 @@ contract NativeEthTest is Fixture {
         FundedStreamBudget _budget = _deployBudget(RATE, 0);
         OpenFillAction _action = OpenFillAction(ProxyLib.deployMinimalProxy(address(new OpenFillAction()), ""));
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
-        _action.initialize(dao, _budget, NATIVE, DEMAND, MIN_PRICE);
+        _action.initialize(dao, _budget, NATIVE, DEMAND);
     }
 
     function test_RevertWhen_NodeOutputsNative() public {

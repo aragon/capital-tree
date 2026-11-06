@@ -270,7 +270,7 @@ contract CapitalPipelinePluginSetupTest is Fixture {
     }
 
     function _swap() internal view returns (Recipes.Swap memory) {
-        return Recipes.Swap({demandedToken: IERC20(tokenB), demandPerFill: DEMAND, minDemandedPerOffered: MIN_PRICE});
+        return Recipes.Swap({demandedToken: IERC20(tokenB), demandPerFill: DEMAND});
     }
 
     function _pair(address _a, address _b) internal pure returns (address[] memory _recipients) {

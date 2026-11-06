@@ -23,14 +23,10 @@ contract OpenFillActionTest is Fixture {
         action = _deployAction(budget);
     }
 
-    function test_MaxOfferedHoldsTheMinimumPrice() public view {
-        assertEq(action.maxOffered(), 20 ether); // 1000 B / 50 B-per-A
-    }
-
-    function test_BuildCapsTheOfferAtMaxOffered() public view {
+    function test_BuildOffersTheWholeInput() public view {
         (Movement memory _movement,) = action.build(filler, "", _input(50 ether));
 
-        assertEq(_movement.inAmount, 20 ether);
+        assertEq(_movement.inAmount, 50 ether, "no cap of its own");
         assertEq(address(_movement.outToken), address(tokenB));
         assertEq(_movement.outAmount, DEMAND);
         assertEq(_movement.beneficiary, alice, "carries the beneficiary on");
@@ -76,16 +72,6 @@ contract OpenFillActionTest is Fixture {
         assertEq(budget.available(), 0);
     }
 
-    function test_SetMinDemandedPerOfferedRestartsTheAuction() public {
-        vm.warp(block.timestamp + EPOCH);
-
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(25 ether);
-
-        assertEq(action.maxOffered(), 40 ether);
-        assertEq(budget.available(), 0);
-    }
-
     function test_RevertWhen_SetterUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -98,31 +84,19 @@ contract OpenFillActionTest is Fixture {
     function test_RevertWhen_DemandedTokenIsOfferedToken() public {
         OpenFillAction _action = _clone();
         vm.expectRevert(OpenFillAction.SameToken.selector);
-        _action.initialize(dao, budget, tokenA, DEMAND, MIN_PRICE);
+        _action.initialize(dao, budget, tokenA, DEMAND);
     }
 
     function test_RevertWhen_DemandedTokenHasNoCode() public {
         OpenFillAction _action = _clone();
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
-        _action.initialize(dao, budget, IERC20(address(0xBEEF)), DEMAND, MIN_PRICE);
+        _action.initialize(dao, budget, IERC20(address(0xBEEF)), DEMAND);
     }
 
     function test_RevertWhen_ZeroDemand() public {
         vm.expectRevert(OpenFillAction.ZeroDemand.selector);
         vm.prank(manager);
         action.setDemandPerFill(0);
-    }
-
-    function test_RevertWhen_ZeroMinimumPrice() public {
-        vm.expectRevert(OpenFillAction.ZeroMinDemandedPerOffered.selector);
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(0);
-    }
-
-    function test_RevertWhen_MinimumPriceTooHigh() public {
-        vm.expectRevert(OpenFillAction.MinDemandedPerOfferedTooHigh.selector);
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(DEMAND * 1e18 + 1);
     }
 
     function _input(uint256 _available) internal view returns (Input memory) {
