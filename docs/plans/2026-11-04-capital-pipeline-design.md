@@ -44,7 +44,8 @@ commit  writeCheckpoint                   once, after the whole tree
 
 ```solidity
 struct Input { IERC20 token; uint256 amount; address beneficiary; }   // what a node receives
-struct Movement { IERC20 inToken; uint256 inAmount; IERC20 outToken; uint256 outAmount; address beneficiary; }   // what it spends and produces
+struct Movement { IERC20 inToken; uint256 inAmount; IERC20 outToken; uint256 outAmount; address beneficiary; }   // what it declares it spends and produces
+struct Record { Movement expected; uint256 spent; uint256 received; uint256 forwarded; }   // what really happened, and what the children share
 struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter splitter; bool skipWhenEmpty; bool forwardSurplus; }
 
 interface IBudget {
@@ -62,8 +63,8 @@ interface INodeAction {
 }
 
 interface ISplitter {
-    // one amount per child, in order, summing to movement.outAmount
-    function split(address caller, Movement calldata movement, uint256 childCount)
+    // one amount per child, in order, summing to parent.forwarded
+    function split(address caller, Record calldata parent, uint256 childCount)
         external view returns (uint256[] memory amounts);
 }
 ```
@@ -95,9 +96,10 @@ run(node, input)                                        depth first
     acts = build actions + action.postconditions
     reject acts targeting the DAO or the plugin
     snapshot DAO balances → dao.execute(acts) → verify DAO balances
-  children get movement.out (split by weights or the splitter for a branch)
+  children share record.forwarded = movement.out (split by weights or the splitter for a branch)
             forwardSurplus: everything that arrived instead
-  splitter: one amount per child, summing to movement.out      else revert InvalidSplit
+  splitter: one amount per child, summing to record.forwarded  else revert InvalidSplit
+  the splitter gets the node's record; NodeExecuted emits it
 ```
 
 ### Balance checks (after every node)

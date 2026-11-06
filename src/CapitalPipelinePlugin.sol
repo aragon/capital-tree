@@ -13,7 +13,7 @@ import {
 import {IBudget} from "./interfaces/IBudget.sol";
 import {INodeAction} from "./interfaces/INodeAction.sol";
 import {ISplitter} from "./interfaces/ISplitter.sol";
-import {Input, Movement, Node} from "./lib/types.sol";
+import {Input, Movement, Node, Record} from "./lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
@@ -52,7 +52,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     uint256 internal _nonce;
 
     event FlowUpdated(IBudget budget, Node[] nodes);
-    event NodeExecuted(uint256 indexed nodeIndex, address indexed caller, bytes32 executionId, Movement movement);
+    event NodeExecuted(uint256 indexed nodeIndex, address indexed caller, bytes32 executionId, Record record);
     event BudgetCommitted(bytes32 executionId);
 
     // Configuration errors
@@ -131,38 +131,40 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             revert EmptyInput(_index);
         }
 
-        Movement memory _movement;
+        Record memory _record;
         if (address(_node.action) == address(0)) {
-            // A branch without an action passes its input on
-            _movement = Movement(_input.token, _input.amount, _input.token, _input.amount, _input.beneficiary);
+            // A branch without an action passes its input on: nothing runs, so nothing moves
+            _record.expected = Movement(_input.token, _input.amount, _input.token, _input.amount, _input.beneficiary);
+            _record.forwarded = _input.amount;
         } else {
             bytes calldata _nodeData = _data.length == 0 ? msg.data[0:0] : _data[_index];
-            _movement = _runAction(_index, _node.action, _input, _nodeData, _node.children.length == 0, _callNonce);
+            _record = _runAction(_index, _node.action, _input, _nodeData, _node.children.length == 0, _callNonce);
         }
 
-        _runChildren(_index, _node, _movement, _data, _callNonce);
+        _runChildren(_index, _node, _record, _data, _callNonce);
     }
 
+    /// @dev The children share `_record.forwarded`
     function _runChildren(
         uint256 _index,
         Node storage _node,
-        Movement memory _movement,
+        Record memory _record,
         bytes[] calldata _data,
         uint256 _callNonce
     ) internal {
         uint256 _count = _node.children.length;
         if (_count == 0) return;
         if (_count == 1) {
-            _runNode(_node.children[0], _childInput(_movement, _movement.outAmount), _data, _callNonce);
+            _runNode(_node.children[0], _childInput(_record, _record.forwarded), _data, _callNonce);
             return;
         }
 
         ISplitter _splitter = _node.splitter;
         uint256[] memory _amounts = address(_splitter) == address(0)
-            ? _weighted(_movement.outAmount, _node.weights)
-            : _split(_index, _splitter, _movement, _count);
+            ? _weighted(_record.forwarded, _node.weights)
+            : _split(_index, _splitter, _record, _count);
         for (uint256 k; k < _count; ++k) {
-            _runNode(_node.children[k], _childInput(_movement, _amounts[k]), _data, _callNonce);
+            _runNode(_node.children[k], _childInput(_record, _amounts[k]), _data, _callNonce);
         }
     }
 
@@ -173,17 +175,16 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         bytes calldata _data,
         bool _leaf,
         uint256 _callNonce
-    ) internal returns (Movement memory _movement) {
-        Action[] memory _actions;
-        (_movement, _actions) = _buildAction(_index, _action, _input, _data, _leaf);
+    ) internal returns (Record memory _record) {
+        (Movement memory _movement, Action[] memory _actions) = _buildAction(_index, _action, _input, _data, _leaf);
 
-        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_index, _movement);
+        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_movement);
         bytes32 _executionId = keccak256(abi.encode(address(this), _callNonce, _index));
         _execute(_index, _actions, _executionId);
         _verify(_index, _movement, _inBefore, _outBefore);
-        _movement.outAmount = _forwarded(_index, _movement, _inBefore, _outBefore);
+        _record = _measure(_index, _movement, _inBefore, _outBefore);
 
-        emit NodeExecuted(_index, msg.sender, _executionId, _movement);
+        emit NodeExecuted(_index, msg.sender, _executionId, _record);
     }
 
     /// @dev Calls the action's hooks in order and checks its movement against the node's input
@@ -245,16 +246,16 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Balance checks
 
-    function _snapshot(uint256 _index, Movement memory _movement)
-        internal
-        view
-        returns (uint256 _inBefore, uint256 _outBefore)
-    {
+    function _snapshot(Movement memory _movement) internal view returns (uint256 _inBefore, uint256 _outBefore) {
         address _dao = address(dao());
         _inBefore = tokenBalance(_movement.inToken, _dao);
-        if (_movement.outToken != _movement.inToken && (_movement.outAmount != 0 || _nodes[_index].forwardSurplus)) {
-            _outBefore = tokenBalance(_movement.outToken, _dao);
-        }
+        if (_measuresOut(_movement)) _outBefore = tokenBalance(_movement.outToken, _dao);
+    }
+
+    /// @dev Whether the output is a token of its own to measure. `_checkOutput` makes sure it is one
+    ///      whenever the node declares an output or forwards its surplus.
+    function _measuresOut(Movement memory _movement) internal view returns (bool) {
+        return _movement.outToken != _movement.inToken && isToken(_movement.outToken);
     }
 
     /// @dev The DAO spent at most `inAmount` and received at least `outAmount`
@@ -267,18 +268,31 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
     }
 
-    /// @dev What the children share: `outAmount`, or everything that arrived when the node forwards
-    ///      its surplus. With two tokens that's the output token's increase; with one, the input
-    ///      plus the net change. `_verify` and `OutputBelowInput` keep both at or above `outAmount`.
-    function _forwarded(uint256 _index, Movement memory _movement, uint256 _inBefore, uint256 _outBefore)
+    /// @dev What the node really did, from the DAO's balances, and what its children share:
+    ///      `outAmount`, or everything that arrived when the node forwards its surplus. With one token
+    ///      only the net change is visible. `_verify` and `OutputBelowInput` keep `forwarded` at or
+    ///      above `outAmount`.
+    function _measure(uint256 _index, Movement memory _movement, uint256 _inBefore, uint256 _outBefore)
         internal
         view
-        returns (uint256)
+        returns (Record memory _record)
     {
-        if (!_nodes[_index].forwardSurplus) return _movement.outAmount;
-        uint256 _balance = tokenBalance(_movement.outToken, address(dao()));
-        if (_movement.outToken == _movement.inToken) return _movement.inAmount + (_balance - _inBefore);
-        return _balance - _outBefore;
+        _record.expected = _movement;
+        address _dao = address(dao());
+        uint256 _inAfter = tokenBalance(_movement.inToken, _dao);
+        if (_inAfter < _inBefore) _record.spent = _inBefore - _inAfter;
+
+        bool _oneToken = _movement.outToken == _movement.inToken;
+        if (_oneToken) {
+            if (_inAfter > _inBefore) _record.received = _inAfter - _inBefore;
+        } else if (_measuresOut(_movement)) {
+            uint256 _outAfter = tokenBalance(_movement.outToken, _dao);
+            if (_outAfter > _outBefore) _record.received = _outAfter - _outBefore;
+        }
+
+        if (!_nodes[_index].forwardSurplus) _record.forwarded = _movement.outAmount;
+        else if (_oneToken) _record.forwarded = _movement.inAmount + _record.received;
+        else _record.forwarded = _record.received;
     }
 
     /// @dev Reverts unless `balance + spent >= target`
@@ -291,8 +305,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Helpers
 
-    function _childInput(Movement memory _movement, uint256 _amount) internal pure returns (Input memory) {
-        return Input(_movement.outToken, _amount, _movement.beneficiary);
+    function _childInput(Record memory _record, uint256 _amount) internal pure returns (Input memory) {
+        return Input(_record.expected.outToken, _amount, _record.expected.beneficiary);
     }
 
     /// @dev Splits `_amount` by `_weights`; the rounding remainder goes to the largest weight
@@ -310,20 +324,20 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _amounts[_largest] += _amount - _assigned;
     }
 
-    /// @dev The splitter's amounts, which must be one per child and add up to the output
-    function _split(uint256 _index, ISplitter _splitter, Movement memory _movement, uint256 _count)
+    /// @dev The splitter's amounts, which must be one per child and add up to what the children share
+    function _split(uint256 _index, ISplitter _splitter, Record memory _record, uint256 _count)
         internal
         view
         returns (uint256[] memory _amounts)
     {
-        _amounts = _splitter.split(msg.sender, _movement, _count);
+        _amounts = _splitter.split(msg.sender, _record, _count);
         if (_amounts.length != _count) revert InvalidSplit(_index);
 
         uint256 _sum;
         for (uint256 k; k < _count; ++k) {
             _sum += _amounts[k];
         }
-        if (_sum != _movement.outAmount) revert InvalidSplit(_index);
+        if (_sum != _record.forwarded) revert InvalidSplit(_index);
     }
 
     /// @dev Whether node `_index` receives untouched budget tokens, according to the bitmap `_fed`

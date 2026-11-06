@@ -35,13 +35,20 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 | **Leaf** | A node without children. Its action consumes its whole input and outputs nothing. |
 | **Splitter** | A contract that divides a branch's output among its children when the flow runs, in place of fixed weights. It only returns amounts: the children stay nodes of the tree. |
 
-Amounts move down the tree as two structs:
+Amounts move down the tree as three structs:
 
 ```solidity
 struct Input    { IERC20 token; uint256 amount; address beneficiary; }        // what a node receives
-struct Movement { IERC20 inToken; uint256 inAmount;                           // what it spends
-                  IERC20 outToken; uint256 outAmount; address beneficiary; }  // what its children get
+struct Movement { IERC20 inToken; uint256 inAmount;                           // what it declares it spends
+                  IERC20 outToken; uint256 outAmount; address beneficiary; }  // and produces (a minimum)
+struct Record   { Movement expected; uint256 spent;                           // what really happened,
+                  uint256 received; uint256 forwarded; }                      // and what its children share
 ```
+
+The plugin measures `spent` and `received` on the DAO's balances after the node runs. With one
+token only the net change is visible: a node that pays 10 and gets 20 back records 0 spent and 10
+received. `forwarded` is `outAmount`, or everything that arrived on a node marked `forwardSurplus`.
+The node's splitter gets the record, and `NodeExecuted` emits it.
 
 ### One trigger, step by step
 
@@ -89,7 +96,7 @@ When a node runs:
 3. Once an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more. The children get `outAmount`; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
-6. A splitter returns one amount per child, adding up to the node's output.
+6. A splitter returns one amount per child, adding up to what the children share (`forwarded`).
 7. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
 8. A node marked `forwardSurplus` gives its children everything that arrived: the output token's increase with two tokens, its input plus the net change with one. With one token it must pass its whole input on (`outAmount ≥ inAmount`, `OutputBelowInput`).
 
@@ -250,14 +257,17 @@ the run: a cap for the first child, a top-up to a target balance, shares that ch
 
 ```solidity
 interface ISplitter {
-    function split(address caller, Movement calldata movement, uint256 childCount)
+    function split(address caller, Record calldata parent, uint256 childCount)
         external view returns (uint256[] memory amounts);
 }
 ```
 
 - **Amounts only:** one per child, in the order of the node's children. A splitter can't pick
   other nodes, so the tree's shape stays what `setFlow` checked.
-- **Checked by the plugin:** the amounts must add up to the node's output (`InvalidSplit`).
+- **Checked by the plugin:** the amounts must add up to what the children share, `parent.forwarded`
+  (`InvalidSplit`).
+- **Expected and real:** the record lets a splitter tell the declared output
+  (`parent.expected.outAmount`) from a surplus, for example to send the surplus to a Keep leaf.
 - **Empty shares:** a child that gets 0 reverts the trigger, unless it's marked `skipWhenEmpty`:
   then it and everything below it are skipped, as with a weight that rounds down.
 - **View only:** a split changes no state.

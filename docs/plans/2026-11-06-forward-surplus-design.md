@@ -1,7 +1,7 @@
 # Forward Surplus: Design
 
 Date: 2026-11-06
-Status: accepted. Both phases are being implemented together on `feat/forward-received-output`, replacing the forward-by-default change made there first.
+Status: implemented (both phases) on `feat/forward-received-output`, replacing the forward-by-default change made there first.
 Exploration: the "Pipeline Output Options" page (options A to E, worked examples, ways to trick the system, preview research): https://claude.ai/artifact/XThNjmFGnKBnq5QuDdPNGP
 
 ## Goal
@@ -24,7 +24,7 @@ Let a node pass its children what really arrived, not only what it declared, but
 | One-token forwarding node | Passes its whole input on: `outAmount ≥ inAmount`. Anything above `inAmount` is a minimum it expects to receive. Keeping part of the input takes a split and a Keep leaf. |
 | Where it's allowed | Only on a node with an action and at least one child. |
 | Actions | No change. An action declares a minimum in `outAmount`, as today. |
-| Record for children | Phase 2: the children and splitters see what the parent expected and what really happened. |
+| Record | Phase 2: the node's splitter and `NodeExecuted` see what the node expected and what really happened. Children don't get it. |
 
 ## Behavior
 
@@ -90,13 +90,6 @@ struct Record {
     uint256 forwarded;  // what the children share
 }
 
-struct Input {
-    IERC20 token;
-    uint256 amount;
-    address beneficiary;
-    Record parent;      // empty at the root
-}
-
 interface ISplitter {
     function split(address caller, Record calldata parent, uint256 childCount)
         external view returns (uint256[] memory amounts);
@@ -111,9 +104,11 @@ Measurement:
 - **One token:** with `net = after − before`, `spent = max(0, −net)` and `received = max(0, net)`. The record holds net amounts: a node that pays 10 and gets 20 back records 0 spent and 10 received.
 - **Branch without an action:** `spent = 0`, `received = 0`, `forwarded` = its input.
 
-What it enables: a surplus splitter that sends `expected.outAmount` one way and `forwarded − expected.outAmount` another, and children that can check the realized price.
+What it enables: a surplus splitter that sends `expected.outAmount` one way and `forwarded − expected.outAmount` another, and indexers that see declared and real amounts per node.
 
-It's a separate phase because it changes the ABI of `INodeAction` (through `Input`), `ISplitter` and the event. Every splitter and the playground's ABI change with it. Phase 1 stands on its own.
+The record isn't passed to child actions. An earlier draft added `Input.parent`, but no action reads it, and it would have changed every action's ABI and added 8 words to every `preconditions` and `build` call. A child that needs its parent's numbers can get the field back when it exists.
+
+It's a separate phase because it changes the ABI of `ISplitter` and the event. Every splitter and the playground's ABI change with it. Phase 1 stands on its own.
 
 ## Interactions
 
@@ -137,10 +132,9 @@ Phase 1:
 
 Phase 2:
 
-- `src/lib/types.sol`: `Record`, `Input.parent`.
+- `src/lib/types.sol`: `Record`.
 - `src/interfaces/ISplitter.sol`, test splitters (`CapSplitter`, `FixedSplitter`): the new `split` signature.
-- `src/CapitalPipelinePlugin.sol`: build the record, `_childInput`, the event.
-- Tests that build an `Input` directly: `test/LeafActions.t.sol:110`, `test/NativeEth.t.sol:57`, `test/OpenFillAction.t.sol:129`.
+- `src/CapitalPipelinePlugin.sol`: build the record, pass it to the splitter, emit it.
 - `playground/abis.json`: regenerate.
 
 ## Testing (Foundry)
@@ -159,10 +153,10 @@ Phase 1:
 
 Phase 2:
 
-1. A splitter receives the parent's record (expected 1,000 B, received 1,050 B, forwarded 1,050 B), and a surplus splitter sends the 50 B to Keep.
-2. A child's `Input.parent` equals the parent's record (a mock action checks it in `preconditions`).
-3. `NodeExecuted` emits the record.
-4. A branch without an action records 0 spent, 0 received, and its input as forwarded.
+1. A splitter receives the node's record (expected 1,000 B, received 1,050 B, forwarded 1,050 B), and a surplus splitter sends the 50 B to Keep.
+2. `NodeExecuted` emits the record, on a forwarding node and on a declared one (received 1,050 B, forwarded 1,000 B).
+3. With one token the record holds the net change: paying 10 and getting 20 back records 0 spent and 10 received.
+4. A branch without an action gives its splitter a record of 0 spent, 0 received, and its input as forwarded.
 
 ## Out of scope
 
@@ -184,3 +178,4 @@ Separate changes:
 
 1. Phase 2 (the record) ships together with phase 1.
 2. The errors are `InvalidForwardSurplus` and `OutputBelowInput`.
+3. The record goes to the splitter and the event only, not to child actions (`Input` is unchanged).
