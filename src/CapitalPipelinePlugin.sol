@@ -21,7 +21,6 @@ import {
     RATIO_BASE,
     MAX_NODES
 } from "./lib/constants.sol";
-import {tokenBalance, isToken} from "./lib/tokens.sol";
 
 /// @title CapitalPipelinePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget is read once; the root
@@ -79,6 +78,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error InvalidOutToken(uint256 nodeIndex);
     error OutputBelowInput(uint256 nodeIndex, uint256 outAmount, uint256 inAmount);
     error BeneficiaryChanged(uint256 nodeIndex);
+    error MissingFunctionSelector(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsDao(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 nodeIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
@@ -217,7 +217,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     ///      with one token passes its whole input on
     function _checkOutput(uint256 _index, Movement memory _movement) internal view {
         bool _forwards = _nodes[_index].forwardSurplus;
-        if ((_movement.outAmount != 0 || _forwards) && !isToken(_movement.outToken)) revert InvalidOutToken(_index);
+        if ((_movement.outAmount != 0 || _forwards) && address(_movement.outToken).code.length == 0) {
+            revert InvalidOutToken(_index);
+        }
         if (_forwards && _movement.outToken == _movement.inToken && _movement.outAmount < _movement.inAmount) {
             revert OutputBelowInput(_index, _movement.outAmount, _movement.inAmount);
         }
@@ -228,6 +230,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
         address _dao = address(dao());
         for (uint256 i; i < _actions.length; ++i) {
+            // Value-bearing calls must include a selector. This does not validate the target
+            // or bound native spending: configured actions are trusted to authorize that spend.
+            if (_actions[i].value != 0 && _actions[i].data.length < 4) {
+                revert MissingFunctionSelector(_index, i);
+            }
             if (_actions[i].to == _dao) revert ActionTargetsDao(_index, i);
             if (_actions[i].to == address(this)) revert ActionTargetsPlugin(_index, i);
         }
@@ -248,14 +255,14 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     function _snapshot(Movement memory _movement) internal view returns (uint256 _inBefore, uint256 _outBefore) {
         address _dao = address(dao());
-        _inBefore = tokenBalance(_movement.inToken, _dao);
-        if (_measuresOut(_movement)) _outBefore = tokenBalance(_movement.outToken, _dao);
+        _inBefore = _movement.inToken.balanceOf(_dao);
+        if (_measuresOut(_movement)) _outBefore = _movement.outToken.balanceOf(_dao);
     }
 
     /// @dev Whether the output is a token of its own to measure. `_checkOutput` makes sure it is one
     ///      whenever the node declares an output or forwards its surplus.
     function _measuresOut(Movement memory _movement) internal view returns (bool) {
-        return _movement.outToken != _movement.inToken && isToken(_movement.outToken);
+        return _movement.outToken != _movement.inToken && address(_movement.outToken).code.length != 0;
     }
 
     /// @dev The DAO spent at most `inAmount` and received at least `outAmount`
@@ -279,14 +286,14 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     {
         _record.expected = _movement;
         address _dao = address(dao());
-        uint256 _inAfter = tokenBalance(_movement.inToken, _dao);
+        uint256 _inAfter = _movement.inToken.balanceOf(_dao);
         if (_inAfter < _inBefore) _record.spent = _inBefore - _inAfter;
 
         bool _oneToken = _movement.outToken == _movement.inToken;
         if (_oneToken) {
             if (_inAfter > _inBefore) _record.received = _inAfter - _inBefore;
         } else if (_measuresOut(_movement)) {
-            uint256 _outAfter = tokenBalance(_movement.outToken, _dao);
+            uint256 _outAfter = _movement.outToken.balanceOf(_dao);
             if (_outAfter > _outBefore) _record.received = _outAfter - _outBefore;
         }
 
@@ -297,7 +304,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     /// @dev Reverts unless `balance + spent >= target`
     function _checkDao(uint256 _index, IERC20 _token, uint256 _target, uint256 _spent) internal view {
-        uint256 _actual = tokenBalance(_token, address(dao()));
+        uint256 _actual = _token.balanceOf(address(dao()));
         if (_actual + _spent < _target) {
             revert UnexpectedBalance(_index, address(_token), _target > _spent ? _target - _spent : 0, _actual);
         }

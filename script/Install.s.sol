@@ -19,8 +19,9 @@ import {Recipes} from "./Recipes.sol";
 ///         apply the installation, revoke ROOT.
 /// @dev Run: `forge script script/Install.s.sol --rpc-url <rpc> --broadcast` with
 ///      - `INSTALL_CONFIG`: a file in `installs/` (see the examples there)
-///      - `PLUGIN_SETUP_PROCESSOR`: Aragon's `PluginSetupProcessor` on that network
+///      - `PLUGIN_SETUP_PROCESSOR_ADDRESS`: Aragon's processor on that network
 ///      - `PLUGIN_REPO`: the plugin repo published by `Deploy.s.sol`
+///      - `DEPLOYER_KEY`: signing key for the installation preparation
 ///      Preparing is permissionless; nothing is installed until the DAO executes the actions.
 contract Install is Script {
     using stdJson for string;
@@ -32,10 +33,10 @@ contract Install is Script {
 
     function run() external returns (address plugin, Action[] memory actions) {
         string memory _config = vm.readFile(vm.envString("INSTALL_CONFIG"));
-        PluginSetupProcessor _psp = PluginSetupProcessor(vm.envAddress("PLUGIN_SETUP_PROCESSOR"));
+        PluginSetupProcessor _psp = PluginSetupProcessor(vm.envAddress("PLUGIN_SETUP_PROCESSOR_ADDRESS"));
         PluginRepo _repo = PluginRepo(vm.envAddress("PLUGIN_REPO"));
 
-        vm.startBroadcast();
+        vm.startBroadcast(vm.envUint("DEPLOYER_KEY"));
         (plugin, actions) = install(_psp, _repo, _config.readAddress(".dao"), _config);
         vm.stopBroadcast();
 

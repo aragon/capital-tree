@@ -115,7 +115,7 @@ It's a separate phase because it changes the ABI of `ISplitter` and the event. E
 - **`skipWhenEmpty`:** unchanged. A forwarding node that declared 0 and received nothing passes 0, which skips or reverts as today.
 - **Budget-fed nodes** (OpenFill at the root or below action-less branches): `inAmount` may be less than the input. `forwarded` uses `inAmount`, so the untaken part never counts.
 - **Beneficiary, pause, reentrancy, budget commit:** unchanged.
-- **Native ETH:** `tokenBalance` already handles `NATIVE`.
+- **Native ETH:** not supported since `dev` removed it; balances are read with `balanceOf`.
 - **Storage:** the new bool packs into the slot that already holds `splitter` and `skipWhenEmpty`. The plugin is a clone, not upgradeable, so only new installs see the new layout.
 
 ## Changes, file by file
@@ -142,7 +142,7 @@ Phase 2:
 Phase 1:
 
 1. A declared OpenFill node with a filler that overpays 50 B: the children get 1,000 B and the DAO keeps 50 B, as today.
-2. The four overpayment tests already on this branch (single child, weights, splitter, native ETH) set `forwardSurplus` on the OpenFill node.
+2. The overpayment tests already on this branch (single child, weights, splitter) set `forwardSurplus` on the OpenFill node. The native ETH one went away with native support.
 3. A one-token forwarding node with income (a new mock action that pulls tokens in): the children get `inAmount + net`. The same node declared: the children get `outAmount`.
 4. A one-token forwarding node with `outAmount < inAmount`: `OutputBelowInput`.
 5. A one-token forwarding node that loses tokens: `UnexpectedBalance`.
