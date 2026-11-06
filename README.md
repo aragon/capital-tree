@@ -93,7 +93,7 @@ nor anything below it runs.
 
 When a node runs:
 
-1. A node fed by the budget (the root, or one below branches without an action) takes more than zero and at most its input; every other node takes exactly its input. What a node fed by the budget doesn't take never left the DAO.
+1. The root takes more than zero and at most its input; every other node takes exactly its input. What the root doesn't take never left the DAO.
 2. A node spends the token it received; a leaf outputs nothing; any output is a contract.
 3. Once an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
@@ -107,7 +107,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
 2. A node without an action has at least 2 children.
 3. A node with 2+ children splits by weights (one per child, none zero, summing to 1,000,000) or by a splitter, never both. Other nodes have neither.
-4. An action bound to a budget (OpenFill, MerkleClaim) must be fed by that same budget: the root, or a node below branches without an action.
+4. An action bound to a budget (OpenFill, MerkleClaim) must be bound to the flow's budget. It may sit anywhere; MerkleClaim keeps itself at the root (`NotTheWholeBudget`).
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
 7. Only a node with an action and children can be marked `forwardSurplus` (`InvalidForwardSurplus`).
@@ -175,22 +175,24 @@ action's safety checks can't be skipped.
 | `build(caller, data, input)`       | The `Movement` and the DAO actions that do the work                           |
 | `postconditions(caller, movement)` | DAO actions that check the work, run right after it                           |
 
-#### OpenFillAction (root, or below branches without an action)
+#### OpenFillAction
 
-A take-it-or-leave-it swap priced as a Dutch auction. The bound stream grows the offer of token A
-from zero, and the DAO demands a flat `demandPerFill` of token B for it. The price obtained,
-`demandPerFill / offered`, worsens as the offer grows, until `maxOffered()` caps the offer at
-`demandPerFill / minDemandedPerOffered`. Whoever finds the trade worth it first calls `trigger()`
-and fills it.
+A take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input of token A, and
+the DAO demands a flat `demandPerFill` of token B for it. Fed by a stream that grows from zero, the
+price obtained, `demandPerFill / offered`, worsens as the offer grows. The action has no cap of its
+own: the stream's `maxBudget`, times the node's share of it, is the most it can offer, so it sets
+the worst price. `script/Recipes.sol` refuses an OpenFill recipe whose stream has no cap. Whoever
+finds the trade worth it first calls `trigger()` and fills it.
 
-- **Moves**: offers `min(input, maxOffered())` of A and outputs `demandPerFill` of B to its children.
+- **Moves**: offers its whole input of A and outputs `demandPerFill` of B to its children.
   On a node marked `forwardSurplus`, the children get all the B the filler sent instead.
-- **Placement**: the root, or below branches without an action, where its input is its share of
-  the budget (see "Grants and an auction" below). Every node of the flow then waits for a fill, and
-  changing the price terms restarts the whole budget, not just the auction's share.
+- **Placement**: anywhere. Below a branch, its input is its share of the budget (see "Grants and
+  an auction" below); below an action, whatever that action passes on. Every node of the flow then
+  waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
-- **Settings**: `setDemandPerFill`, `setMinDemandedPerOffered` (`MANAGER_PERMISSION_ID`). Both restart
-  the auction, so the action needs `CHECKPOINT_PERMISSION_ID` on its budget.
+- **Settings**: `setDemandPerFill` (`MANAGER_PERMISSION_ID`) restarts the auction, so the action
+  needs `CHECKPOINT_PERMISSION_ID` on its budget. The stream's `setMaxBudget` moves the worst price:
+  raising the cap lowers it.
 
 ```mermaid
 sequenceDiagram
@@ -325,9 +327,10 @@ flowchart LR
 ```
 
 **Grants and an auction** (no recipe): a branch with no action splits a stream between a grants
-transfer and an auction, so the auction's offer grows at half the stream's rate. Grants are paid
-only when someone fills the auction. If the offer reaches `maxOffered()`, the rest of the auction's
-share stays in the DAO, and the stream restarts from zero for both.
+transfer and an auction, so the auction's offer grows at half the stream's rate, up to half the
+stream's cap. Grants are paid only when someone fills the auction, and the stream then restarts
+from zero for both. Changing the auction's demand restarts it too, so the grants lose what accrued
+since the last fill (it stays in the DAO).
 
 ```mermaid
 flowchart LR
@@ -426,7 +429,7 @@ flowchart LR
 | `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
 | `src/budgets/FundedStreamBudget.sol`           | Streaming pot that never jumps                                                                             |
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
-| `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing (root, or below branches without an action)                      |
+| `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |
 | `src/actions/MerkleClaimAction.sol`            | Cumulative Merkle claims with a redirectable beneficiary (root only)                                       |
 | `src/actions/base/LeafAction.sol`              | Base for leaves: spends the whole input, outputs nothing                                                   |
 | `src/actions/base/TransferBase.sol`            | Base for transfer leaves: one transfer plus a receipt check                                                |
