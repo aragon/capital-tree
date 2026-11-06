@@ -14,7 +14,7 @@ CONTRACTS = {
     "FundedStreamBudget": "FundedStreamBudget.sol/FundedStreamBudget.json",
     "BalanceBudget": "BalanceBudget.sol/BalanceBudget.json",
     "OpenFillAction": "OpenFillAction.sol/OpenFillAction.json",
-    "MerkleClaimAction": "MerkleClaimAction.sol/MerkleClaimAction.json",
+    "MerkleClaimBudget": "MerkleClaimBudget.sol/MerkleClaimBudget.json",
     "TransferAction": "TransferAction.sol/TransferAction.json",
     "TransferToBeneficiaryAction": "TransferToBeneficiaryAction.sol/TransferToBeneficiaryAction.json",
     "BurnAction": "BurnAction.sol/BurnAction.json",

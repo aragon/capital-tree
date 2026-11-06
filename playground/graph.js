@@ -7,21 +7,21 @@ export const BRANCH = "branch";
 const KINDS = {
   FundedStreamBudget: "budget",
   BalanceBudget: "budget",
+  MerkleClaimBudget: "budget",
   OpenFillAction: "action",
-  MerkleClaimAction: "root",
   TransferAction: "leaf",
   TransferToBeneficiaryAction: "leaf",
   BurnAction: "leaf",
   KeepAction: "leaf",
 };
-const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimAction"]);
+const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimBudget"]);
 const HIDDEN = new Set(["dao", "budget"]); // always DAO_REF, and the flow's budget
 
 const nameOf = (id) => id.split("@")[0];
 const key = (inputName) => inputName.toLowerCase();
 const lowerKeys = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [key(k), v]));
 export const kindOf = (id) => (id === BRANCH ? "branch" : (KINDS[nameOf(id)] ?? "leaf"));
-export const ports = (id) => ({ budget: [0, 1], root: [1, 1], action: [1, 1], branch: [1, 1], leaf: [1, 0] })[kindOf(id)];
+export const ports = (id) => ({ budget: [0, 1], action: [1, 1], branch: [1, 1], leaf: [1, 0] })[kindOf(id)];
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -43,7 +43,7 @@ export function defaultData(id, { tokenA, tokenB }) {
     FundedStreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "20e18", epochInterval: "86400" },
     BalanceBudget: { token: tokenA },
     OpenFillAction: { demandedToken: tokenB, demandPerFill: "1000e18" },
-    MerkleClaimAction: { root: "0x" + "00".repeat(32) },
+    MerkleClaimBudget: { token: tokenA, root: "0x" + "00".repeat(32) },
     TransferAction: { to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" },
   };
   return { ...lowerKeys(defaults[nameOf(id)] ?? {}), ...(kindOf(id) === "budget" ? {} : { share: "500000" }) };
@@ -186,7 +186,7 @@ export function suggestGrants(components, manager) {
         if (nameOf(other.id) === "OpenFillAction") grants.push({ where: `ref(${i})`, who: `ref(${j})`, permission: "CHECKPOINT" });
       });
     }
-    if (name === "MerkleClaimAction") grants.push({ where: `ref(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
+    if (name === "MerkleClaimBudget") grants.push({ where: `ref(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
   });
   return grants;
 }

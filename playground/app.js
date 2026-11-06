@@ -59,8 +59,7 @@ async function refresh() {
 // Graph editor
 
 const GROUPS = [
-  ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1"]],
-  ["Root actions", ["MerkleClaimAction@1"]],
+  ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1", "MerkleClaimBudget@1"]],
   ["Actions", ["OpenFillAction@1"]],
   ["Splits", [graph.BRANCH]],
   ["Leaves", ["TransferAction@1", "TransferToBeneficiaryAction@1", "BurnAction@1", "KeepAction@1"]],
@@ -178,13 +177,12 @@ async function renderFlows() {
   }
   $("#flows").innerHTML = all
     .map((f) => {
-      const root = f.nodes[0];
       const tree = lib.describeTree(f.nodes, (n) => [n.name, ...n.details].join(" · "));
       let run = `<button data-trigger="${f.plugin}">Trigger</button>`;
       if (f.nodes.some((n) => n.name === "OpenFillAction")) run = `<button data-fill="${f.plugin}">Fill with the playground filler</button>`;
-      if (root.name === "MerkleClaimAction") {
+      if (f.budget.name === "MerkleClaimBudget") {
         run = `<input data-cumulative="${f.plugin}" value="100e18" title="Cumulative amount in the tree">
-          <button data-claim="${f.plugin}" data-nodes="${f.nodes.length}">Claim</button>`;
+          <button data-claim="${f.plugin}">Claim</button>`;
       }
       return `<div class="flow">
         <div class="row"><strong>Plugin</strong> <span class="mono">${f.plugin}</span>${f.paused ? ' <span class="bad">paused</span>' : ""}</div>
@@ -196,7 +194,7 @@ async function renderFlows() {
 }
 
 async function runFlow(e) {
-  const { fill, trigger, claim, nodes } = e.target.dataset;
+  const { fill, trigger, claim } = e.target.dataset;
   const plugin = fill ?? trigger ?? claim;
   if (!plugin) return;
   const log = document.querySelector(`[data-log="${plugin}"]`);
@@ -208,7 +206,7 @@ async function runFlow(e) {
     if (trigger) await lib.trigger(ctx, plugin);
     if (claim) {
       const cumulative = lib.amount(document.querySelector(`[data-cumulative="${plugin}"]`).value);
-      await lib.claim(ctx, plugin, Number(nodes), cumulative);
+      await lib.claim(ctx, plugin, cumulative);
     }
     await refresh();
     const after = document.querySelector(`[data-log="${plugin}"]`);

@@ -185,17 +185,16 @@ export function templates({ tokenA, tokenB, account }) {
     },
     "Merkle claim": {
       components: [
-        component("BalanceBudget@1", { token: tokenA }),
-        component("MerkleClaimAction@1", { budget: "ref(0)", root: merkleLeaf(account, 100n * 10n ** 18n) }),
+        component("MerkleClaimBudget@1", { token: tokenA, root: merkleLeaf(account, 100n * 10n ** 18n) }),
         component("TransferToBeneficiaryAction@1", {}),
       ],
       budget: 0,
-      nodes: [{ action: 1, children: "1", weights: "" }, leaf(2)],
+      nodes: [leaf(1)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "MANAGER" },
-        { where: "ref(1)", who: account, permission: "MANAGER" },
-        { where: "ref(1)", who: "DAO", permission: "RECORD_CLAIM" },
+        { where: "ref(0)", who: account, permission: "MANAGER" },
+        { where: "ref(0)", who: "DAO", permission: "RECORD_CLAIM" },
       ],
     },
   };
@@ -380,7 +379,7 @@ export async function describeComponent(ctx, address) {
     const demanded = await symbol(ctx, await get("demandedToken"));
     details.push(`demands ${units(await get("demandPerFill"))} ${demanded} per fill`);
     details.push("offers its whole input");
-  } else if (name === "MerkleClaimAction") {
+  } else if (name === "MerkleClaimBudget") {
     details.push(`root ${(await get("root")).slice(0, 10)}…`);
   } else if (name === "TransferAction") {
     details.push(`to ${await get("recipient")}`);
@@ -426,16 +425,15 @@ export const fill = (ctx, plugin) =>
   write(ctx, { address: ctx.deployment.filler, abi: ctx.abis.filler, functionName: "fill", args: [plugin] });
 
 export const trigger = (ctx, plugin) =>
-  write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: [[]] });
+  write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: ["0x", []] });
 
 /** Claims `cumulative` for the playground account from a one-leaf Merkle tree (empty proof) */
-export async function claim(ctx, plugin, nodeCount, cumulative) {
-  const data = Array(nodeCount).fill("0x");
-  data[0] = encodeAbiParameters(
+export async function claim(ctx, plugin, cumulative) {
+  const data = encodeAbiParameters(
     [{ type: "address" }, { type: "uint256" }, { type: "bytes32[]" }, { type: "address" }],
     [ctx.deployment.account, cumulative, [], zeroAddress],
   );
-  return write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: [data] });
+  return write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: [data, []] });
 }
 
 export async function advance(ctx, seconds) {
