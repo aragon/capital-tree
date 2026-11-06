@@ -50,11 +50,10 @@ contract GenericOpenFillForkTest is Test {
         uint256 forkTimestamp = block.timestamp;
         DeployFork deployment = new DeployFork();
         vm.warp(forkTimestamp - deployment.EPOCH());
-        d = deployment.run();
+        d = deployment.run(CALLER);
         deal(address(WETH), address(d.dao), AMOUNT);
         d.budget.sync();
         vm.warp(forkTimestamp);
-        vm.deal(CALLER, 10 ether);
         quotes = new OpenFillQuotes();
     }
 
@@ -68,10 +67,51 @@ contract GenericOpenFillForkTest is Test {
         _;
     }
 
+    /// @notice Executes a fixed WETH/USDC route on mainnet's forked SwapRouter02; no quote API.
     function test_Fork_UniswapWethToUsdc() public forkEnabled {
-        console2.log("Real Uniswap V3 calldata through GenericSwapSolver");
-        _fill(_uniswapData(address(d.dao)), 0);
-        assertEq(WETH.allowance(address(d.solver), ROUTER), 0);
+        bytes memory data = _uniswapData(address(d.dao));
+        vm.expectCall(ROUTER, abi.encodePacked(IV3SwapRouter.exactInputSingle.selector));
+        // A fully spent allowance is already zero; also require the explicit approval reset.
+        vm.expectCall(address(WETH), abi.encodeCall(IERC20.approve, (ROUTER, 0)));
+
+        uint256 demandedBefore = _executeFill(data, 0);
+
+        _assertFilled(demandedBefore);
+        assertEq(WETH.allowance(address(d.solver), ROUTER), 0, "router allowance cleared after fill");
+    }
+
+    function test_Fork_ZeroExLiveQuote() public forkEnabled liveQuotesEnabled {
+        vm.skip(bytes(vm.envOr("ZERO_EX_API_KEY", string(""))).length == 0);
+        _quoteEnvironment();
+        (bytes memory data, uint256 value) = quotes.zeroEx();
+        uint256 demandedBefore = _executeFill(data, value);
+
+        _assertFilled(demandedBefore);
+    }
+
+    function test_Fork_OneInchLiveQuote() public forkEnabled liveQuotesEnabled {
+        vm.skip(bytes(vm.envOr("ONEINCH_API_KEY", string(""))).length == 0);
+        _quoteEnvironment();
+        (bytes memory data, uint256 value) = quotes.oneInch();
+        uint256 demandedBefore = _executeFill(data, value);
+
+        _assertFilled(demandedBefore);
+    }
+
+    function test_Fork_KyberSwapLiveQuote() public forkEnabled liveQuotesEnabled {
+        _quoteEnvironment();
+        (bytes memory data, uint256 value) = (new PublicOpenFillQuotes()).kyberSwap();
+        uint256 demandedBefore = _executeFill(data, value);
+
+        _assertFilled(demandedBefore);
+    }
+
+    function test_Fork_VeloraLiveQuote() public forkEnabled liveQuotesEnabled {
+        _quoteEnvironment();
+        (bytes memory data, uint256 value) = (new PublicOpenFillQuotes()).velora();
+        uint256 demandedBefore = _executeFill(data, value);
+
+        _assertFilled(demandedBefore);
     }
 
     function test_Fork_MisdirectedOutputRollsBack() public forkEnabled {
@@ -81,7 +121,7 @@ contract GenericOpenFillForkTest is Test {
         bytes[] memory perNode = quotes.forNode(d.plugin.nodes().length, 0, data);
         vm.prank(CALLER, CALLER);
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
-        d.solver.trigger(d.plugin, perNode);
+        d.solver.trigger(perNode);
         assertEq(WETH.balanceOf(address(d.dao)), AMOUNT);
         assertEq(USDC.balanceOf(address(d.dao)), 0);
         assertEq(USDC.balanceOf(CALLER), callerBefore);
@@ -90,30 +130,27 @@ contract GenericOpenFillForkTest is Test {
         assertEq(WETH.allowance(address(d.solver), ROUTER), 0);
     }
 
-    function test_Fork_ZeroExLiveQuote() public forkEnabled liveQuotesEnabled {
-        vm.skip(bytes(vm.envOr("ZERO_EX_API_KEY", string(""))).length == 0);
-        _quoteEnvironment();
-        (bytes memory data, uint256 value) = quotes.zeroEx();
-        _fill(data, value);
+    // Helpers
+
+    function _executeFill(bytes memory data, uint256 value) internal returns (uint256 demandedBefore) {
+        assertEq(value, 0, "ERC20 solver requires zero call value");
+        demandedBefore = d.action.demandPerFill();
+        bytes[] memory perNode = quotes.forNode(d.plugin.nodes().length, 0, data);
+        vm.prank(CALLER, CALLER);
+        d.solver.trigger(perNode);
+        console2.log("WETH sold (wei)", AMOUNT);
+        console2.log("USDC received (6 decimals)", USDC.balanceOf(address(d.dao)));
     }
 
-    function test_Fork_OneInchLiveQuote() public forkEnabled liveQuotesEnabled {
-        vm.skip(bytes(vm.envOr("ONEINCH_API_KEY", string(""))).length == 0);
-        _quoteEnvironment();
-        (bytes memory data, uint256 value) = quotes.oneInch();
-        _fill(data, value);
-    }
-
-    function test_Fork_KyberSwapLiveQuote() public forkEnabled liveQuotesEnabled {
-        _quoteEnvironment();
-        (bytes memory data, uint256 value) = (new PublicOpenFillQuotes()).kyberSwap();
-        _fill(data, value);
-    }
-
-    function test_Fork_VeloraLiveQuote() public forkEnabled liveQuotesEnabled {
-        _quoteEnvironment();
-        (bytes memory data, uint256 value) = (new PublicOpenFillQuotes()).velora();
-        _fill(data, value);
+    function _assertFilled(uint256 demandedBefore) internal view {
+        assertEq(WETH.balanceOf(address(d.dao)), 0);
+        assertGt(demandedBefore, 0);
+        assertGe(USDC.balanceOf(address(d.dao)), demandedBefore);
+        assertEq(WETH.balanceOf(address(d.solver)), 0);
+        assertEq(USDC.balanceOf(address(d.solver)), 0);
+        assertEq(WETH.allowance(address(d.dao), address(d.solver)), 0);
+        assertEq(d.budget.available(), 0);
+        assertEq(d.budget.baseTimestamp(), block.timestamp);
     }
 
     function _uniswapData(address receiver) internal view returns (bytes memory) {
@@ -139,23 +176,6 @@ contract GenericOpenFillForkTest is Test {
         );
         calls[3] = Action(address(WETH), 0, abi.encodeCall(IERC20.approve, (ROUTER, 0)));
         return abi.encode(calls);
-    }
-
-    function _fill(bytes memory data, uint256 value) internal {
-        uint256 demandedBefore = d.action.demandPerFill();
-        bytes[] memory perNode = quotes.forNode(d.plugin.nodes().length, 0, data);
-        vm.prank(CALLER, CALLER);
-        d.solver.trigger{value: value}(d.plugin, perNode);
-        console2.log("WETH sold (wei)", AMOUNT);
-        console2.log("USDC received (6 decimals)", USDC.balanceOf(address(d.dao)));
-        assertEq(WETH.balanceOf(address(d.dao)), 0);
-        assertGt(demandedBefore, 0);
-        assertGe(USDC.balanceOf(address(d.dao)), demandedBefore);
-        assertEq(WETH.balanceOf(address(d.solver)), 0);
-        assertEq(USDC.balanceOf(address(d.solver)), 0);
-        assertEq(WETH.allowance(address(d.dao), address(d.solver)), 0);
-        assertEq(d.budget.available(), 0);
-        assertEq(d.budget.baseTimestamp(), block.timestamp);
     }
 
     function _quoteEnvironment() internal {

@@ -9,8 +9,13 @@ import {MAX_NODES} from "../../src/lib/constants.sol";
 
 // Quote/build only: no deployment, fork, broadcast or live execution.
 // Returns callback bytes (abi.encode(Action[])) to place in a pipeline node's payload.
-// These quote adapters support ERC20 pairs; native routes can be assembled manually.
+// These quote adapters support ERC20 pairs and zero-value router calls only.
 contract OpenFillQuotes is Script {
+    enum Provider {
+        ZeroEx,
+        OneInch
+    }
+
     struct Request {
         uint256 chainId;
         address sellToken;
@@ -41,7 +46,7 @@ contract OpenFillQuotes is Script {
             vm.toString(r.origin),
             "&slippageBps=100"
         );
-        string memory json = _get(url, true);
+        string memory json = _get(url, Provider.ZeroEx);
         data = fromZeroEx(json, r.dao, r.solver, IERC20(r.sellToken), r.sellAmount);
         value = vm.parseUint(vm.parseJsonString(json, ".transaction.value"));
     }
@@ -49,7 +54,7 @@ contract OpenFillQuotes is Script {
     function oneInch() external returns (bytes memory data, uint256 value) {
         Request memory r = _request();
         string memory base = string.concat("https://api.1inch.com/swap/v6.1/", vm.toString(r.chainId));
-        string memory spenderJson = _get(string.concat(base, "/approve/spender"), false);
+        string memory spenderJson = _get(string.concat(base, "/approve/spender"), Provider.OneInch);
         string memory url = string.concat(
             base,
             "/swap?src=",
@@ -66,7 +71,7 @@ contract OpenFillQuotes is Script {
             vm.toString(r.origin),
             "&slippage=1&disableEstimate=true&allowPartialFill=false"
         );
-        string memory json = _get(url, false);
+        string memory json = _get(url, Provider.OneInch);
         data = fromOneInch(json, spenderJson, r.dao, r.solver, IERC20(r.sellToken), r.sellAmount);
         value = vm.parseUint(vm.parseJsonString(json, ".tx.value"));
     }
@@ -109,6 +114,7 @@ contract OpenFillQuotes is Script {
         returns (bytes memory)
     {
         require(token != NATIVE && address(token) != address(0), "ERC20 input required");
+        require(swap.value == 0, "Native ETH not supported");
         Action[] memory calls = new Action[](4);
         calls[0] = Action(address(token), 0, abi.encodeCall(IERC20.transferFrom, (dao, solver, amount)));
         calls[1] = Action(address(token), 0, abi.encodeCall(IERC20.approve, (spender, amount)));
@@ -146,14 +152,20 @@ contract OpenFillQuotes is Script {
         );
     }
 
-    function _get(string memory url, bool isZeroEx) internal returns (string memory) {
+    function _get(string memory url, Provider provider) internal returns (string memory) {
         string[] memory command = new string[](5);
         command[0] = "bash";
         command[1] = "-c";
         // Keys are read by the child process, rather than placed in Forge's FFI trace.
-        command[2] = isZeroEx
-            ? 'curl --fail --silent --show-error --max-time 30 -H "0x-api-key: ${ZERO_EX_API_KEY:?Set ZERO_EX_API_KEY}" -H "0x-version: v2" "$1"'
-            : 'curl --fail --silent --show-error --max-time 30 -H "Authorization: Bearer ${ONEINCH_API_KEY:?Set ONEINCH_API_KEY}" "$1"';
+        if (provider == Provider.ZeroEx) {
+            command[2] =
+                'curl --fail --silent --show-error --max-time 30 -H "0x-api-key: ${ZERO_EX_API_KEY:?Set ZERO_EX_API_KEY}" -H "0x-version: v2" "$1"';
+        } else if (provider == Provider.OneInch) {
+            command[2] =
+                'curl --fail --silent --show-error --max-time 30 -H "Authorization: Bearer ${ONEINCH_API_KEY:?Set ONEINCH_API_KEY}" "$1"';
+        } else {
+            revert("Unsupported quote provider");
+        }
         command[3] = "quote";
         command[4] = url;
         return string(vm.ffi(command));

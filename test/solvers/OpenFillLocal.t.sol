@@ -18,7 +18,6 @@ contract OpenFillLocalTest is Test {
     function setUp() public {
         (d, router) = (new DeployLocal()).run();
         quotes = new OpenFillQuotes();
-        vm.deal(address(this), 1 ether);
     }
 
     function test_zeroExResponseToFill() public {
@@ -55,7 +54,7 @@ contract OpenFillLocalTest is Test {
         calls[5] = Action(address(d.solver), 0, abi.encodeCall(d.solver.sweep, (d.buy, recipient)));
         bytes[] memory perNode = quotes.forNode(d.plugin.nodes().length, 0, abi.encode(calls));
 
-        d.solver.trigger(d.plugin, perNode);
+        d.solver.trigger(perNode);
 
         assertEq(d.buy.balanceOf(address(d.dao)), 5 ether);
         assertEq(d.buy.balanceOf(recipient), 2 ether);
@@ -70,7 +69,7 @@ contract OpenFillLocalTest is Test {
         d.solver.sweep(d.buy, address(this));
     }
 
-    function test_quoteValueFundsTheCallbackWithoutPayingThePlugin() public {
+    function test_quoteRejectsNativeCallValue() public {
         vm.serializeAddress("paidTx", "to", address(router));
         vm.serializeString("paidTx", "value", "1000000000000000");
         string memory transaction = vm.serializeBytes(
@@ -78,15 +77,13 @@ contract OpenFillLocalTest is Test {
         );
         vm.serializeAddress("paidQuote", "allowanceTarget", address(router.spender()));
         string memory json = vm.serializeString("paidQuote", "transaction", transaction);
-        bytes memory fillData = quotes.fromZeroEx(json, address(d.dao), address(d.solver), d.sell, 100 ether);
+        vm.expectRevert("Native ETH not supported");
+        quotes.fromZeroEx(json, address(d.dao), address(d.solver), d.sell, 100 ether);
 
-        d.solver.trigger{value: 0.001 ether}(d.plugin, quotes.forNode(2, 0, fillData));
-
-        assertEq(address(router).balance, 0.001 ether);
-        assertEq(address(d.plugin).balance, 0);
-        assertEq(address(d.solver).balance, 0);
-        assertEq(d.buy.balanceOf(address(d.dao)), 5 ether);
-        assertEq(d.budget.available(), 0);
+        string memory spender = vm.serializeAddress("paidSpender", "address", address(router.spender()));
+        string memory oneInchJson = vm.serializeString("paidOneInch", "tx", transaction);
+        vm.expectRevert("Native ETH not supported");
+        quotes.fromOneInch(oneInchJson, spender, address(d.dao), address(d.solver), d.sell, 100 ether);
     }
 
     function test_misdirectedQuoteRollsBackSwapAndCheckpoint() public {
@@ -102,7 +99,7 @@ contract OpenFillLocalTest is Test {
         uint256 checkpoint = d.budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
-        d.solver.trigger(d.plugin, data);
+        d.solver.trigger(data);
 
         assertEq(d.sell.balanceOf(address(d.dao)), 100 ether);
         assertEq(d.buy.balanceOf(address(router)), 5 ether);
@@ -138,7 +135,7 @@ contract OpenFillLocalTest is Test {
 
     function _fill(bytes memory data) internal {
         console2.log("3. solver.trigger -> plugin.trigger -> build -> DAO -> fillOffer -> calls");
-        d.solver.trigger(d.plugin, quotes.forNode(d.plugin.nodes().length, 0, data));
+        d.solver.trigger(quotes.forNode(d.plugin.nodes().length, 0, data));
         console2.log("4. DAO received demanded tokens; balances and allowances checked");
         assertEq(d.budget.available(), 0);
         assertEq(d.budget.baseTimestamp(), block.timestamp);

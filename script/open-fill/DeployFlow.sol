@@ -9,7 +9,7 @@ import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
-import {GenericSwapSolver} from "../../src/solvers/GenericSwapSolver.sol";
+import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
 import {Node} from "../../src/lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
@@ -28,13 +28,16 @@ abstract contract DeployFlow is Script {
         CapitalPipelinePlugin plugin;
         FundedStreamBudget budget;
         OpenFillAction action;
-        GenericSwapSolver solver;
+        GenericFillSolver solver;
         IERC20 sell;
         IERC20 buy;
     }
 
     /// @dev Fund the DAO and sync the budget afterwards, then let one epoch accrue.
-    function _deploy(IERC20 sell, IERC20 buy, uint256 amount, uint256 demand) internal returns (Deployment memory d) {
+    function _deploy(IERC20 sell, IERC20 buy, uint256 amount, uint256 demand, address operator)
+        internal
+        returns (Deployment memory d)
+    {
         vm.startPrank(ADMIN);
         d.dao = DAO(
             payable(ProxyLib.deployUUPSProxy(
@@ -70,14 +73,14 @@ abstract contract DeployFlow is Script {
             )
         );
         d.dao.grant(address(d.dao), address(d.plugin), d.dao.EXECUTE_PERMISSION_ID());
-        d.dao.grant(address(d.plugin), address(type(uint160).max), TRIGGER_PERMISSION_ID);
         d.dao.grant(address(d.plugin), address(d.dao), CONFIGURE_PERMISSION_ID);
         d.dao.grant(address(d.plugin), ADMIN, MANAGER_PERMISSION_ID);
         d.dao.grant(address(d.budget), ADMIN, MANAGER_PERMISSION_ID);
         d.dao.grant(address(d.action), ADMIN, MANAGER_PERMISSION_ID);
         d.dao.grant(address(d.budget), address(d.dao), CHECKPOINT_PERMISSION_ID);
         d.dao.grant(address(d.budget), address(d.action), CHECKPOINT_PERMISSION_ID);
-        d.solver = new GenericSwapSolver();
+        d.solver = new GenericFillSolver(operator, d.plugin);
+        d.dao.grant(address(d.plugin), address(d.solver), TRIGGER_PERMISSION_ID);
         vm.stopPrank();
     }
 }

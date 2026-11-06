@@ -32,7 +32,7 @@ contract DeployLocal is DeployFlow {
     function run() public returns (Deployment memory d, LocalRouter router) {
         ERC20Mock sell = new ERC20Mock("Offered", "OFR");
         ERC20Mock buy = new ERC20Mock("Demanded", "DMD");
-        d = _deploy(sell, buy, 100 ether, 5 ether);
+        d = _deploy(sell, buy, 100 ether, 5 ether, msg.sender);
         router = new LocalRouter();
         sell.mint(address(d.dao), 100 ether);
         buy.mint(address(router), 5 ether);

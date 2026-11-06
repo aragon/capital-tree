@@ -10,8 +10,12 @@ contract DeployFork is DeployFlow {
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
     function run() public returns (Deployment memory) {
+        return run(msg.sender);
+    }
+
+    function run(address operator) public returns (Deployment memory) {
         require(block.chainid == 1 && WETH.code.length > 0, "Ethereum mainnet fork required");
         // Deliberately easy receipt floor: this tests routing, not price selection.
-        return _deploy(IERC20(WETH), IERC20(USDC), 1 ether, 100e6);
+        return _deploy(IERC20(WETH), IERC20(USDC), 1 ether, 100e6, operator);
     }
 }

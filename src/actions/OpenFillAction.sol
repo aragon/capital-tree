@@ -94,7 +94,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     // INodeAction
 
     /// @inheritdoc INodeAction
-    /// @dev None in v1
+    /// @dev No additional preconditions.
     function preconditions(address, Input calldata) external view virtual {}
 
     /// @inheritdoc INodeAction

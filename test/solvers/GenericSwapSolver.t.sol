@@ -8,30 +8,36 @@ import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {GenericSwapSolver} from "../../src/solvers/GenericSwapSolver.sol";
+import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
 import {Node} from "../../src/lib/types.sol";
 import {NATIVE} from "../../src/lib/tokens.sol";
 import {TRIGGER_PERMISSION_ID} from "../../src/lib/constants.sol";
 import {Fixture} from "../helpers/Fixture.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
-contract GenericSwapSolverTest is Fixture {
+contract GenericFillSolverTest is Fixture {
     FundedStreamBudget internal budget;
     OpenFillAction internal action;
     CapitalPipelinePlugin internal plugin;
-    GenericSwapSolver internal solver;
+    GenericFillSolver internal solver;
 
     function setUp() public override {
         super.setUp();
         budget = _deployBudget(RATE, 0);
         action = _deployAction(budget);
         plugin = _deployPlugin(budget, _chain(action, keep));
-        solver = new GenericSwapSolver();
+        solver = new GenericFillSolver(address(this), plugin);
         tokenB.mint(address(solver), DEMAND);
         vm.warp(block.timestamp + EPOCH);
     }
 
+    function test_ConstructorSetsAuthorizedAndPlugin() public view {
+        assertEq(solver.authorized(), address(this));
+        assertEq(address(solver.plugin()), address(plugin));
+    }
+
     function test_FillPaysDaoClearsAllowanceAndCommitsStream() public {
-        solver.trigger(plugin, _data(_calls(RATE, DEMAND, address(dao))));
+        solver.trigger(_data(_calls(RATE, DEMAND, address(dao))));
 
         assertEq(tokenA.balanceOf(address(dao)), DAO_A - RATE);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
@@ -45,8 +51,10 @@ contract GenericSwapSolverTest is Fixture {
 
     function test_FillRunsDownstreamBurnAndFeeNodes() public {
         plugin = _deployPlugin(budget, _splitToBurnAndFee(action));
+        solver = new GenericFillSolver(address(this), plugin);
+        tokenB.mint(address(solver), DEMAND);
 
-        solver.trigger(plugin, _data(_calls(RATE, DEMAND, address(dao))));
+        solver.trigger(_data(_calls(RATE, DEMAND, address(dao))));
 
         assertEq(tokenB.balanceOf(BURN), DEMAND * 95 / 100);
         assertEq(tokenB.balanceOf(fee), DEMAND * 5 / 100);
@@ -61,10 +69,12 @@ contract GenericSwapSolverTest is Fixture {
         tree[2] = _then(action, 3);
         tree[3] = _leaf(keep);
         plugin = _deployPlugin(budget, tree);
+        solver = new GenericFillSolver(address(this), plugin);
+        tokenB.mint(address(solver), DEMAND);
         bytes[] memory data = new bytes[](4);
         data[2] = abi.encode(_calls(RATE / 2, DEMAND, address(dao)));
 
-        solver.trigger(plugin, data);
+        solver.trigger(data);
 
         assertEq(tokenA.balanceOf(alice), RATE / 2);
         assertEq(tokenA.balanceOf(address(solver)), RATE / 2);
@@ -82,12 +92,14 @@ contract GenericSwapSolverTest is Fixture {
         tree[3] = _then(action, 4);
         tree[4] = _leaf(keep);
         plugin = _deployPlugin(budget, tree);
+        solver = new GenericFillSolver(address(this), plugin);
+        tokenB.mint(address(solver), DEMAND);
         tokenB.mint(address(solver), DEMAND);
         bytes[] memory data = new bytes[](5);
         data[1] = abi.encode(_calls(RATE * 4 / 10, DEMAND, address(dao)));
         data[3] = abi.encode(_calls(RATE * 6 / 10, DEMAND, address(dao)));
 
-        solver.trigger(plugin, data);
+        solver.trigger(data);
 
         assertEq(tokenA.balanceOf(address(solver)), RATE);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + 2 * DEMAND);
@@ -101,7 +113,7 @@ contract GenericSwapSolverTest is Fixture {
         uint256 checkpoint = budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
-        solver.trigger(plugin, data);
+        solver.trigger(data);
 
         _assertUnfilled(checkpoint);
     }
@@ -112,7 +124,7 @@ contract GenericSwapSolverTest is Fixture {
         uint256 checkpoint = budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        solver.trigger(plugin, data);
+        solver.trigger(data);
 
         _assertUnfilled(checkpoint);
     }
@@ -122,7 +134,7 @@ contract GenericSwapSolverTest is Fixture {
         uint256 checkpoint = budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        solver.trigger(plugin, data);
+        solver.trigger(data);
 
         _assertUnfilled(checkpoint);
     }
@@ -132,7 +144,7 @@ contract GenericSwapSolverTest is Fixture {
         data[0] = abi.encode(_calls(RATE, DEMAND, address(dao)));
 
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.DataLengthMismatch.selector, 2, 1));
-        solver.trigger(plugin, data);
+        solver.trigger(data);
     }
 
     function test_RevertWhen_CallbackContainsOuterArrayEncoding() public {
@@ -140,13 +152,35 @@ contract GenericSwapSolverTest is Fixture {
         data[0] = abi.encode(data);
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        solver.trigger(plugin, data);
+        solver.trigger(data);
     }
 
     function test_RevertWhen_CallbackDataIsEmpty() public {
         // An empty pipeline array is valid, but this solver needs an encoded Action[].
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        solver.trigger(plugin, new bytes[](0));
+        solver.trigger(new bytes[](0));
+    }
+
+    function test_RevertWhen_DaoCallbackDataIsEmpty() public {
+        vm.expectRevert();
+        vm.prank(address(dao));
+        solver.fillOffer(tokenA, RATE, tokenB, DEMAND, "");
+    }
+
+    function test_DaoCallbackAcceptsEncodedEmptyBatchAsNoOp() public {
+        bytes memory data = abi.encode(new Action[](0));
+        vm.prank(address(dao));
+        solver.fillOffer(tokenA, RATE, tokenB, DEMAND, data);
+        _assertUnfilled(budget.baseTimestamp());
+    }
+
+    function test_RevertWhen_EncodedEmptyBatchDoesNotPayDao() public {
+        bytes[] memory data = _data(new Action[](0));
+        uint256 checkpoint = budget.baseTimestamp();
+        // The solver accepts an empty batch, but OpenFill still requires payment.
+        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        solver.trigger(data);
+        _assertUnfilled(checkpoint);
     }
 
     function test_RevertWhen_BatchReentersPipeline() public {
@@ -156,7 +190,7 @@ contract GenericSwapSolverTest is Fixture {
         uint256 checkpoint = budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        solver.trigger(plugin, data);
+        solver.trigger(data);
 
         _assertUnfilled(checkpoint);
     }
@@ -171,7 +205,7 @@ contract GenericSwapSolverTest is Fixture {
                 DaoUnauthorized.selector, address(dao), address(plugin), address(solver), TRIGGER_PERMISSION_ID
             )
         );
-        solver.trigger(plugin, data);
+        solver.trigger(data);
     }
 
     function test_RevertWhen_PipelinePaused() public {
@@ -180,83 +214,167 @@ contract GenericSwapSolverTest is Fixture {
         bytes[] memory data = _data(_calls(RATE, DEMAND, address(dao)));
 
         vm.expectRevert("Pausable: paused");
-        solver.trigger(plugin, data);
+        solver.trigger(data);
     }
 
-    function test_NativeOfferFundsBatchAndSweep() public {
+    function test_RevertWhen_NativeOfferRollsBack() public {
         vm.deal(address(dao), RATE);
         budget = _deployStream(NATIVE, RATE, 0);
         plugin = _deployPlugin(budget, _chain(_deployAction(budget), keep));
+        solver = new GenericFillSolver(address(this), plugin);
         vm.warp(block.timestamp + EPOCH);
-        Action[] memory calls = new Action[](3);
-        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (address(dao), DEMAND)));
-        calls[1] = Action(alice, RATE - 1 ether, "");
-        calls[2] = Action(address(solver), 0, abi.encodeCall(solver.sweep, (NATIVE, bob)));
-
-        solver.trigger(plugin, _data(calls));
-
-        assertEq(address(dao).balance, 0);
-        assertEq(alice.balance, RATE - 1 ether);
-        assertEq(bob.balance, 1 ether);
-        assertEq(address(solver).balance, 0);
-        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
-        assertEq(budget.available(), 0);
-    }
-
-    function test_NativeDemandPaidFromTriggerValue() public {
-        plugin = _deployPlugin(budget, _chain(_deployOpenFill(budget, NATIVE), keep));
-        Action[] memory calls = new Action[](2);
-        calls[0] =
-            Action(address(tokenA), 0, abi.encodeCall(IERC20.transferFrom, (address(dao), address(solver), RATE)));
-        calls[1] = Action(address(dao), DEMAND, "");
-        bytes[] memory data = _data(calls);
-        vm.deal(address(this), DEMAND);
-
-        solver.trigger{value: DEMAND}(plugin, data);
-
-        assertEq(address(dao).balance, DEMAND);
-        assertEq(address(solver).balance, 0);
-        assertEq(address(plugin).balance, 0);
-        assertEq(tokenA.balanceOf(address(solver)), RATE);
-        assertEq(tokenA.allowance(address(dao), address(solver)), 0);
-        assertEq(budget.available(), 0);
-    }
-
-    function test_RevertWhen_NativeUnderpaymentRestoresCallValue() public {
-        plugin = _deployPlugin(budget, _chain(_deployOpenFill(budget, NATIVE), keep));
-        Action[] memory calls = new Action[](2);
-        calls[0] =
-            Action(address(tokenA), 0, abi.encodeCall(IERC20.transferFrom, (address(dao), address(solver), RATE)));
-        calls[1] = Action(address(dao), DEMAND - 1, "");
-        bytes[] memory data = _data(calls);
-        vm.deal(address(this), DEMAND);
+        bytes[] memory data = _data(new Action[](0));
         uint256 checkpoint = budget.baseTimestamp();
 
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
-        solver.trigger{value: DEMAND}(plugin, data);
+        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
+        solver.trigger(data);
 
-        assertEq(address(this).balance, DEMAND);
-        assertEq(address(dao).balance, 0);
+        assertEq(address(dao).balance, RATE);
         assertEq(address(solver).balance, 0);
-        _assertUnfilled(checkpoint);
+        assertEq(budget.available(), RATE);
+        assertEq(budget.baseTimestamp(), checkpoint);
     }
 
-    function test_DirectCallbackRemainsPermissionless() public {
-        Action[] memory calls = new Action[](1);
-        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, DEMAND)));
+    function test_RevertWhen_TriggerReceivesEth() public {
+        bytes memory data = abi.encodeCall(solver.trigger, (_data(_calls(RATE, DEMAND, address(dao)))));
+        vm.deal(address(this), 1 ether);
+        (bool ok,) = address(solver).call{value: 1 ether}(data);
+        assertFalse(ok);
+        assertEq(address(this).balance, 1 ether);
+        assertEq(address(solver).balance, 0);
+        _assertUnfilled(budget.baseTimestamp());
+    }
 
+    function test_RevertWhen_DaoCallbackReceivesEth() public {
+        bytes memory data = abi.encodeCall(solver.fillOffer, (tokenA, 0, tokenB, 0, abi.encode(new Action[](0))));
+        vm.deal(address(dao), 1 ether);
+        vm.prank(address(dao));
+        (bool ok,) = address(solver).call{value: 1 ether}(data);
+        assertFalse(ok);
+        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(solver).balance, 0);
+    }
+
+    function test_BatchIgnoresActionValueEvenWithForcedBalance() public {
+        vm.deal(address(solver), 1 ether);
+        Action[] memory calls = new Action[](2);
+        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, 1)));
+        calls[1] = Action(bob, 1 ether, "");
+        bytes memory data = abi.encode(calls);
+        vm.prank(address(dao));
+        solver.fillOffer(tokenA, 0, tokenB, 0, data);
+        assertEq(address(solver).balance, 1 ether);
+        assertEq(bob.balance, 0);
+        assertEq(tokenB.balanceOf(alice), 1);
+        assertEq(tokenB.balanceOf(address(solver)), DEMAND - 1);
+    }
+
+    function test_RevertWhen_PlainEthTransfer() public {
+        vm.deal(address(this), 1 ether);
+        (bool ok,) = address(solver).call{value: 1 ether}("");
+        assertFalse(ok);
+        assertEq(address(solver).balance, 0);
+    }
+
+    function test_RevertWhen_DirectCallbackIsNotFromDao() public {
+        bytes memory data = abi.encode(_calls(RATE, DEMAND, address(dao)));
+        vm.expectRevert(GenericFillSolver.Unauthorized.selector);
         vm.prank(bob);
-        solver.fillOffer(tokenA, 0, tokenB, 0, abi.encode(calls));
+        solver.fillOffer(tokenA, RATE, tokenB, DEMAND, data);
 
-        assertEq(tokenB.balanceOf(alice), DEMAND);
+        // The plugin coordinates execution, but the DAO is the callback sender.
+        vm.expectRevert(GenericFillSolver.Unauthorized.selector);
+        vm.prank(address(plugin));
+        solver.fillOffer(tokenA, RATE, tokenB, DEMAND, data);
+
+        vm.expectRevert(GenericFillSolver.Unauthorized.selector);
+        solver.fillOffer(tokenA, RATE, tokenB, DEMAND, data);
+        _assertUnfilled(budget.baseTimestamp());
     }
 
-    function test_RevertWhen_DirectCallFails() public {
-        Action[] memory calls = new Action[](1);
-        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, DEMAND + 1)));
+    function test_RevertWhen_DaoCallbackCallFailsReportsIndexAndRollsBack() public {
+        Action[] memory calls = new Action[](2);
+        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, 1)));
+        calls[1] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, DEMAND)));
+        bytes memory data = abi.encode(calls);
 
-        vm.expectRevert("fillOffer: Call Failed");
-        solver.fillOffer(tokenA, 0, tokenB, 0, abi.encode(calls));
+        vm.expectRevert(abi.encodeWithSelector(GenericFillSolver.CallFailed.selector, 1));
+        vm.prank(address(dao));
+        solver.fillOffer(tokenA, 0, tokenB, 0, data);
+
+        assertEq(tokenB.balanceOf(alice), 0);
+        assertEq(tokenB.balanceOf(address(solver)), DEMAND);
+    }
+
+    function test_RevertWhen_UnauthorizedTrigger() public {
+        bytes[] memory data = _data(_calls(RATE, DEMAND, address(dao)));
+        vm.expectRevert(GenericFillSolver.Unauthorized.selector);
+        vm.prank(bob);
+        solver.trigger(data);
+        _assertUnfilled(budget.baseTimestamp());
+    }
+
+    function test_RevertWhen_UnauthorizedSweep() public {
+        vm.expectRevert(GenericFillSolver.Unauthorized.selector);
+        vm.prank(bob);
+        solver.sweep(tokenB, bob);
+        assertEq(tokenB.balanceOf(address(solver)), DEMAND);
+    }
+
+    function test_AuthorizedCallerSweepsTokens() public {
+        solver.sweep(tokenB, alice);
+        assertEq(tokenB.balanceOf(alice), DEMAND);
+        assertEq(tokenB.balanceOf(address(solver)), 0);
+    }
+
+    function testFuzz_SweepArbitraryTokenAndRecipient(address recipient, uint128 amount, uint128 existing) public {
+        vm.assume(recipient != address(0) && recipient != address(solver));
+        // A fresh token outside the pipeline's offered/demanded pair.
+        ERC20Mock other = new ERC20Mock("Other", "OTHER");
+        other.mint(address(solver), uint256(amount));
+        other.mint(recipient, uint256(existing));
+
+        solver.sweep(other, recipient);
+
+        assertEq(other.balanceOf(address(solver)), 0);
+        assertEq(other.balanceOf(recipient), uint256(existing) + uint256(amount));
+        assertEq(tokenB.balanceOf(address(solver)), DEMAND, "other tokens untouched");
+    }
+
+    function test_PermissionedBatchSweepsErc20Surplus() public {
+        tokenB.mint(address(solver), 2 ether);
+        Action[] memory calls = new Action[](3);
+        Action[] memory fill = _calls(RATE, DEMAND, address(dao));
+        calls[0] = fill[0];
+        calls[1] = fill[1];
+        calls[2] = Action(address(solver), 0, abi.encodeCall(solver.sweep, (tokenB, alice)));
+
+        solver.trigger(_data(calls));
+
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
+        assertEq(tokenB.balanceOf(alice), 2 ether);
+        assertEq(tokenB.balanceOf(address(solver)), 0);
+        assertEq(budget.available(), 0);
+    }
+
+    function test_RevertWhen_AuthorizedAddressIsZero() public {
+        vm.expectRevert(GenericFillSolver.InvalidAuthorized.selector);
+        new GenericFillSolver(address(0), plugin);
+    }
+
+    function test_WhitelistedSolverDoesNotExposeTriggerToOtherCallers() public {
+        dao.revoke(address(plugin), ANY_ADDR, TRIGGER_PERMISSION_ID);
+        dao.grant(address(plugin), address(solver), TRIGGER_PERMISSION_ID);
+        bytes[] memory data = _data(_calls(RATE, DEMAND, address(dao)));
+
+        vm.expectRevert(GenericFillSolver.Unauthorized.selector);
+        vm.prank(bob);
+        solver.trigger(data);
+        _assertUnfilled(budget.baseTimestamp());
+
+        solver.trigger(data);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
+        assertEq(budget.available(), 0);
     }
 
     function test_SweepRejectsFalseReturningToken() public {
@@ -271,15 +389,6 @@ contract GenericSwapSolverTest is Fixture {
         vm.expectCall(address(tokenB), abi.encodeCall(IERC20.transfer, (alice, DEMAND)));
 
         solver.sweep(tokenB, alice);
-    }
-
-    function test_RevertWhen_NativeSweepRecipientRejectsEth() public {
-        vm.deal(address(solver), 1 ether);
-
-        vm.expectRevert("Address: unable to send value, recipient may have reverted");
-        solver.sweep(NATIVE, address(tokenA));
-
-        assertEq(address(solver).balance, 1 ether);
     }
 
     function _calls(uint256 offered, uint256 demanded, address recipient)

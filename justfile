@@ -6,6 +6,15 @@ default:
 
 DEPLOY_SCRIPT := "script/Deploy.s.sol:Deploy"
 
+# Run mainnet solver forks using vars; pass false to skip live aggregator APIs.
+[group('test')]
+fork-tests live="true":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    resolved=$(vars resolve --file script/open-fill/vars.yaml --partial)
+    eval "$resolved"
+    RUN_FORK_TESTS=true RUN_LIVE_QUOTES={{ quote(live) }} forge test --match-contract GenericOpenFillForkTest --ffi -vv
+
 # Fetch dependencies, create local configuration and select the network.
 [group('setup')]
 init network="mainnet":
