@@ -3,3 +3,15 @@ cache/
 broadcast/
 playground/deployment.json
 playground/abis.json
+
+# Local secrets and network overrides; keep the configuration template tracked.
+/.env
+/.env.*
+!/.env.example
+
+# just-foundry output.
+/logs/
+/flat/
+/report/
+/lcov.info*
+/zkout/

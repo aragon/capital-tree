@@ -406,11 +406,33 @@ flowchart LR
 
 ## Develop
 
+With Foundry and `just` installed:
+
 ```shell
-git submodule update --init --recursive
+just init sepolia
 forge build
-forge test
+just test
 ```
+
+`just init <network>` fetches the pinned submodules, creates `.env` from
+[`.env.example`](.env.example) if needed, and selects the network. Run `just` to list the
+commands provided by [`just-foundry`](https://github.com/aragon/just-foundry). Plain
+`forge build` and `forge test` still work without selecting a network.
+
+`just switch <network>` changes the active network. Its RPC, chain and OSx addresses come from
+`lib/just-foundry/networks/`; `just switch <network> override` creates an editable local
+`.env.<network>` copy. Local `.env` files and generated logs are ignored by Git.
+
+Secrets can be set in `.env` or managed with the optional [`vars`](https://github.com/vars-cli/vars)
+CLI (`just install-vars`). [`.vars.yaml`](.vars.yaml) lists the keys and network profiles;
+`just-foundry` resolves the profile matching the selected network automatically. Stored values
+take priority over `.env`. The Sepolia profile uses `dev/DEPLOYER_KEY`, and the Mainnet and
+Sepolia profiles use their respective `<network>/RPC_URL` entries. Other keys use the root
+store entries. Configure these with `vars set <key-or-scoped-key>`; secret values belong in
+the store or `.env`, never in the manifest.
+
+See the [`vars` documentation](https://github.com/vars-cli/vars#readme) for CLI usage and the
+[just-foundry secrets guide](lib/just-foundry/README.md#secrets) for setup and network profiles.
 
 Never set `via_ir = true`; fix stack-too-deep errors by restructuring the code.
 
@@ -421,35 +443,46 @@ deploys Aragon's plugin repo registry, factory and PluginSetupProcessor locally,
 
 Once per network:
 
-1. Upload `metadata/release.json`, `metadata/build.json` and every file in `metadata/components/`
+1. Run `just init <network>` and configure `.env` or your `vars` store. Set `DEPLOYER_KEY` and
+   `ETHERSCAN_API_KEY` for deployment and verification, plus any address overrides below.
+2. Upload `metadata/release.json`, `metadata/build.json` and every file in `metadata/components/`
    to IPFS (any pinning service).
-2. Put each `ipfs://...` link in `metadata/uris.json`: `release`, `build`, and each component's
+3. Put each `ipfs://...` link in `metadata/uris.json`: `release`, `build`, and each component's
    name under `components`. The script refuses to run while a link is empty, because registry
    entries and plugin repo versions can't be changed later.
-3. Run:
+4. Simulate, then deploy:
 
 ```shell
-MANAGING_DAO=0x... PLUGIN_REPO_FACTORY=0x... \
-  forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast
+just predeploy
+just deploy
 ```
 
-| Variable                 | Meaning                                                                  |
-| ------------------------ | ------------------------------------------------------------------------ |
-| `MANAGING_DAO`           | Maintains the component registry                                         |
-| `PLUGIN_REPO_FACTORY`    | Aragon's `PluginRepoFactory` on that network                             |
-| `PLUGIN_REPO_SUBDOMAIN`  | Optional: the name under `plugin.dao.eth`, `capital-pipeline` by default |
-| `PLUGIN_REPO_MAINTAINER` | Optional: who can publish later versions, the managing DAO by default    |
+`just predeploy` simulates `script/Deploy.s.sol:Deploy` without broadcasting. `just deploy` runs
+the unit tests, broadcasts the deployment, verifies contracts and writes a log under `logs/`.
+
+| Variable                     | Meaning                                                               |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `MANAGEMENT_DAO_ADDRESS`      | Maintains the component registry; supplied by the selected network     |
+| `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon's factory; supplied by the selected network                      |
+| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-pipeline` by default |
+| `PLUGIN_REPO_MAINTAINER`      | Optional: who can publish later versions, the managing DAO by default   |
+| `DEPLOYER_KEY`               | Required signing key for both deployment and installation preparation  |
+
+Override network addresses in `.env` or an editable `.env.<network>` using the same variable names.
 
 ## Install a flow
 
 1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `merkle-claim`, `payroll`) and fill
    in the DAO, the manager, the tokens and the amounts (in the token's smallest unit).
-2. Run:
+2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=installs/<yours>.json`
+   and `PLUGIN_REPO=0x...` in `.env`, and configure `DEPLOYER_KEY` in `.env` or `vars`.
+   `PLUGIN_SETUP_PROCESSOR_ADDRESS` comes from the selected network; override it using the same name.
+3. Simulate, then broadcast the preparation:
 
 ```shell
-INSTALL_CONFIG=installs/<yours>.json PLUGIN_SETUP_PROCESSOR=0x... PLUGIN_REPO=0x... \
-  forge script script/Install.s.sol --rpc-url <rpc> --broadcast
+just dry-run script/Install.s.sol:Install
+just run script/Install.s.sol:Install
 ```
 
-3. Put the three printed actions in a DAO proposal. Once it executes, the flow is live: fillers can
-   call `trigger()` and the manager can tune it.
+4. Put the three actions printed by the broadcast run in a DAO proposal. Once it executes, the
+   flow is live: fillers can call `trigger()` and the manager can tune it.
