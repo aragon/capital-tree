@@ -1,0 +1,16 @@
+# Key names and store references only; never put secret values in this file.
+# just-foundry runs vars resolve with the profile selected by just switch.
+# Without vars, configure the same values in the ignored .env file.
+keys:
+  - DEPLOYER_KEY
+  - ETHERSCAN_API_KEY
+  - RPC_URL
+  # - PINATA_JWT  # optional, for just ipfs-pin
+
+# Root keys are the production defaults. Use a separate testnet signing key.
+profiles:
+  mainnet:
+    RPC_URL: mainnet/RPC_URL
+  sepolia:
+    DEPLOYER_KEY: dev/DEPLOYER_KEY
+    RPC_URL: sepolia/RPC_URL
