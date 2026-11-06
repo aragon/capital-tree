@@ -15,7 +15,7 @@ flowchart LR
     burn["BurnAction"]
     fee["TransferAction<br/>to feeAddr"]
 
-    budget -- "up to available() A" --> fill
+    budget -- "available() A" --> fill
     fill -- "95% of the B received" --> burn
     fill -- "5% of the B received" --> fee
 ```
@@ -30,7 +30,7 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 
 | Term | Meaning |
 |---|---|
-| **Budget** | How much of one token the flow may spend right now. Read once at the start of a trigger, committed once at the end. |
+| **Budget** | How much of one token the flow spends in this trigger, and possibly who it belongs to (a Merkle claim). Released once at the start of a trigger, committed once at the end. |
 | **Node** | One step of the tree: an action, its children, how its output is split among them (weights or a splitter), whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
@@ -54,8 +54,9 @@ The node's splitter gets the record, and `NodeExecuted` emits it.
 
 ### One trigger, step by step
 
-`trigger(bytes[] data)` takes either no data or one entry per node; each action receives its own
-entry and the caller's address.
+`trigger(bytes budgetData, bytes[] data)` passes `budgetData` to the budget (a Merkle claim's
+proof; empty for the other budgets) and takes either no node data or one entry per node. The budget
+and each action receive their own data and the caller's address.
 
 ```mermaid
 sequenceDiagram
@@ -66,9 +67,9 @@ sequenceDiagram
     participant Action as Node action
     participant DAO
 
-    Caller->>Plugin: trigger(data)
-    Plugin->>Budget: token(), available()
-    Note over Plugin: root input = (token, available, no beneficiary)
+    Caller->>Plugin: trigger(budgetData, data)
+    Plugin->>Budget: token(), release(caller, budgetData)
+    Note over Plugin: root input = (token, amount, beneficiary)
     loop every node with an action, depth first
         Plugin->>Action: preconditions(caller, input)
         Plugin->>Action: build(caller, data[i], input)
@@ -80,7 +81,7 @@ sequenceDiagram
         Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
         Note over Plugin: split outAmount among the children (weights or splitter), or everything that arrived with forwardSurplus
     end
-    Plugin->>Budget: commitActions()
+    Plugin->>Budget: commitActions(caller, budgetData)
     Plugin->>DAO: execute(commit actions)
 ```
 
@@ -93,9 +94,9 @@ nor anything below it runs.
 
 When a node runs:
 
-1. The root takes more than zero and at most its input; every other node takes exactly its input. What the root doesn't take never left the DAO.
+1. Every node takes exactly its input, the root included: the budget releases only what the flow spends.
 2. A node spends the token it received; a leaf outputs nothing; any output is a contract.
-3. Once an action sets a beneficiary, it can't change further down the tree.
+3. Once the budget or an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more. The children get `outAmount`; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
 6. A splitter returns one amount per child, adding up to what the children share (`forwarded`).
@@ -107,7 +108,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
 2. A node without an action has at least 2 children.
 3. A node with 2+ children splits by weights (one per child, none zero, summing to 1,000,000) or by a splitter, never both. Other nodes have neither.
-4. An action bound to a budget (OpenFill, MerkleClaim) must be bound to the flow's budget. It may sit anywhere; MerkleClaim keeps itself at the root (`NotTheWholeBudget`).
+4. An action bound to a budget (OpenFill) must be bound to the flow's budget. It may sit anywhere.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
 7. Only a node with an action and children can be marked `forwardSurplus` (`InvalidForwardSurplus`).
@@ -116,13 +117,15 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 
 ### Budgets
 
-A budget implements `IBudget`: `token()`, `available()` and `commitActions()`, the DAO actions
-that record the spend after the whole tree ran.
+A budget implements `IBudget`: `token()`; `release(caller, data)`, the root's input and possibly
+a beneficiary; and `commitActions(caller, data)`, the DAO actions that record the spend after the
+whole tree ran.
 
-| Budget               | `available()`                                                              | Commit             |
-| -------------------- | -------------------------------------------------------------------------- | ------------------ |
-| `FundedStreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
-| `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
+| Budget               | `release()`                                                                               | Commit             |
+| -------------------- | ----------------------------------------------------------------------------------------- | ------------------ |
+| `FundedStreamBudget` | `available()`: grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
+| `BalanceBudget`      | The DAO's whole balance of the token                                                      | Nothing            |
+| `MerkleClaimBudget`  | What the caller is owed, for the beneficiary it names                                     | Records the claim  |
 
 #### FundedStreamBudget
 
@@ -160,8 +163,27 @@ After a deposit the amount stays frozen until someone calls `sync()`: run a keep
 
 #### BalanceBudget
 
-The DAO's whole balance of a token, with nothing to commit. Use it when something else decides
-the amount, such as a Merkle claim; the budget only caps it at what the DAO holds.
+The DAO's whole balance of a token, with nothing to commit. The root receives all of it, so the
+tree decides where every token goes.
+
+#### MerkleClaimBudget
+
+Cumulative Merkle distribution. Each leaf is `(account, cumulative amount)`, in OpenZeppelin's
+StandardMerkleTree format, and an account can claim `cumulative − claimed` at any time. A new root
+raises the cumulative amounts for the next round.
+
+- **Budget data**: `abi.encode(account, cumulative, proof, beneficiary)`. Only the account itself
+  can claim; `beneficiary == 0` pays the account.
+- **Releases** what the account is owed, with the flow's beneficiary set, so the tree can split it,
+  swap it or take a fee before a `TransferToBeneficiaryAction` pays it.
+- **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
+  rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
+- **Settings**: `setRoot` (`MANAGER_PERMISSION_ID`). Whoever holds it can direct payouts up to the
+  DAO's balance of the token.
+- **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
+  callback before the first one records it.
+
+One claim per trigger.
 
 ### Actions
 
@@ -203,7 +225,7 @@ sequenceDiagram
     participant TokenA as Token A
     participant Fill as OpenFillAction
 
-    Filler->>Plugin: trigger([fillerData, ...])
+    Filler->>Plugin: trigger("", [fillerData, ...])
     Plugin->>Fill: build(filler, fillerData, input)
     Fill-->>Plugin: offer X of A for D of B
     Plugin->>DAO: execute
@@ -216,28 +238,9 @@ sequenceDiagram
     Note over Plugin: balance check, then the children share D (all the B that arrived, with forwardSurplus)
 ```
 
-The filler implements `IFiller.fillOffer`. The trigger takes a per-node `bytes[]`.
+The filler implements `IFiller.fillOffer`. The trigger takes empty budget data and a per-node `bytes[]`.
 The [generic solver guide](docs/generic-solver.md) covers the executor, quote helpers,
 local and fork tests, and how to construct and submit a fill.
-
-#### MerkleClaimAction (root)
-
-Cumulative Merkle distribution. Each leaf is `(account, cumulative amount)`, in OpenZeppelin's
-StandardMerkleTree format, and an account can claim `cumulative − claimed` at any time. A new root
-raises the cumulative amounts for the next round.
-
-- **Data**: `abi.encode(account, cumulative, proof, beneficiary)`. Only the account itself can claim;
-  `beneficiary == 0` pays the account.
-- **Moves**: takes what the account is owed and outputs it unchanged, setting the flow's
-  beneficiary so a `TransferToBeneficiaryAction` further down pays it.
-- **Records** the claim with `recordClaim`, executed by the DAO inside the claim's node, so it rolls
-  back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the action.
-- **Settings**: `setRoot` (`MANAGER_PERMISSION_ID`). Whoever holds it can direct payouts up to the
-  DAO's balance of the token.
-- **Root only**: reverts with `NotTheWholeBudget` unless its input is the whole budget. Below a
-  branch, its siblings would take a share of the whole budget on every claim.
-
-One claim per trigger.
 
 #### Leaves
 
@@ -292,7 +295,7 @@ flowchart LR
     fill["OpenFillAction<br/>sells A for B"]
     burn["BurnAction"]
 
-    budget -- "up to available() A" --> fill
+    budget -- "available() A" --> fill
     fill -- "all the B received" --> burn
 ```
 
@@ -300,13 +303,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    budget[("BalanceBudget<br/>token A")]
-    claim["MerkleClaimAction<br/>proof for the caller"]
+    budget[("MerkleClaimBudget<br/>token A, proof for the caller")]
     pay["TransferToBeneficiaryAction"]
     who(("beneficiary"))
 
-    budget -- "DAO balance of A" --> claim
-    claim -- "amount owed, beneficiary set" --> pay
+    budget -- "amount owed, beneficiary set" --> pay
     pay -- "A" --> who
 ```
 
@@ -429,8 +430,8 @@ flowchart LR
 | `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
 | `src/budgets/FundedStreamBudget.sol`           | Streaming pot that never jumps                                                                             |
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
+| `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims with a redirectable beneficiary                                                   |
 | `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |
-| `src/actions/MerkleClaimAction.sol`            | Cumulative Merkle claims with a redirectable beneficiary (root only)                                       |
 | `src/actions/base/LeafAction.sol`              | Base for leaves: spends the whole input, outputs nothing                                                   |
 | `src/actions/base/TransferBase.sol`            | Base for transfer leaves: one transfer plus a receipt check                                                |
 | `src/actions/TransferAction.sol`               | Leaf: sends its input to a fixed recipient                                                                 |

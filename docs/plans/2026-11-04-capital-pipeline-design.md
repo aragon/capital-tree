@@ -12,14 +12,14 @@ One composable shape for every treasury flow: a budget feeding a tree of explici
 
 | Topic | Decision |
 |---|---|
-| Entrypoint | One `trigger(bytes[] data)`, one data entry per node. |
+| Entrypoint | One `trigger(bytes budgetData, bytes[] data)`: data for the budget (a Merkle claim's proof), and one entry per node. |
 | Flow shape | One flow per plugin: a budget and a tree of nodes, committed once at the end. |
 | Execution | Each node with an action runs in its own `dao.execute`, planned right after its parent ran. |
 | Success | Every node must succeed. Anything else reverts the whole trigger. |
 | Branches | Fixed weights stored in the tree, or a splitter that divides the output when the flow runs. The DAO changes them with `setFlow`. |
 | Leaves | Explicit actions: `Transfer`, `TransferToBeneficiary`, `Burn`, `Keep`. A list of recipients is a branch of `Transfer` leaves. |
-| Claims | Merkle only, cumulative leaves, one claim per trigger, only the account itself can claim. |
-| Budgets | `FundedStreamBudget` for streams, `BalanceBudget` for "whatever the DAO holds". |
+| Claims | Merkle only, as a budget (`MerkleClaimBudget`): cumulative leaves, one claim per trigger, only the account itself can claim. The root receives exactly what's owed. |
+| Budgets | `FundedStreamBudget` for streams, `BalanceBudget` for "whatever the DAO holds", `MerkleClaimBudget` for claims. |
 | Swap pricing | Flat demand inside `OpenFillAction`, which offers its whole input. The stream's `maxBudget` caps the offer, so it sets the worst price; OpenFill recipes refuse an uncapped stream. |
 | Manager power | Free within installed flows (one `MANAGER_PERMISSION_ID`); the tree itself is DAO-only. |
 | Pause and reentrancy | OpenZeppelin `PausableUpgradeable` and `ReentrancyGuardUpgradeable`. |
@@ -50,8 +50,8 @@ struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter
 
 interface IBudget {
     function token() external view returns (IERC20);
-    function available() external view returns (uint256);
-    function commitActions() external view returns (Action[] memory);  // once, at the end
+    function release(address caller, bytes calldata data) external view returns (uint256 amount, address beneficiary);   // the root's input
+    function commitActions(address caller, bytes calldata data) external view returns (Action[] memory);  // once, at the end
 }
 
 interface INodeAction {
@@ -82,16 +82,17 @@ interface ISplitter {
 ### Running a trigger
 
 ```
-trigger(bytes[] data)                                   nonReentrant, whenNotPaused, auth(TRIGGER)
-  run(node 0, input = { budget.token(), budget.available() })
-  dao.execute(budget.commitActions())                  once, after the whole tree
+trigger(bytes budgetData, bytes[] data)                 nonReentrant, whenNotPaused, auth(TRIGGER)
+  (amount, beneficiary) = budget.release(caller, budgetData)
+  run(node 0, input = { budget.token(), amount, beneficiary })
+  dao.execute(budget.commitActions(caller, budgetData)) once, after the whole tree
 
 run(node, input)                                        depth first
   input == 0                     → skipWhenEmpty: skip it and its subtree; else revert EmptyInput
   no action (branch)             → movement = input, passed on
   otherwise
     action.preconditions(input) → action.build(input) → movement
-    root: 0 < movement.in ≤ input; others: movement.in == input        else revert
+    movement.in == input                                              else revert
     same input token; leaves output 0; beneficiary not changed  else revert
     acts = build actions + action.postconditions
     reject acts targeting the DAO or the plugin
@@ -110,10 +111,10 @@ The DAO spent no more than the node's `inAmount` and received at least its `outA
 
 ```
 Claim paid in another token                  Claim with a 1% fee
-budget  BalanceBudget(A)                     budget  BalanceBudget(A)
-└─ MerkleClaim (beneficiary)                 └─ MerkleClaim                    alice: 100 A
-   └─ Swap (A → B)                              ├─  1% → Transfer(feeAddr)
-      └─ TransferToBeneficiary                  └─ 99% → Swap (A → B)
+budget  MerkleClaimBudget(A, beneficiary)    budget  MerkleClaimBudget(A)       alice: 100 A
+└─ Swap (A → B)                              └─ (branch, no action)
+   └─ TransferToBeneficiary                     ├─  1% → Transfer(feeAddr)
+                                                └─ 99% → Swap (A → B)
                                                          └─ TransferToBeneficiary
 
 Payroll                                      Treasury diversification
@@ -124,17 +125,17 @@ budget  FundedStreamBudget(USDC)             budget  FundedStreamBudget(ETH)
    └─ 20% → Transfer(carol)
 ```
 
-Rejected shapes: an action bound to another budget (`BudgetMismatch`), a Merkle claim below a branch (`NotTheWholeBudget` at trigger), weights not summing to 100% (`InvalidWeights`), a splitter on a node with fewer than 2 children or next to weights (`InvalidSplitter`), a split that isn't one amount per child adding up to the output (`InvalidSplit` at trigger), a skippable root (`SkippableRoot`), an action-less leaf (`MissingAction`), a leaf that outputs something (`LeafLeftOutput` at trigger), a node other than the root that takes part of its input (`NodeIncomplete` at trigger).
+Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights not summing to 100% (`InvalidWeights`), a splitter on a node with fewer than 2 children or next to weights (`InvalidSplitter`), a split that isn't one amount per child adding up to the output (`InvalidSplit` at trigger), a skippable root (`SkippableRoot`), an action-less leaf (`MissingAction`), a leaf that outputs something (`LeafLeftOutput` at trigger), a node that takes part of its input (`NodeIncomplete` at trigger).
 
 ## Rules
 
 1. **Preconditions and postconditions belong to the action interface.** The plugin calls all three hooks on every node with an action.
-2. **Every node that receives something must succeed.** The root takes a non-zero amount, up to its input; every other node takes exactly its input; leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
-3. **The budget is read once and committed once, after the whole tree,** so a stream checkpoint sees the final balance.
+2. **Every node that receives something must succeed.** Every node takes exactly its input, the root included: the budget releases only what the flow spends. Leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
+3. **The budget is released once and committed once, after the whole tree,** so a stream checkpoint sees the final balance and a claim is recorded only if the whole flow ran.
 4. **Planning is view-only.** Every state change is a DAO action; each node is planned right before its own `execute`.
 5. **Actions declare their output in `build`.** The declared output is a minimum. Branch weights or a splitter divide it, and anything above it stays in the DAO, unless the recipe marks the node `forwardSurplus`: then they divide everything that arrived.
-6. **A beneficiary, once set, can't change.** Only `MerkleClaimAction` sets one; it flows down every branch.
-7. **Bound actions (OpenFill, MerkleClaim) must be bound to the flow's budget,** wherever they sit. OpenFill only restarts it when its demand changes. `MerkleClaimAction` stays at the root: below a branch its siblings would take a share of the whole budget on every claim, so it reverts unless its input is the whole budget. What the root doesn't take never left the DAO.
+6. **A beneficiary, once set, can't change.** Only `MerkleClaimBudget` sets one, for the root's input; it flows down every branch.
+7. **Bound actions (OpenFill) must be bound to the flow's budget,** wherever they sit. OpenFill only restarts it when its demand changes.
 8. **No action may target the DAO or the plugin itself**, so no node can grant permissions, upgrade the DAO or reconfigure the flow mid-trigger. `setFlow` is also `nonReentrant`.
 9. **A parameter change never alters what has already accrued.** Stream setters sync first; `setDemandPerFill` restarts the auction; raising a stream's cap continues it from the old cap.
 10. **Every component belongs to the plugin's DAO.** The plugin rejects a budget, action or splitter whose `dao()` isn't its own, so an implementation (bound to no DAO) or another DAO's component can never run in a flow.
@@ -144,7 +145,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), a Merkle 
 ### `CapitalPipelinePlugin` (PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable)
 
 - Storage: `IBudget budget`, `Node[] nodes`.
-- `trigger(bytes[] data)`: `auth(TRIGGER_PERMISSION_ID)` (granted to `ANY_ADDR`), `nonReentrant`, `whenNotPaused`.
+- `trigger(bytes budgetData, bytes[] data)`: `auth(TRIGGER_PERMISSION_ID)` (granted to `ANY_ADDR`), `nonReentrant`, `whenNotPaused`.
 - `setFlow(budget, nodes)`: `auth(CONFIGURE_PERMISSION_ID)`, DAO only, `nonReentrant`. Validates the tree.
 - `pause()`, `unpause()`: `auth(MANAGER_PERMISSION_ID)`.
 
@@ -152,6 +153,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), a Merkle 
 
 - `FundedStreamBudget`: streaming pot that never jumps, `min(baseAmount + rate × elapsed, lastSeenBalance, daoBalance, maxBudget)`. Setters sync first. Commits `writeCheckpoint()`.
 - `BalanceBudget`: the DAO's whole balance of a token; commits nothing.
+- `MerkleClaimBudget`: cumulative Merkle claim of `(account, cumulative)` leaves (OpenZeppelin StandardMerkleTree format). Budget data `abi.encode(account, cumulative, proof, beneficiary)`; only the account can claim, and it may name another beneficiary (not the DAO). Releases only what's owed. Commits `recordClaim` (needs `RECORD_CLAIM_PERMISSION_ID`, granted to the DAO); `setRoot` needs `MANAGER_PERMISSION_ID`. One flow per instance: a second flow on the same budget could pay a claim again from a callback before the first records it.
 
 ### Actions
 
@@ -160,7 +162,6 @@ Leaves share `LeafAction`: a locked implementation, no bound budget, and a movem
 | Action | Kind | Behaviour |
 |---|---|---|
 | `OpenFillAction` | anywhere, bound | Dutch-auction swap: offers its whole input, demands `demandPerFill`, calls the filler back (`IFiller.fillOffer`, payable). Postcondition `assertReceived`. `setDemandPerFill` restarts the auction. The stream's `maxBudget` caps the offer. ETH on either side. |
-| `MerkleClaimAction` | root, bound | Cumulative Merkle claim of `(account, cumulative)` leaves (OpenZeppelin StandardMerkleTree format). Only the account can claim; it may name another beneficiary (not the DAO). Outputs only what's owed. `recordClaim` needs `RECORD_CLAIM_PERMISSION_ID` (granted to the DAO); `setRoot` needs `MANAGER_PERMISSION_ID`. |
 | `TransferAction` | leaf | Sends its input to a fixed recipient; postcondition checks receipt. |
 | `TransferToBeneficiaryAction` | leaf | Sends its input to the flow's beneficiary. |
 | `BurnAction` | leaf | `ERC20Burnable.burn` of its input. |
@@ -199,7 +200,7 @@ Recipes name contracts that don't exist yet with placeholders: `DAO_REF`, `PLUGI
 | `TRIGGER_PERMISSION_ID` | plugin | `ANY_ADDR`, or a keeper | recipe |
 | `MANAGER_PERMISSION_ID` | plugin, components with setters | manager | recipe |
 | `CHECKPOINT_PERMISSION_ID` | stream budget | DAO, OpenFill | recipe |
-| `RECORD_CLAIM_PERMISSION_ID` | `MerkleClaimAction` | DAO | recipe |
+| `RECORD_CLAIM_PERMISSION_ID` | `MerkleClaimBudget` | DAO | recipe |
 | `REGISTER_PERMISSION_ID` | registry | whoever the managing DAO picks | managing DAO |
 
 `script/Recipes.sol` builds the common flows (buy and burn, buyback with a fee, Merkle claim, payroll).
@@ -236,7 +237,7 @@ Aragon's framework contracts import ENS, so `lib/ens-contracts` (v0.0.8) is a de
 ## Testing (Foundry)
 
 - **Plugin:** tree validation, flows (swap and pay two recipients, buyback with burn and fee, action-less branches, keep), every-node-must-succeed rules, guards (DAO and plugin targets, reentrancy), balance checks (lying and overspending actions). The balance and whole-input tests fail when those checks are removed.
-- **Components:** budgets, OpenFill, Merkle (account-only, redirect, new rounds, insolvency, empty DAO, claim then swap, claim with a fee branch, claim stays open when a later node can't run), leaf actions (including silent transfer failures, also to a recipient listed twice), native ETH.
+- **Components:** budgets, OpenFill, Merkle (account-only, redirect, new rounds, insolvency, claim then swap, claim with a fee branch, claim stays open when a node can't run), leaf actions (including silent transfer failures, also to a recipient listed twice), native ETH.
 - **Invariant:** across random fills, deposits, syncs and tweaks, the DAO's pre-existing B is never spent and proceeds are split exactly.
 - **Installation:** every recipe installed through the deploy script and run end to end; fresh clones per install; recipe grants applied and revoked exactly; rejected recipes (unregistered id, unknown reference, grants on the DAO or outside contracts, `CONFIGURE`); registry write-once and permissioned; metadata files match their initializers and every component is registered with its link. The DAO-binding, grant and registry tests fail when those checks are removed.
 
