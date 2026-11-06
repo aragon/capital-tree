@@ -13,7 +13,6 @@ import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
 import {Input, Movement} from "../lib/types.sol";
 import {MANAGER_PERMISSION_ID, EXCHANGE_RATE_SCALE} from "../lib/constants.sol";
-import {NATIVE, tokenBalance, isToken} from "../lib/tokens.sol";
 
 /// @title OpenFillAction
 /// @notice Take-it-or-leave-it swap priced as a Dutch auction. The bound budget grows the offer
@@ -24,8 +23,6 @@ import {NATIVE, tokenBalance, isToken} from "../lib/tokens.sol";
 ///      Changing either price term restarts the auction, so a filler cannot take an offer that
 ///      accumulated under the old terms at the new price.
 ///
-///      Native ETH (`NATIVE`) works on either side, never both: a native offer is sent as call
-///      value with the callback (no approvals); a native demand is measured on the DAO's ETH balance.
 contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     /// @inheritdoc INodeAction
     IBudget public budget;
@@ -45,7 +42,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     /// @notice Thrown when the budget is address(0)
     error NoBudget();
 
-    /// @notice Thrown when the demanded token is neither native ETH (`NATIVE`) nor a contract
+    /// @notice Thrown when the demanded token is not a contract
     error InvalidToken();
 
     /// @notice Thrown when the demanded token is the budget's token
@@ -70,7 +67,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
 
     /// @param _dao The DAO executing the fills
     /// @param _budget The budget growing the offer; this action restarts it when terms change
-    /// @param _demandedToken The token the DAO must receive back (`NATIVE` for native ETH)
+    /// @param _demandedToken The ERC20 token the DAO must receive back
     /// @param _demandPerFill How much of the demanded token must come back per fill
     /// @param _minDemandedPerOffered The lowest acceptable price, 1e18-scaled
     function initialize(
@@ -81,7 +78,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
         uint256 _minDemandedPerOffered
     ) external initializer {
         if (address(_budget) == address(0)) revert NoBudget();
-        if (!isToken(_demandedToken)) revert InvalidToken();
+        if (address(_demandedToken).code.length == 0) revert InvalidToken();
         if (_demandedToken == _budget.token()) revert SameToken();
 
         __DaoAuthorizableUpgradeable_init(_dao);
@@ -99,7 +96,6 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc INodeAction
     /// @dev ERC20 offer: approve it to the caller, call it back, clear the approval.
-    ///      Native offer: call the caller back with the offer as call value.
     function build(address _caller, bytes calldata _data, Input calldata _input)
         external
         view
@@ -119,12 +115,6 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
         bytes memory _callback =
             abi.encodeCall(IFiller.fillOffer, (_input.token, _offered, demandedToken, demandPerFill, _data));
 
-        if (_input.token == NATIVE) {
-            _actions = new Action[](1);
-            _actions[0] = Action({to: _caller, value: _offered, data: _callback});
-            return (_movement, _actions);
-        }
-
         address _in = address(_input.token);
         _actions = new Action[](3);
         _actions[0] = Action({to: _in, value: 0, data: abi.encodeCall(IERC20.approve, (_caller, _offered))});
@@ -140,7 +130,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
         virtual
         returns (Action[] memory _actions)
     {
-        uint256 _minBalance = tokenBalance(_movement.outToken, address(dao())) + _movement.outAmount;
+        uint256 _minBalance = _movement.outToken.balanceOf(address(dao())) + _movement.outAmount;
 
         _actions = new Action[](1);
         _actions[0] = Action({
@@ -151,7 +141,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     /// @notice Reverts unless the DAO holds at least `_minBalance` of `_token`
     /// @dev Executed by the DAO as the postcondition of a fill. View, so harmless to call from anywhere.
     function assertReceived(IERC20 _token, uint256 _minBalance) external view virtual {
-        uint256 _balance = tokenBalance(_token, address(dao()));
+        uint256 _balance = _token.balanceOf(address(dao()));
         if (_balance < _minBalance) revert DemandNotMet(_minBalance, _balance);
     }
 

@@ -20,7 +20,6 @@ import {
     RATIO_BASE,
     MAX_NODES
 } from "./lib/constants.sol";
-import {tokenBalance, isToken} from "./lib/tokens.sol";
 
 /// @title CapitalPipelinePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget is read once; the root
@@ -69,6 +68,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error LeafLeftOutput(uint256 nodeIndex, uint256 outAmount);
     error InvalidOutToken(uint256 nodeIndex);
     error BeneficiaryChanged(uint256 nodeIndex);
+    error MissingFunctionSelector(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsDao(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 nodeIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
@@ -184,7 +184,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
         if (_movement.inToken != _input.token) revert InputTokenMismatch(_index);
         if (_leaf && _movement.outAmount != 0) revert LeafLeftOutput(_index, _movement.outAmount);
-        if (_movement.outAmount != 0 && !isToken(_movement.outToken)) revert InvalidOutToken(_index);
+        if (_movement.outAmount != 0 && address(_movement.outToken).code.length == 0) revert InvalidOutToken(_index);
         _movement.beneficiary = _keepBeneficiary(_index, _input.beneficiary, _movement.beneficiary);
 
         _actions = _concat(_work, _action.postconditions(msg.sender, _movement));
@@ -195,6 +195,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
         address _dao = address(dao());
         for (uint256 i; i < _actions.length; ++i) {
+            // Value-bearing calls must include a selector. This does not validate the target
+            // or bound native spending: configured actions are trusted to authorize that spend.
+            if (_actions[i].value != 0 && _actions[i].data.length < 4) {
+                revert MissingFunctionSelector(_index, i);
+            }
             if (_actions[i].to == _dao) revert ActionTargetsDao(_index, i);
             if (_actions[i].to == address(this)) revert ActionTargetsPlugin(_index, i);
         }
@@ -215,9 +220,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     function _snapshot(Movement memory _movement) internal view returns (uint256 _inBefore, uint256 _outBefore) {
         address _dao = address(dao());
-        _inBefore = tokenBalance(_movement.inToken, _dao);
+        _inBefore = _movement.inToken.balanceOf(_dao);
         if (_movement.outToken != _movement.inToken && _movement.outAmount != 0) {
-            _outBefore = tokenBalance(_movement.outToken, _dao);
+            _outBefore = _movement.outToken.balanceOf(_dao);
         }
     }
 
@@ -233,7 +238,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     /// @dev Reverts unless `balance + spent >= target`
     function _checkDao(uint256 _index, IERC20 _token, uint256 _target, uint256 _spent) internal view {
-        uint256 _actual = tokenBalance(_token, address(dao()));
+        uint256 _actual = _token.balanceOf(address(dao()));
         if (_actual + _spent < _target) {
             revert UnexpectedBalance(_index, address(_token), _target > _spent ? _target - _spent : 0, _actual);
         }

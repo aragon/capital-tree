@@ -23,7 +23,6 @@ import {
 
 export const RPC = "http://127.0.0.1:8545";
 export const ANY_ADDR = "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF";
-export const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 export const PERMISSIONS = ["TRIGGER", "MANAGER", "CHECKPOINT", "RECORD_CLAIM"];
 export const permissionId = (name) => keccak256(toHex(`${name}_PERMISSION`));
 
@@ -329,7 +328,6 @@ const read = (ctx, address, abi, functionName, args = []) => ctx.pub.readContrac
 
 const SYMBOLS = new Map();
 async function symbol(ctx, token) {
-  if (token.toLowerCase() === NATIVE.toLowerCase()) return "ETH";
   if (!SYMBOLS.has(token)) SYMBOLS.set(token, await read(ctx, token, ctx.abis.token, "symbol").catch(() => token.slice(0, 8)));
   return SYMBOLS.get(token);
 }
@@ -340,7 +338,6 @@ export const units = (value) => {
 };
 
 async function balance(ctx, token, account) {
-  if (token.toLowerCase() === NATIVE.toLowerCase()) return ctx.pub.getBalance({ address: account });
   return read(ctx, token, ctx.abis.token, "balanceOf", [account]);
 }
 

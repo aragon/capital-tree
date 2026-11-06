@@ -10,7 +10,6 @@ import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
 import {Node} from "../../src/lib/types.sol";
-import {NATIVE} from "../../src/lib/tokens.sol";
 import {TRIGGER_PERMISSION_ID} from "../../src/lib/constants.sol";
 import {Fixture} from "../helpers/Fixture.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
@@ -215,24 +214,6 @@ contract GenericFillSolverTest is Fixture {
 
         vm.expectRevert("Pausable: paused");
         solver.trigger(data);
-    }
-
-    function test_RevertWhen_NativeOfferRollsBack() public {
-        vm.deal(address(dao), RATE);
-        budget = _deployStream(NATIVE, RATE, 0);
-        plugin = _deployPlugin(budget, _chain(_deployAction(budget), keep));
-        solver = new GenericFillSolver(address(this), plugin);
-        vm.warp(block.timestamp + EPOCH);
-        bytes[] memory data = _data(new Action[](0));
-        uint256 checkpoint = budget.baseTimestamp();
-
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
-        solver.trigger(data);
-
-        assertEq(address(dao).balance, RATE);
-        assertEq(address(solver).balance, 0);
-        assertEq(budget.available(), RATE);
-        assertEq(budget.baseTimestamp(), checkpoint);
     }
 
     function test_RevertWhen_TriggerReceivesEth() public {

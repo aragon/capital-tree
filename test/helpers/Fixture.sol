@@ -97,7 +97,7 @@ abstract contract Fixture is Test {
         return _deployStream(tokenA, _rate, _maxBudget);
     }
 
-    /// @dev A stream of any token, or of native ETH (`NATIVE`)
+    /// @dev A stream of any ERC20 token
     function _deployStream(IERC20 _token, uint256 _rate, uint256 _maxBudget)
         internal
         returns (FundedStreamBudget _budget)
@@ -127,7 +127,7 @@ abstract contract Fixture is Test {
         return _deployOpenFill(_budget, tokenB);
     }
 
-    /// @dev Demands any token, or native ETH (`NATIVE`)
+    /// @dev Demands any ERC20 token
     function _deployOpenFill(FundedStreamBudget _budget, IERC20 _demanded) internal returns (OpenFillAction _action) {
         _action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
