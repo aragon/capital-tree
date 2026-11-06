@@ -10,7 +10,6 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {ICheckpointedBudget} from "../interfaces/IBudget.sol";
-import {tokenBalance, isToken} from "../lib/tokens.sol";
 import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title FundedStreamBudget
@@ -93,7 +92,7 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     /// @param lastSeenBalance The DAO balance seen by the sync
     event Synced(uint256 baseAmount, uint256 lastSeenBalance);
 
-    /// @notice Thrown when the token is neither native ETH (`NATIVE`) nor a contract
+    /// @notice Thrown when the token is not a contract
     error InvalidToken();
 
     /// @notice Thrown when the given epoch interval is zero
@@ -108,7 +107,7 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     /// @dev A DAO that holds no tokens at initialization keeps the amount at zero until `sync()`
     ///      is called after it is funded.
     /// @param _dao The DAO holding the funds
-    /// @param _token The token streamed (`NATIVE` for native ETH)
+    /// @param _token The ERC20 token streamed
     /// @param _amountPerEpoch How much the available amount grows per epoch
     /// @param _maxBudget Maximum available amount at any point in time (0 for no cap)
     /// @param _epochInterval The epoch duration in seconds
@@ -116,7 +115,7 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
         external
         initializer
     {
-        if (!isToken(_token)) revert InvalidToken();
+        if (address(_token).code.length == 0) revert InvalidToken();
 
         __DaoAuthorizableUpgradeable_init(_dao);
 
@@ -225,6 +224,6 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
 
     /// @dev The DAO's current balance of the streamed token
     function _daoBalance() internal view virtual returns (uint256) {
-        return tokenBalance(token, address(dao()));
+        return token.balanceOf(address(dao()));
     }
 }

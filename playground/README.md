@@ -15,7 +15,7 @@ Then open http://127.0.0.1:5173/playground/. The script:
    - a DAO that Anvil's first account controls directly (it holds ROOT and EXECUTE),
    - two test tokens, A (1,000,000 held by the DAO) and B (burnable, held by the filler),
    - a filler that takes any flow's open-fill offer and pays from its own B,
-   - every component, the registry and the setup, published to Aragon's v1.4 plugin repo factory.
+   - every component, the registry and the setup, published to Aragon's OSx 1.4 plugin repo factory.
 3. Writes the addresses to `playground/deployment.json` and the ABIs to `playground/abis.json`.
 4. Serves the repo root on port 5173.
 

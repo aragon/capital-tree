@@ -1,4 +1,6 @@
-# Capital Pipeline
+# Capital Tree
+
+<img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/9534626e-b42e-4a96-975a-b205429d842f" />
 
 Aragon OSx plugin that runs one treasury flow per install: a **budget** feeding a **tree of
 actions**. Every node passes its output to its children, split by fixed weights or a splitter when
@@ -20,7 +22,7 @@ flowchart LR
 
 Examples: sell token A in a Dutch auction and burn 95% of the proceeds, paying 5% as a fee; let
 accounts claim cumulative Merkle allocations, optionally swapped before they're paid; pay a
-payroll from a stream. Any ERC20 works, and native ETH as `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`.
+payroll from a stream. Any ERC20 works; native ETH isn't supported.
 
 Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-04-capital-pipeline-design.md)
 
@@ -85,7 +87,7 @@ nor anything below it runs.
 When a node runs:
 
 1. A node fed by the budget (the root, or one below branches without an action) takes more than zero and at most its input; every other node takes exactly its input. What a node fed by the budget doesn't take never left the DAO.
-2. A node spends the token it received; a leaf outputs nothing; any output is native ETH or a contract.
+2. A node spends the token it received; a leaf outputs nothing; any output is a contract.
 3. Once an action sets a beneficiary, it can't change further down the tree.
 4. Actions can't target the DAO or the plugin.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more.
@@ -108,10 +110,10 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 A budget implements `IBudget`: `token()`, `available()` and `commitActions()`, the DAO actions
 that record the spend after the whole tree ran.
 
-| Budget | `available()` | Commit |
-|---|---|---|
+| Budget               | `available()`                                                              | Commit             |
+| -------------------- | -------------------------------------------------------------------------- | ------------------ |
 | `FundedStreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
-| `BalanceBudget` | The DAO's whole balance of the token | Nothing |
+| `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
 
 #### FundedStreamBudget
 
@@ -138,11 +140,11 @@ xychart-beta
     line [0, 10, 20, 30, 30, 30, 30, 40, 50]
 ```
 
-| Call | Who | Effect |
-|---|---|---|
-| `sync()` | anyone | Carries the current amount forward and records the DAO balance. Never raises the amount. |
-| `writeCheckpoint()` | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The plugin runs it through the DAO after every trigger. |
-| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `MANAGER_PERMISSION_ID` | Sync first, so time already elapsed keeps the old values. |
+| Call                                                    | Who                        | Effect                                                                                   |
+| ------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
+| `sync()`                                                | anyone                     | Carries the current amount forward and records the DAO balance. Never raises the amount. |
+| `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The plugin runs it through the DAO after every trigger.              |
+| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `MANAGER_PERMISSION_ID`    | Sync first, so time already elapsed keeps the old values.                                |
 
 After a deposit the amount stays frozen until someone calls `sync()`: run a keeper, or add a
 `sync()` action wherever revenue enters the DAO.
@@ -157,12 +159,12 @@ the amount, such as a Merkle claim; the budget only caps it at what the DAO hold
 Every action implements `INodeAction`, and the plugin calls all of its hooks on every node, so an
 action's safety checks can't be skipped.
 
-| Hook | Returns |
-|---|---|
-| `budget()` | The budget the action is bound to, or `address(0)` if it works with any input |
-| `preconditions(caller, input)` | Nothing; reverts when the action must not run |
-| `build(caller, data, input)` | The `Movement` and the DAO actions that do the work |
-| `postconditions(caller, movement)` | DAO actions that check the work, run right after it |
+| Hook                               | Returns                                                                       |
+| ---------------------------------- | ----------------------------------------------------------------------------- |
+| `budget()`                         | The budget the action is bound to, or `address(0)` if it works with any input |
+| `preconditions(caller, input)`     | Nothing; reverts when the action must not run                                 |
+| `build(caller, data, input)`       | The `Movement` and the DAO actions that do the work                           |
+| `postconditions(caller, movement)` | DAO actions that check the work, run right after it                           |
 
 #### OpenFillAction (root, or below branches without an action)
 
@@ -179,8 +181,6 @@ and fills it.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
 - **Settings**: `setDemandPerFill`, `setMinDemandedPerOffered` (`MANAGER_PERMISSION_ID`). Both restart
   the auction, so the action needs `CHECKPOINT_PERMISSION_ID` on its budget.
-- **Native ETH** works on either side, never both: a native offer arrives as call value with the
-  callback, without approvals.
 
 ```mermaid
 sequenceDiagram
@@ -204,8 +204,9 @@ sequenceDiagram
     Note over Plugin: balance check, then the children share D
 ```
 
-The filler implements `IFiller.fillOffer`, which has the same selector as capital-router's
-`ISwapSolver.fillOffer`, so existing fillers keep working.
+The filler implements `IFiller.fillOffer`. The trigger takes a per-node `bytes[]`.
+The [generic solver guide](docs/generic-solver.md) covers the executor, quote helpers,
+local and fork tests, and how to construct and submit a fill.
 
 #### MerkleClaimAction (root)
 
@@ -230,12 +231,12 @@ One claim per trigger.
 
 Leaves extend `LeafAction`: they spend their whole input and output nothing.
 
-| Leaf | Does | Check |
-|---|---|---|
-| `TransferAction` | Sends the input to a fixed recipient | The recipient's balance rose by the amount |
-| `TransferToBeneficiaryAction` | Sends the input to the flow's beneficiary; reverts if none was set | Same as above |
-| `BurnAction` | Calls `burn(amount)` on an `ERC20Burnable` token; rejects native ETH | The DAO's balance dropped by the amount |
-| `KeepAction` | Nothing: the input stays in the DAO, so keeping funds is an explicit choice | — |
+| Leaf                          | Does                                                                        | Check                                      |
+| ----------------------------- | --------------------------------------------------------------------------- | ------------------------------------------ |
+| `TransferAction`              | Sends the input to a fixed recipient                                        | The recipient's balance rose by the amount |
+| `TransferToBeneficiaryAction` | Sends the input to the flow's beneficiary; reverts if none was set          | Same as above                              |
+| `BurnAction`                  | Calls `burn(amount)` on an `ERC20Burnable` token                            | The DAO's balance dropped by the amount    |
+| `KeepAction`                  | Nothing: the input stays in the DAO, so keeping funds is an explicit choice | —                                          |
 
 The transfer check catches tokens that return `false` instead of reverting. Fee-on-transfer and
 rebasing tokens fail it by design.
@@ -373,14 +374,14 @@ Only the DAO itself can apply the installation.
 
 ## Permissions
 
-| Permission | Holder | Allows |
-|---|---|---|
-| `TRIGGER_PERMISSION_ID` | anyone | `trigger()` |
-| `CONFIGURE_PERMISSION_ID` | DAO only | `setFlow()` |
-| `MANAGER_PERMISSION_ID` | manager | parameter setters, Merkle `setRoot()`, `pause()`, `unpause()` |
-| `CHECKPOINT_PERMISSION_ID` | DAO, swap action | restarting the stream budget |
-| `RECORD_CLAIM_PERMISSION_ID` | DAO | Merkle `recordClaim()`, run by the plugin through the DAO |
-| `REGISTER_PERMISSION_ID` | picked by the managing DAO | registering new components |
+| Permission                   | Holder                     | Allows                                                        |
+| ---------------------------- | -------------------------- | ------------------------------------------------------------- |
+| `TRIGGER_PERMISSION_ID`      | anyone                     | `trigger()`                                                   |
+| `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
+| `MANAGER_PERMISSION_ID`      | manager                    | parameter setters, Merkle `setRoot()`, `pause()`, `unpause()` |
+| `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | restarting the stream budget                                  |
+| `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
+| `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
 
 The setup always grants `EXECUTE` and `CONFIGURE`; a recipe lists the rest, and its grants may
 only target the plugin or the recipe's components. The buyback and buy-and-burn recipes grant
@@ -407,36 +408,58 @@ flowchart LR
 
 ## Layout
 
-| Path | What |
-|---|---|
-| `src/CapitalPipelinePlugin.sol` | Runs the tree, checks balances after every node |
-| `src/budgets/FundedStreamBudget.sol` | Streaming pot that never jumps |
-| `src/budgets/BalanceBudget.sol` | The DAO's whole balance of a token |
-| `src/actions/OpenFillAction.sol` | Open-fill swap with Dutch-auction pricing (root, or below branches without an action) |
-| `src/actions/MerkleClaimAction.sol` | Cumulative Merkle claims with a redirectable beneficiary (root only) |
-| `src/actions/base/LeafAction.sol` | Base for leaves: spends the whole input, outputs nothing |
-| `src/actions/base/TransferBase.sol` | Base for transfer leaves: one transfer plus a receipt check |
-| `src/actions/TransferAction.sol` | Leaf: sends its input to a fixed recipient |
-| `src/actions/TransferToBeneficiaryAction.sol` | Leaf: sends its input to the flow's beneficiary |
-| `src/actions/BurnAction.sol` | Leaf: burns its input |
-| `src/actions/KeepAction.sol` | Leaf: leaves its input in the DAO |
-| `src/registry/ComponentRegistry.sol` | Write-once ids for the implementations recipes can clone |
-| `src/setup/CapitalPipelinePluginSetup.sol` | Installs any flow from a recipe |
-| `script/Recipes.sol` | Recipes for buy and burn, buyback, Merkle claim and payroll |
-| `script/Deploy.s.sol` | Deploys every implementation, the registry and the setup, and publishes the setup to an Aragon plugin repo |
-| `script/Install.s.sol` | Prepares an installation from a config and prints the proposal's actions |
-| `installs/` | One example config per recipe |
-| `metadata/release.json`, `metadata/build.json` | The plugin repo's release and build metadata |
-| `metadata/components/` | One JSON per component: name, description, `initialize` inputs |
-| `metadata/uris.json` | The IPFS link of each metadata file, read by the deploy script |
+| Path                                           | What                                                                                                       |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
+| `src/budgets/FundedStreamBudget.sol`           | Streaming pot that never jumps                                                                             |
+| `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
+| `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing (root, or below branches without an action)                      |
+| `src/actions/MerkleClaimAction.sol`            | Cumulative Merkle claims with a redirectable beneficiary (root only)                                       |
+| `src/actions/base/LeafAction.sol`              | Base for leaves: spends the whole input, outputs nothing                                                   |
+| `src/actions/base/TransferBase.sol`            | Base for transfer leaves: one transfer plus a receipt check                                                |
+| `src/actions/TransferAction.sol`               | Leaf: sends its input to a fixed recipient                                                                 |
+| `src/actions/TransferToBeneficiaryAction.sol`  | Leaf: sends its input to the flow's beneficiary                                                            |
+| `src/actions/BurnAction.sol`                   | Leaf: burns its input                                                                                      |
+| `src/actions/KeepAction.sol`                   | Leaf: leaves its input in the DAO                                                                          |
+| `src/registry/ComponentRegistry.sol`           | Write-once ids for the implementations recipes can clone                                                   |
+| `src/setup/CapitalPipelinePluginSetup.sol`     | Installs any flow from a recipe                                                                            |
+| `script/Recipes.sol`                           | Recipes for buy and burn, buyback, Merkle claim and payroll                                                |
+| `script/Deploy.s.sol`                          | Deploys every implementation, the registry and the setup, and publishes the setup to an Aragon plugin repo |
+| `script/Install.s.sol`                         | Prepares an installation from a config and prints the proposal's actions                                   |
+| `installs/`                                    | One example config per recipe                                                                              |
+| `metadata/release.json`, `metadata/build.json` | The plugin repo's release and build metadata                                                               |
+| `metadata/components/`                         | One JSON per component: name, description, `initialize` inputs                                             |
+| `metadata/uris.json`                           | The IPFS link of each metadata file, read by the deploy script                                             |
 
 ## Develop
 
+With Foundry and `just` installed:
+
 ```shell
-git submodule update --init --recursive
+just init sepolia
 forge build
-forge test
+just test
 ```
+
+`just init <network>` fetches the pinned submodules, creates `.env` from
+[`.env.example`](.env.example) if needed, and selects the network. Run `just` to list the
+commands provided by [`just-foundry`](https://github.com/aragon/just-foundry). Plain
+`forge build` and `forge test` still work without selecting a network.
+
+`just switch <network>` changes the active network. Its RPC, chain and OSx addresses come from
+`lib/just-foundry/networks/`; `just switch <network> override` creates an editable local
+`.env.<network>` copy. Local `.env` files and generated logs are ignored by Git.
+
+Secrets can be set in `.env` or managed with the optional [`vars`](https://github.com/vars-cli/vars)
+CLI (`just install-vars`). [`.vars.yaml`](.vars.yaml) lists the keys and network profiles;
+`just-foundry` resolves the profile matching the selected network automatically. Stored values
+take priority over `.env`. The Sepolia profile uses `dev/DEPLOYER_KEY`, and the Mainnet and
+Sepolia profiles use their respective `<network>/RPC_URL` entries. Other keys use the root
+store entries. Configure these with `vars set <key-or-scoped-key>`; secret values belong in
+the store or `.env`, never in the manifest.
+
+See the [`vars` documentation](https://github.com/vars-cli/vars#readme) for CLI usage and the
+[just-foundry secrets guide](lib/just-foundry/README.md#secrets) for setup and network profiles.
 
 Never set `via_ir = true`; fix stack-too-deep errors by restructuring the code.
 
@@ -447,35 +470,46 @@ deploys Aragon's plugin repo registry, factory and PluginSetupProcessor locally,
 
 Once per network:
 
-1. Upload `metadata/release.json`, `metadata/build.json` and every file in `metadata/components/`
+1. Run `just init <network>` and configure `.env` or your `vars` store. Set `DEPLOYER_KEY` and
+   `ETHERSCAN_API_KEY` for deployment and verification, plus any address overrides below.
+2. Upload `metadata/release.json`, `metadata/build.json` and every file in `metadata/components/`
    to IPFS (any pinning service).
-2. Put each `ipfs://...` link in `metadata/uris.json`: `release`, `build`, and each component's
+3. Put each `ipfs://...` link in `metadata/uris.json`: `release`, `build`, and each component's
    name under `components`. The script refuses to run while a link is empty, because registry
    entries and plugin repo versions can't be changed later.
-3. Run:
+4. Simulate, then deploy:
 
 ```shell
-MANAGING_DAO=0x... PLUGIN_REPO_FACTORY=0x... \
-  forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast
+just predeploy
+just deploy
 ```
 
-| Variable | Meaning |
-|---|---|
-| `MANAGING_DAO` | Maintains the component registry |
-| `PLUGIN_REPO_FACTORY` | Aragon's `PluginRepoFactory` on that network |
-| `PLUGIN_REPO_SUBDOMAIN` | Optional: the name under `plugin.dao.eth`, `capital-pipeline` by default |
-| `PLUGIN_REPO_MAINTAINER` | Optional: who can publish later versions, the managing DAO by default |
+`just predeploy` simulates `script/Deploy.s.sol:Deploy` without broadcasting. `just deploy` runs
+the unit tests, broadcasts the deployment, verifies contracts and writes a log under `logs/`.
+
+| Variable                     | Meaning                                                               |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `MANAGEMENT_DAO_ADDRESS`      | Maintains the component registry; supplied by the selected network     |
+| `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon's factory; supplied by the selected network                      |
+| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-pipeline` by default |
+| `PLUGIN_REPO_MAINTAINER`      | Optional: who can publish later versions, the managing DAO by default   |
+| `DEPLOYER_KEY`               | Required signing key for both deployment and installation preparation  |
+
+Override network addresses in `.env` or an editable `.env.<network>` using the same variable names.
 
 ## Install a flow
 
 1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `merkle-claim`, `payroll`) and fill
    in the DAO, the manager, the tokens and the amounts (in the token's smallest unit).
-2. Run:
+2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=installs/<yours>.json`
+   and `PLUGIN_REPO=0x...` in `.env`, and configure `DEPLOYER_KEY` in `.env` or `vars`.
+   `PLUGIN_SETUP_PROCESSOR_ADDRESS` comes from the selected network; override it using the same name.
+3. Simulate, then broadcast the preparation:
 
 ```shell
-INSTALL_CONFIG=installs/<yours>.json PLUGIN_SETUP_PROCESSOR=0x... PLUGIN_REPO=0x... \
-  forge script script/Install.s.sol --rpc-url <rpc> --broadcast
+just dry-run script/Install.s.sol:Install
+just run script/Install.s.sol:Install
 ```
 
-3. Put the three printed actions in a DAO proposal. Once it executes, the flow is live: fillers can
-   call `trigger()` and the manager can tune it.
+4. Put the three actions printed by the broadcast run in a DAO proposal. Once it executes, the
+   flow is live: fillers can call `trigger()` and the manager can tune it.

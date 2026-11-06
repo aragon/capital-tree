@@ -13,7 +13,6 @@ import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryA
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
 import {Input, Movement} from "../src/lib/types.sol";
-import {NATIVE} from "../src/lib/tokens.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {FalseReturnToken, FallbackToken} from "./mocks/BadComponents.sol";
 
@@ -103,11 +102,6 @@ contract LeafActionsTest is Fixture {
         // Action 0 is the burn (a no-op), action 1 the postcondition, which catches it
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
         _plugin.trigger(noData);
-    }
-
-    function test_RevertWhen_BurningNativeEth() public {
-        vm.expectRevert(BurnAction.CannotBurnNative.selector);
-        burn.preconditions(address(0), Input(NATIVE, 1 ether, address(0)));
     }
 
     // Keep

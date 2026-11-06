@@ -8,7 +8,6 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
-import {tokenBalance, isToken} from "../lib/tokens.sol";
 
 /// @title BalanceBudget
 /// @notice The DAO's whole balance of a token, with nothing to commit. Used where something else
@@ -17,7 +16,7 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
     /// @inheritdoc IBudget
     IERC20 public token;
 
-    /// @notice Thrown when the token is neither native ETH (`NATIVE`) nor a contract
+    /// @notice Thrown when the token is not a contract
     error InvalidToken();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -26,7 +25,7 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
     }
 
     function initialize(IDAO _dao, IERC20 _token) external initializer {
-        if (!isToken(_token)) revert InvalidToken();
+        if (address(_token).code.length == 0) revert InvalidToken();
 
         __DaoAuthorizableUpgradeable_init(_dao);
         token = _token;
@@ -34,7 +33,7 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc IBudget
     function available() external view returns (uint256) {
-        return tokenBalance(token, address(dao()));
+        return token.balanceOf(address(dao()));
     }
 
     /// @inheritdoc IBudget
