@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {IFiller} from "../../src/interfaces/IFiller.sol";
-import {NATIVE} from "../../src/lib/tokens.sol";
 
 /// @notice A filler for the playground: takes the open-fill offer at the root of any flow and pays
 ///         the demanded amount from its own balance. Anyone can make it fill.
@@ -22,18 +21,9 @@ contract PlaygroundFiller is IFiller {
         IERC20 _demandedToken,
         uint256 _demandedAmount,
         bytes calldata
-    ) external payable {
-        if (_offeredToken != NATIVE) {
-            _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
-        }
+    ) external {
+        _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
 
-        if (_demandedToken == NATIVE) {
-            (bool _sent,) = msg.sender.call{value: _demandedAmount}("");
-            require(_sent, "ETH payment failed");
-        } else {
-            _demandedToken.transfer(msg.sender, _demandedAmount);
-        }
+        _demandedToken.transfer(msg.sender, _demandedAmount);
     }
-
-    receive() external payable {}
 }

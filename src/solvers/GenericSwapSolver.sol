@@ -6,16 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {CapitalPipelinePlugin} from "../CapitalPipelinePlugin.sol";
 
-// TODO: Make the shared IFiller nonpayable and remove this temporary local interface.
-interface IFiller {
-    function fillOffer(
-        IERC20 offeredToken,
-        uint256 offeredAmount,
-        IERC20 demandedToken,
-        uint256 demandedAmount,
-        bytes calldata data
-    ) external;
-}
+import {IFiller} from "../interfaces/IFiller.sol";
 
 /// @title GenericFillSolver
 /// @notice Minimal permissioned ERC20 executor for open-fill callbacks.

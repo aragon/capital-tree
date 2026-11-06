@@ -7,7 +7,6 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
 import {Input, Movement} from "../lib/types.sol";
-import {NATIVE, tokenBalance} from "../lib/tokens.sol";
 import {LeafAction} from "./base/LeafAction.sol";
 
 /// @title BurnAction
@@ -16,19 +15,11 @@ import {LeafAction} from "./base/LeafAction.sol";
 ///      whole input. The plugin only checks it didn't drop by more, so without this a token whose
 ///      fallback accepts `burn` without burning (WETH9) would pass.
 contract BurnAction is LeafAction {
-    /// @notice Thrown when the input is native ETH, which can't be burned
-    error CannotBurnNative();
-
     /// @notice Thrown when the DAO holds more than it should after the burn
     error NotBurned(IERC20 token, uint256 maxBalance, uint256 balance);
 
     function initialize(IDAO _dao) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);
-    }
-
-    /// @inheritdoc INodeAction
-    function preconditions(address, Input calldata _input) external pure override {
-        if (_input.token == NATIVE) revert CannotBurnNative();
     }
 
     /// @inheritdoc INodeAction
@@ -50,7 +41,7 @@ contract BurnAction is LeafAction {
         override
         returns (Action[] memory _checks)
     {
-        uint256 _maxBalance = tokenBalance(_movement.inToken, address(dao())) - _movement.inAmount;
+        uint256 _maxBalance = _movement.inToken.balanceOf(address(dao())) - _movement.inAmount;
 
         _checks = new Action[](1);
         _checks[0] = Action({
@@ -61,7 +52,7 @@ contract BurnAction is LeafAction {
     /// @notice Reverts unless the DAO holds at most `_maxBalance` of `_token`
     /// @dev Executed by the DAO right after the burn. View, so harmless to call from anywhere.
     function assertBurned(IERC20 _token, uint256 _maxBalance) external view {
-        uint256 _balance = tokenBalance(_token, address(dao()));
+        uint256 _balance = _token.balanceOf(address(dao()));
         if (_balance > _maxBalance) revert NotBurned(_token, _maxBalance, _balance);
     }
 }

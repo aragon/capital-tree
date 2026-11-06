@@ -6,12 +6,12 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 import {INodeAction} from "../../interfaces/INodeAction.sol";
 import {LeafAction} from "./LeafAction.sol";
 import {Input, Movement} from "../../lib/types.sol";
-import {tokenBalance, transferAction} from "../../lib/tokens.sol";
+import {transferAction} from "../../lib/tokens.sol";
 
 /// @title TransferBase
 /// @notice Leaf that sends its whole input to one recipient. Postcondition: the recipient's balance
 ///         rose by the amount, which catches tokens that return false instead of reverting.
-/// @dev Native ETH works too. Fee-on-transfer and rebasing tokens fail the postcondition by design.
+/// @dev Fee-on-transfer and rebasing tokens fail the postcondition by design.
 abstract contract TransferBase is LeafAction {
     /// @notice Thrown when a recipient holds less than it should after the transfer
     error ReceiptShortfall(IERC20 token, address recipient, uint256 expected, uint256 actual);
@@ -37,7 +37,7 @@ abstract contract TransferBase is LeafAction {
         returns (Action[] memory _checks)
     {
         address _to = _recipient(_movement.beneficiary);
-        uint256 _minBalance = tokenBalance(_movement.inToken, _to) + _movement.inAmount;
+        uint256 _minBalance = _movement.inToken.balanceOf(_to) + _movement.inAmount;
 
         _checks = new Action[](1);
         _checks[0] = Action({
@@ -50,7 +50,7 @@ abstract contract TransferBase is LeafAction {
     /// @notice Reverts unless `_account` holds at least `_minBalance` of `_token`
     /// @dev Executed by the DAO right after the transfer. View, so harmless to call from anywhere.
     function assertReceived(IERC20 _token, address _account, uint256 _minBalance) external view {
-        uint256 _balance = tokenBalance(_token, _account);
+        uint256 _balance = _token.balanceOf(_account);
         if (_balance < _minBalance) revert ReceiptShortfall(_token, _account, _minBalance, _balance);
     }
 

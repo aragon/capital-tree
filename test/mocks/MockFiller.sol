@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IFiller} from "../../src/interfaces/IFiller.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {NATIVE} from "../../src/lib/tokens.sol";
 
 /// @notice Triggers the plugin and fills the offer, delivering `demandedAmount + fillDelta`
 contract MockFiller is IFiller {
@@ -53,7 +52,7 @@ contract MockFiller is IFiller {
         IERC20 _demandedToken,
         uint256 _demandedAmount,
         bytes calldata
-    ) external payable {
+    ) external {
         if (reenter) {
             try plugin.trigger(new bytes[](0)) {}
             catch (bytes memory _reason) {
@@ -61,20 +60,10 @@ contract MockFiller is IFiller {
             }
         }
 
-        // A native offer already arrived as msg.value; an ERC20 offer is pulled
-        if (_offeredToken != NATIVE) {
-            _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
-        }
+        _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
 
         uint256 _amount = uint256(int256(_demandedAmount) + fillDelta);
-        if (_demandedToken == NATIVE) {
-            (bool _ok,) = msg.sender.call{value: _amount}("");
-            require(_ok, "MockFiller: ETH send failed");
-        } else {
-            _demandedToken.transfer(msg.sender, _amount);
-        }
+        _demandedToken.transfer(msg.sender, _amount);
         totalDelivered += _amount;
     }
-
-    receive() external payable {}
 }
