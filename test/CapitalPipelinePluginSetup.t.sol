@@ -266,7 +266,8 @@ contract CapitalPipelinePluginSetupTest is Fixture {
     }
 
     function _stream() internal view returns (Recipes.Stream memory) {
-        return Recipes.Stream({token: IERC20(tokenA), amountPerEpoch: RATE, maxBudget: 0, epochInterval: EPOCH});
+        return
+            Recipes.Stream({token: IERC20(tokenA), amountPerEpoch: RATE, maxBudget: STREAM_CAP, epochInterval: EPOCH});
     }
 
     function _swap() internal view returns (Recipes.Swap memory) {

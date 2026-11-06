@@ -6,7 +6,7 @@
   "stream": {
     "token": "0x00000000000000000000000000000000000000A1",
     "amountPerEpoch": "1000000000000000000000",
-    "maxBudget": "0",
+    "maxBudget": "1250000000000000000000",
     "epochInterval": "86400"
   },
   "swap": {

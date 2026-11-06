@@ -38,6 +38,9 @@ library Recipes {
 
     address internal constant ANY_ADDR = address(type(uint160).max);
 
+    /// @notice Thrown when an OpenFill recipe's stream has no cap, so its auction has no worst price
+    error UncappedStream();
+
     struct Stream {
         IERC20 token;
         uint256 amountPerEpoch;
@@ -50,15 +53,15 @@ library Recipes {
         uint256 demandPerFill;
     }
 
-    /// @notice Stream → OpenFill → burn all the proceeds.
-    ///         Components: 0 budget, 1 OpenFill, 2 Burn.
+    /// @notice Stream → OpenFill → burn all the proceeds. The stream's `maxBudget` sets the worst
+    ///         price: `demandPerFill / maxBudget`. Components: 0 budget, 1 OpenFill, 2 Burn.
     function buyAndBurn(address _manager, Stream memory _stream, Swap memory _swap)
         internal
         pure
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
         _params.components = new CapitalPipelinePluginSetup.Component[](3);
-        _params.components[0] = _streamBudget(_stream);
+        _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] = _burn();
 
@@ -71,6 +74,7 @@ library Recipes {
     }
 
     /// @notice Stream → OpenFill → burn the proceeds, except `_feeWeight` (of RATIO_BASE) to `_fee`.
+    ///         The stream's `maxBudget` sets the worst price: `demandPerFill / maxBudget`.
     ///         Components: 0 budget, 1 OpenFill, 2 Burn, 3 Transfer.
     function buyback(address _manager, Stream memory _stream, Swap memory _swap, address _fee, uint32 _feeWeight)
         internal
@@ -78,7 +82,7 @@ library Recipes {
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
         _params.components = new CapitalPipelinePluginSetup.Component[](4);
-        _params.components[0] = _streamBudget(_stream);
+        _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] = _burn();
         _params.components[3] = _transfer(_fee);
@@ -163,6 +167,16 @@ library Recipes {
                 (IDAO(DAO_REF), _stream.token, _stream.amountPerEpoch, _stream.maxBudget, _stream.epochInterval)
             )
         );
+    }
+
+    /// @dev OpenFill offers its whole input, so the stream's cap is the auction's only limit
+    function _cappedStreamBudget(Stream memory _stream)
+        private
+        pure
+        returns (CapitalPipelinePluginSetup.Component memory)
+    {
+        if (_stream.maxBudget == 0) revert UncappedStream();
+        return _streamBudget(_stream);
     }
 
     /// @dev Bound to component 0, the budget

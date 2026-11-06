@@ -56,7 +56,8 @@ contract InstallationTest is Fixture {
 
     /// The proposal's three actions install a buy-and-burn flow, which then burns a fill's proceeds
     function test_DaoInstallsBuyAndBurnWithTheProposalActions() public {
-        (address _plugin, Action[] memory _actions) = installer.install(psp, repo, address(dao), _buyAndBurnConfig());
+        (address _plugin, Action[] memory _actions) =
+            installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
 
         dao.grant(address(dao), address(dao), dao.ROOT_PERMISSION_ID()); // as Aragon's DAOFactory does
         dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID()); // stands in for a passed proposal
@@ -75,7 +76,7 @@ contract InstallationTest is Fixture {
     }
 
     function test_RevertWhen_SomeoneElseAppliesTheInstallation() public {
-        (, Action[] memory _actions) = installer.install(psp, repo, address(dao), _buyAndBurnConfig());
+        (, Action[] memory _actions) = installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
 
         vm.prank(alice);
         (bool _ok, bytes memory _reason) = _actions[1].to.call(_actions[1].data);
@@ -93,11 +94,12 @@ contract InstallationTest is Fixture {
     }
 
     function test_ConfigBuildsTheSameRecipe() public view {
-        Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, 0, EPOCH);
+        Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, STREAM_CAP, EPOCH);
         Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND);
 
         assertEq(
-            abi.encode(installer.recipe(_buyAndBurnConfig())), abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
+            abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP))),
+            abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
         );
     }
 
@@ -108,6 +110,12 @@ contract InstallationTest is Fixture {
         assertEq(installer.recipe(_example("payroll")).components.length, 3);
     }
 
+    /// OpenFill has no cap of its own: without the stream's, an auction has no worst price
+    function test_RevertWhen_AnAuctionStreamHasNoCap() public {
+        vm.expectRevert(Recipes.UncappedStream.selector);
+        installer.recipe(_buyAndBurnConfig(0));
+    }
+
     function test_RevertWhen_TheRecipeIsUnknown() public {
         vm.expectRevert(abi.encodeWithSelector(Install.UnknownRecipe.selector, "swapEverything"));
         installer.recipe('{"recipe":"swapEverything","manager":"0x0000000000000000000000000000000000000001"}');
@@ -115,7 +123,7 @@ contract InstallationTest is Fixture {
 
     // Helpers
 
-    function _buyAndBurnConfig() internal view returns (string memory) {
+    function _buyAndBurnConfig(uint256 _maxBudget) internal view returns (string memory) {
         return string.concat(
             '{"recipe":"buyAndBurn","manager":"',
             vm.toString(manager),
@@ -123,7 +131,9 @@ contract InstallationTest is Fixture {
             vm.toString(address(tokenA)),
             '","amountPerEpoch":"',
             vm.toString(RATE),
-            '","maxBudget":"0","epochInterval":"',
+            '","maxBudget":"',
+            vm.toString(_maxBudget),
+            '","epochInterval":"',
             vm.toString(EPOCH),
             '"},"swap":{"demandedToken":"',
             vm.toString(address(tokenB)),
