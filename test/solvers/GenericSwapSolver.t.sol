@@ -111,7 +111,9 @@ contract GenericFillSolverTest is Fixture {
         bytes[] memory data = _data(_calls(RATE, DEMAND - 1, address(dao)));
         uint256 checkpoint = budget.baseTimestamp();
 
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(
+            abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + DEMAND - 1)
+        );
         solver.trigger(data);
 
         _assertUnfilled(checkpoint);
@@ -177,7 +179,7 @@ contract GenericFillSolverTest is Fixture {
         bytes[] memory data = _data(new Action[](0));
         uint256 checkpoint = budget.baseTimestamp();
         // The solver accepts an empty batch, but OpenFill still requires payment.
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B));
         solver.trigger(data);
         _assertUnfilled(checkpoint);
     }

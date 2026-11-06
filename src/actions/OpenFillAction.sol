@@ -126,7 +126,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     }
 
     /// @notice Reverts unless the DAO holds at least `_minBalance` of `_token`
-    /// @dev Executed by the DAO as the postcondition of a fill. View, so harmless to call from anywhere.
+    /// @dev Called by the plugin as the postcondition of a fill. View, so harmless to call from anywhere.
     function assertReceived(IERC20 _token, uint256 _minBalance) external view virtual {
         uint256 _balance = _token.balanceOf(address(dao()));
         if (_balance < _minBalance) revert DemandNotMet(_minBalance, _balance);

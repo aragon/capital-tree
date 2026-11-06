@@ -28,6 +28,9 @@ interface INodeAction {
         view
         returns (Movement memory movement, Action[] memory actions);
 
-    /// @notice The checks that make the work safe, executed by the DAO right after it
+    /// @notice The checks that make the work safe. The plugin calls each one read-only (staticcall)
+    ///         right after the node's `dao.execute`; a check reverts when the work went wrong.
+    /// @dev Called before the work runs, so a check can carry the state it compares against (a
+    ///      balance before the work). Checks can't send value or change state.
     function postconditions(address caller, Movement calldata movement) external view returns (Action[] memory);
 }

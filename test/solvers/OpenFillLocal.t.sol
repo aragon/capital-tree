@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Test, console2} from "forge-std/Test.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {DAO} from "@aragon/osx/core/dao/DAO.sol";
+import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {DeployFlow} from "../../script/open-fill/DeployFlow.sol";
 import {OpenFillQuotes} from "../../script/open-fill/Quotes.s.sol";
@@ -98,7 +98,7 @@ contract OpenFillLocalTest is Test {
             quotes.forNode(2, 0, quotes.fromZeroEx(json, address(d.dao), address(d.solver), d.sell, 100 ether));
         uint256 checkpoint = d.budget.baseTimestamp();
 
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, d.action.demandPerFill(), 0));
         d.solver.trigger(data);
 
         assertEq(d.sell.balanceOf(address(d.dao)), 100 ether);

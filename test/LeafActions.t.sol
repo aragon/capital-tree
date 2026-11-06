@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
@@ -52,8 +51,10 @@ contract LeafActionsTest is Fixture {
         CapitalPipelinePlugin _plugin =
             _deployPlugin(_deployBalanceBudget(IERC20(address(_token))), _one(_deployTransfer(alice)));
 
-        // Action 0 is the transfer (returns false), action 1 the postcondition, which catches it
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
+        // The transfer returns false; the postcondition catches it
+        vm.expectRevert(
+            abi.encodeWithSelector(TransferBase.ReceiptShortfall.selector, address(_token), alice, 100 ether, 0)
+        );
         _plugin.trigger("", noData);
     }
 
@@ -99,8 +100,8 @@ contract LeafActionsTest is Fixture {
         _token.mint(address(dao), 100 ether);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_token))), _one(burn));
 
-        // Action 0 is the burn (a no-op), action 1 the postcondition, which catches it
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
+        // The burn is a no-op; the postcondition catches it
+        vm.expectRevert(abi.encodeWithSelector(BurnAction.NotBurned.selector, address(_token), 0, 100 ether));
         _plugin.trigger("", noData);
     }
 
@@ -126,8 +127,10 @@ contract LeafActionsTest is Fixture {
             _fork(NO_ACTION, 500_000, _deployTransfer(alice), 500_000, _deployTransfer(alice))
         );
 
-        // In the second leaf, action 0 is the transfer (returns false), action 1 the postcondition
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
+        // The second leaf's transfer returns false; its postcondition catches it
+        vm.expectRevert(
+            abi.encodeWithSelector(TransferBase.ReceiptShortfall.selector, address(_token), alice, 100 ether, 50 ether)
+        );
         _plugin.trigger("", noData);
     }
 

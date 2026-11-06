@@ -21,7 +21,8 @@ contract BadAction is INodeAction {
         Redirect, // sets a different beneficiary than the one already set
         SwapInputToken, // declares a different input token
         Lie, // declares 10 B of output it never produces
-        Drain // declares its whole input as a leaf but transfers twice that away
+        Drain, // declares its whole input as a leaf but transfers twice that away
+        WriteInCheck // its postcondition tries to change state
     }
 
     address internal constant THIEF = address(0xBEEF);
@@ -68,7 +69,11 @@ contract BadAction is INodeAction {
         }
     }
 
-    function postconditions(address, Movement calldata) external pure returns (Action[] memory) {}
+    function postconditions(address, Movement calldata) external view returns (Action[] memory _checks) {
+        if (mode != Mode.WriteInCheck) return _checks;
+        _checks = new Action[](1);
+        _checks[0] = Action({to: address(tokenB), value: 0, data: abi.encodeCall(IERC20.transfer, (THIEF, 0))});
+    }
 }
 
 /// @notice USDT-family failure mode: after `successfulTransfers` transfers, `transfer` returns

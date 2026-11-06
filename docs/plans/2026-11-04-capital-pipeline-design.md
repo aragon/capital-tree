@@ -59,6 +59,7 @@ interface INodeAction {
     function preconditions(address caller, Input calldata input) external view;   // revert = blocked
     function build(address caller, bytes calldata data, Input calldata input)
         external view returns (Movement memory movement, Action[] memory actions);
+    // read-only checks the plugin calls (staticcall) right after the node's dao.execute; no value
     function postconditions(address caller, Movement calldata movement) external view returns (Action[] memory);
 }
 
@@ -94,9 +95,9 @@ run(node, input)                                        depth first
     action.preconditions(input) → action.build(input) → movement
     movement.in == input                                              else revert
     same input token; leaves output 0; beneficiary not changed  else revert
-    acts = build actions + action.postconditions
-    reject acts targeting the DAO or the plugin
-    snapshot DAO balances → dao.execute(acts) → verify DAO balances
+    acts = build actions; checks = action.postconditions
+    reject acts targeting the DAO or the plugin, and checks that send value
+    snapshot DAO balances → dao.execute(acts) → staticcall each check → verify DAO balances
   children share record.forwarded = movement.out (split by weights or the splitter for a branch)
             forwardSurplus: everything that arrived instead
   splitter: one amount per child, summing to record.forwarded  else revert InvalidSplit
@@ -105,7 +106,7 @@ run(node, input)                                        depth first
 
 ### Balance checks (after every node)
 
-The DAO spent no more than the node's `inAmount` and received at least its `outAmount` (combined into one check when input and output are the same token). Recipient checks are the leaf actions' own postconditions (`assertReceived`), measured around their own `dao.execute`, so they never see another node's movements. Together these make each node's declared output a verified fact before its children spend it. On a node marked `forwardSurplus`, the children get the measured amount instead, which may exceed `outAmount`.
+The DAO spent no more than the node's `inAmount` and received at least its `outAmount` (combined into one check when input and output are the same token). Recipient checks are the leaf actions' own postconditions (`assertReceived`), read-only calls the plugin makes right after the node's own `dao.execute`, so they never see another node's movements and a failed one reverts with its own error. Together these make each node's declared output a verified fact before its children spend it. On a node marked `forwardSurplus`, the children get the measured amount instead, which may exceed `outAmount`.
 
 ### Example flows
 

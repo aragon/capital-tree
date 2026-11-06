@@ -50,7 +50,7 @@ contract BurnAction is LeafAction {
     }
 
     /// @notice Reverts unless the DAO holds at most `_maxBalance` of `_token`
-    /// @dev Executed by the DAO right after the burn. View, so harmless to call from anywhere.
+    /// @dev Called by the plugin right after the burn. View, so harmless to call from anywhere.
     function assertBurned(IERC20 _token, uint256 _maxBalance) external view {
         uint256 _balance = _token.balanceOf(address(dao()));
         if (_balance > _maxBalance) revert NotBurned(_token, _maxBalance, _balance);

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
@@ -31,10 +32,10 @@ import {
 ///      leaves output nothing. Anything else reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
 ///      `skipWhenEmpty`: then neither it nor anything below it runs.
 ///      Each node with an action is built (view) right after its parent ran and executes in its
-///      own `dao.execute`, followed by balance checks: the DAO spent no more than the node's input
-///      and received at least its declared output. The children get that declared output, or
-///      everything that arrived when the node is marked `forwardSurplus`. Recipient checks are the
-///      actions' own postconditions.
+///      own `dao.execute`, followed by the action's postconditions (read-only calls the plugin
+///      makes, such as recipient checks) and balance checks: the DAO spent no more than the node's
+///      input and received at least its declared output. The children get that declared output, or
+///      everything that arrived when the node is marked `forwardSurplus`.
 contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice What the flow may spend; read at the start, committed at the end
     IBudget public budget;
@@ -73,6 +74,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error OutputBelowInput(uint256 nodeIndex, uint256 outAmount, uint256 inAmount);
     error BeneficiaryChanged(uint256 nodeIndex);
     error MissingFunctionSelector(uint256 nodeIndex, uint256 actionIndex);
+    error CheckSendsValue(uint256 nodeIndex, uint256 checkIndex);
     error ActionTargetsDao(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 nodeIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
@@ -177,11 +179,13 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         bool _leaf,
         uint256 _callNonce
     ) internal returns (Record memory _record) {
-        (Movement memory _movement, Action[] memory _actions) = _buildAction(_index, _action, _input, _data, _leaf);
+        (Movement memory _movement, Action[] memory _actions, Action[] memory _checks) =
+            _buildAction(_index, _action, _input, _data, _leaf);
 
         (uint256 _inBefore, uint256 _outBefore) = _snapshot(_movement);
         bytes32 _executionId = keccak256(abi.encode(address(this), _callNonce, _index));
         _execute(_index, _actions, _executionId);
+        _runChecks(_index, _checks);
         _verify(_index, _movement, _inBefore, _outBefore);
         _record = _measure(_index, _movement, _inBefore, _outBefore);
 
@@ -192,11 +196,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     function _buildAction(uint256 _index, INodeAction _action, Input memory _input, bytes calldata _data, bool _leaf)
         internal
         view
-        returns (Movement memory _movement, Action[] memory _actions)
+        returns (Movement memory _movement, Action[] memory _actions, Action[] memory _checks)
     {
         _action.preconditions(msg.sender, _input);
-        Action[] memory _work;
-        (_movement, _work) = _action.build(msg.sender, _data, _input);
+        (_movement, _actions) = _action.build(msg.sender, _data, _input);
 
         if (_movement.inAmount > _input.amount) {
             revert InAmountExceedsInput(_index, _movement.inAmount, _input.amount);
@@ -209,7 +212,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _checkOutput(_index, _movement);
         _movement.beneficiary = _keepBeneficiary(_index, _input.beneficiary, _movement.beneficiary);
 
-        _actions = _concat(_work, _action.postconditions(msg.sender, _movement));
+        _checks = _action.postconditions(msg.sender, _movement);
     }
 
     /// @dev An output that will be measured must be a token, and a node that forwards its surplus
@@ -238,6 +241,15 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (_actions[i].to == address(this)) revert ActionTargetsPlugin(_index, i);
         }
         IExecutor(_dao).execute(_executionId, _actions, 0);
+    }
+
+    /// @dev Right after the node's `dao.execute`. Read-only, so a check can't move funds or change
+    ///      state; a failed check reverts the whole trigger with its own error.
+    function _runChecks(uint256 _index, Action[] memory _checks) internal view {
+        for (uint256 i; i < _checks.length; ++i) {
+            if (_checks[i].value != 0) revert CheckSendsValue(_index, i);
+            Address.functionStaticCall(_checks[i].to, _checks[i].data);
+        }
     }
 
     /// @dev After the whole tree ran, so a stream checkpoint sees the final balance
@@ -351,16 +363,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         if (_current == address(0) || _proposed == _current) return _proposed;
         if (_proposed == address(0)) return _current;
         revert BeneficiaryChanged(_index);
-    }
-
-    function _concat(Action[] memory _a, Action[] memory _b) internal pure returns (Action[] memory _out) {
-        _out = new Action[](_a.length + _b.length);
-        for (uint256 i; i < _a.length; ++i) {
-            _out[i] = _a[i];
-        }
-        for (uint256 i; i < _b.length; ++i) {
-            _out[_a.length + i] = _b[i];
-        }
     }
 
     // Configuration

@@ -48,7 +48,7 @@ abstract contract TransferBase is LeafAction {
     }
 
     /// @notice Reverts unless `_account` holds at least `_minBalance` of `_token`
-    /// @dev Executed by the DAO right after the transfer. View, so harmless to call from anywhere.
+    /// @dev Called by the plugin right after the transfer. View, so harmless to call from anywhere.
     function assertReceived(IERC20 _token, address _account, uint256 _minBalance) external view {
         uint256 _balance = _token.balanceOf(_account);
         if (_balance < _minBalance) revert ReceiptShortfall(_token, _account, _minBalance, _balance);

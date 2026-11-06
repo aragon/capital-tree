@@ -77,7 +77,8 @@ sequenceDiagram
         Note over Plugin: check the Movement against the input
         Plugin->>Action: postconditions(caller, movement)
         Action-->>Plugin: check actions
-        Plugin->>DAO: execute(actions, then checks)
+        Plugin->>DAO: execute(actions)
+        Plugin->>Action: checks (read-only)
         Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
         Note over Plugin: split outAmount among the children (weights or splitter), or everything that arrived with forwardSurplus
     end
@@ -97,7 +98,7 @@ When a node runs:
 1. Every node takes exactly its input, the root included: the budget releases only what the flow spends.
 2. A node spends the token it received; a leaf outputs nothing; any output is a contract.
 3. Once the budget or an action sets a beneficiary, it can't change further down the tree.
-4. Actions can't target the DAO or the plugin.
+4. Actions can't target the DAO or the plugin. Postconditions run as read-only calls and can't send value.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more. The children get `outAmount`; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
 6. A splitter returns one amount per child, adding up to what the children share (`forwarded`).
 7. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
@@ -195,7 +196,7 @@ action's safety checks can't be skipped.
 | `budget()`                         | The budget the action is bound to, or `address(0)` if it works with any input |
 | `preconditions(caller, input)`     | Nothing; reverts when the action must not run                                 |
 | `build(caller, data, input)`       | The `Movement` and the DAO actions that do the work                           |
-| `postconditions(caller, movement)` | DAO actions that check the work, run right after it                           |
+| `postconditions(caller, movement)` | Read-only checks the plugin calls right after the work                        |
 
 #### OpenFillAction
 
@@ -234,7 +235,7 @@ sequenceDiagram
     Filler->>TokenA: transferFrom(DAO, filler, X)
     Filler->>DAO: send D of token B
     DAO->>TokenA: approve(filler, 0)
-    DAO->>Fill: assertReceived(B, balance before + D)
+    Plugin->>Fill: assertReceived(B, balance before + D)
     Note over Plugin: balance check, then the children share D (all the B that arrived, with forwardSurplus)
 ```
 

@@ -54,15 +54,23 @@ contract NativeEthTest is Fixture {
         _assertValueRejected(NativeAction.Mode.Work);
     }
 
-    function test_RevertWhen_PostconditionSendsEthWithoutSelector() public {
-        _assertValueRejected(NativeAction.Mode.Check);
+    function test_RevertWhen_PostconditionSendsEth() public {
+        _assertValueRejected(
+            NativeAction.Mode.Check, abi.encodeWithSelector(CapitalPipelinePlugin.CheckSendsValue.selector, 0, 0)
+        );
     }
 
     function _assertValueRejected(NativeAction.Mode _mode) internal {
+        _assertValueRejected(
+            _mode, abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 0, 0)
+        );
+    }
+
+    function _assertValueRejected(NativeAction.Mode _mode, bytes memory _error) internal {
         vm.deal(address(dao), 1 ether);
         NativeAction _action = new NativeAction(address(dao), _mode);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 0, 0));
+        vm.expectRevert(_error);
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
@@ -94,10 +102,6 @@ contract NativeEthTest is Fixture {
 
     function test_NodeCallsPayableFunctionWithDaoEth() public {
         _assertPayableCall(NativeAction.Mode.Work, false);
-    }
-
-    function test_PostconditionCallsPayableFunctionWithDaoEth() public {
-        _assertPayableCall(NativeAction.Mode.Check, false);
     }
 
     function test_PayableCallbackCannotReenterTrigger() public {

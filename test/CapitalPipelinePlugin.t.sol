@@ -318,8 +318,9 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_FillerUnderDelivers() public {
         filler.setFillDelta(-1);
 
-        // Action 3 is OpenFill's postcondition: assertReceived
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(
+            abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + DEMAND - 1)
+        );
         filler.fill("");
 
         assertEq(_available(budget), RATE, "offer not consumed");
@@ -782,6 +783,13 @@ contract CapitalPipelinePluginTest is Fixture {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetPlugin), keep));
 
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsPlugin.selector, 0, 0));
+        _plugin.trigger("", noData);
+    }
+
+    function test_RevertWhen_ACheckChangesState() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.WriteInCheck), keep));
+
+        vm.expectRevert("Address: low-level static call failed");
         _plugin.trigger("", noData);
     }
 
