@@ -223,7 +223,7 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(tokenB.balanceOf(BURN), 950 ether, "95% to the burn address");
         assertEq(tokenB.balanceOf(fee), 50 ether, "5% fee");
         assertEq(tokenB.balanceOf(address(dao)), DAO_B, "pre-existing B untouched");
-        assertEq(budget.available(), 0, "auction restarts");
+        assertEq(_available(budget), 0, "auction restarts");
     }
 
     /// The example tree: swap, burn 95%, send 5% to a fee address
@@ -271,7 +271,7 @@ contract CapitalPipelinePluginTest is Fixture {
 
         _plugin.trigger("", noData);
 
-        assertEq(_budget.available(), 0);
+        assertEq(_available(_budget), 0);
         assertEq(_budget.lastSeenBalance(), DAO_A - RATE, "the checkpoint sees the balance after both leaves");
     }
 
@@ -285,7 +285,7 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(tokenA.balanceOf(alice), RATE / 2, "half the stream to grants");
         assertEq(tokenA.balanceOf(address(_filler)), RATE / 2, "half the stream on offer");
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND, "the proceeds stay in the treasury");
-        assertEq(budget.available(), 0, "the stream restarts for both");
+        assertEq(_available(budget), 0, "the stream restarts for both");
     }
 
     /// The stream's cap, not the action, limits the offer
@@ -299,7 +299,7 @@ contract CapitalPipelinePluginTest is Fixture {
 
         assertEq(tokenA.balanceOf(address(_filler)), STREAM_CAP, "the auction offers 20 A");
         assertEq(tokenA.balanceOf(address(dao)), DAO_A - STREAM_CAP, "the rest never leaves the DAO");
-        assertEq(_budget.available(), 0, "the stream restarts");
+        assertEq(_available(_budget), 0, "the stream restarts");
     }
 
     /// OpenFill offers whatever its parent passes on, wherever it sits
@@ -322,7 +322,7 @@ contract CapitalPipelinePluginTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
         filler.fill("");
 
-        assertEq(budget.available(), RATE, "offer not consumed");
+        assertEq(_available(budget), RATE, "offer not consumed");
     }
 
     // =========================================================================================

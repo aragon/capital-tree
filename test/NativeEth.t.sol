@@ -206,7 +206,7 @@ contract NativeCommitBudget is IBudget {
         token = _token;
     }
 
-    function release(address, bytes calldata) external view returns (uint256, address) {
+    function available(address, bytes calldata) external view returns (uint256, address) {
         return (token.balanceOf(dao), address(0));
     }
 

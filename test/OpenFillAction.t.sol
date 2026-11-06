@@ -63,13 +63,13 @@ contract OpenFillActionTest is Fixture {
 
     function test_SetDemandPerFillRestartsTheAuction() public {
         vm.warp(block.timestamp + EPOCH);
-        assertEq(budget.available(), RATE);
+        assertEq(_available(budget), RATE);
 
         vm.prank(manager);
         action.setDemandPerFill(500 ether);
 
         assertEq(action.demandPerFill(), 500 ether);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_RevertWhen_SetterUnauthorized() public {

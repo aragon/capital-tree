@@ -43,7 +43,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenA.balanceOf(address(solver)), RATE);
         assertEq(tokenB.balanceOf(address(solver)), 0);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
         assertEq(budget.lastSeenBalance(), DAO_A - RATE);
         assertEq(budget.baseTimestamp(), block.timestamp);
     }
@@ -58,7 +58,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(BURN), DEMAND * 95 / 100);
         assertEq(tokenB.balanceOf(fee), DEMAND * 5 / 100);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_CallbackDataAtNonRootNode() public {
@@ -80,7 +80,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
         assertEq(budget.lastSeenBalance(), DAO_A - RATE);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_MultipleOpenFillNodesKeepSeparatePayloads() public {
@@ -104,7 +104,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + 2 * DEMAND);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
         assertEq(budget.lastSeenBalance(), DAO_A - RATE);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_RevertWhen_UnderpaidRestoresBalancesAndStream() public {
@@ -335,7 +335,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
         assertEq(tokenB.balanceOf(alice), 2 ether);
         assertEq(tokenB.balanceOf(address(solver)), 0);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_RevertWhen_AuthorizedAddressIsZero() public {
@@ -355,7 +355,7 @@ contract GenericFillSolverTest is Fixture {
 
         solver.trigger(data);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_SweepRejectsFalseReturningToken() public {
@@ -394,7 +394,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenA.balanceOf(address(solver)), 0);
         assertEq(tokenB.balanceOf(address(solver)), DEMAND);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
-        assertEq(budget.available(), RATE);
+        assertEq(_available(budget), RATE);
         assertEq(budget.baseTimestamp(), checkpoint);
     }
 }

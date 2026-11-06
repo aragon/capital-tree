@@ -30,7 +30,7 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 
 | Term | Meaning |
 |---|---|
-| **Budget** | How much of one token the flow spends in this trigger, and possibly who it belongs to (a Merkle claim). Released once at the start of a trigger, committed once at the end. |
+| **Budget** | How much of one token the flow spends in this trigger, and possibly who it belongs to (a Merkle claim). Read once at the start of a trigger, committed once at the end. |
 | **Node** | One step of the tree: an action, its children, how its output is split among them (weights or a splitter), whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
@@ -68,7 +68,7 @@ sequenceDiagram
     participant DAO
 
     Caller->>Plugin: trigger(budgetData, data)
-    Plugin->>Budget: token(), release(caller, budgetData)
+    Plugin->>Budget: token(), available(caller, budgetData)
     Note over Plugin: root input = (token, amount, beneficiary)
     loop every node with an action, depth first
         Plugin->>Action: preconditions(caller, input)
@@ -117,15 +117,15 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 
 ### Budgets
 
-A budget implements `IBudget`: `token()`; `release(caller, data)`, the root's input and possibly
+A budget implements `IBudget`: `token()`; `available(caller, data)`, the root's input and possibly
 a beneficiary; and `commitActions(caller, data)`, the DAO actions that record the spend after the
 whole tree ran.
 
-| Budget               | `release()`                                                                               | Commit             |
-| -------------------- | ----------------------------------------------------------------------------------------- | ------------------ |
-| `FundedStreamBudget` | `available()`: grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
-| `BalanceBudget`      | The DAO's whole balance of the token                                                      | Nothing            |
-| `MerkleClaimBudget`  | What the caller is owed, for the beneficiary it names                                     | Records the claim  |
+| Budget               | `available()`                                                              | Commit             |
+| -------------------- | -------------------------------------------------------------------------- | ------------------ |
+| `FundedStreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
+| `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
+| `MerkleClaimBudget`  | What the caller is owed, for the beneficiary it names                      | Records the claim  |
 
 #### FundedStreamBudget
 
@@ -174,8 +174,8 @@ raises the cumulative amounts for the next round.
 
 - **Budget data**: `abi.encode(account, cumulative, proof, beneficiary)`. Only the account itself
   can claim; `beneficiary == 0` pays the account.
-- **Releases** what the account is owed, with the flow's beneficiary set, so the tree can split it,
-  swap it or take a fee before a `TransferToBeneficiaryAction` pays it.
+- **Available**: what the account is owed, with the flow's beneficiary set, so the tree can split
+  it, swap it or take a fee before a `TransferToBeneficiaryAction` pays it.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
   rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
 - **Settings**: `setRoot` (`MANAGER_PERMISSION_ID`). Whoever holds it can direct payouts up to the

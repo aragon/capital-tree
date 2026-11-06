@@ -28,8 +28,8 @@ contract MerkleClaimBudgetTest is Fixture {
         plugin = _deployPlugin(merkle, _one(toBeneficiary));
     }
 
-    function test_ReleasesWhatTheAccountIsOwed() public view {
-        (uint256 _amount, address _beneficiary) = merkle.release(alice, _claim(alice, 10 ether, carol));
+    function test_AvailableIsWhatTheAccountIsOwed() public view {
+        (uint256 _amount, address _beneficiary) = merkle.available(alice, _claim(alice, 10 ether, carol));
 
         assertEq(_amount, 10 ether);
         assertEq(_beneficiary, carol);

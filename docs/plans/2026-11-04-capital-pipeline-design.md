@@ -50,7 +50,7 @@ struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter
 
 interface IBudget {
     function token() external view returns (IERC20);
-    function release(address caller, bytes calldata data) external view returns (uint256 amount, address beneficiary);   // the root's input
+    function available(address caller, bytes calldata data) external view returns (uint256 amount, address beneficiary);   // the root's input
     function commitActions(address caller, bytes calldata data) external view returns (Action[] memory);  // once, at the end
 }
 
@@ -83,7 +83,7 @@ interface ISplitter {
 
 ```
 trigger(bytes budgetData, bytes[] data)                 nonReentrant, whenNotPaused, auth(TRIGGER)
-  (amount, beneficiary) = budget.release(caller, budgetData)
+  (amount, beneficiary) = budget.available(caller, budgetData)
   run(node 0, input = { budget.token(), amount, beneficiary })
   dao.execute(budget.commitActions(caller, budgetData)) once, after the whole tree
 
@@ -131,7 +131,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights n
 
 1. **Preconditions and postconditions belong to the action interface.** The plugin calls all three hooks on every node with an action.
 2. **Every node that receives something must succeed.** Every node takes exactly its input, the root included: the budget releases only what the flow spends. Leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
-3. **The budget is released once and committed once, after the whole tree,** so a stream checkpoint sees the final balance and a claim is recorded only if the whole flow ran.
+3. **The budget is read once and committed once, after the whole tree,** so a stream checkpoint sees the final balance and a claim is recorded only if the whole flow ran.
 4. **Planning is view-only.** Every state change is a DAO action; each node is planned right before its own `execute`.
 5. **Actions declare their output in `build`.** The declared output is a minimum. Branch weights or a splitter divide it, and anything above it stays in the DAO, unless the recipe marks the node `forwardSurplus`: then they divide everything that arrived.
 6. **A beneficiary, once set, can't change.** Only `MerkleClaimBudget` sets one, for the root's input; it flows down every branch.
@@ -153,7 +153,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights n
 
 - `FundedStreamBudget`: streaming pot that never jumps, `min(baseAmount + rate × elapsed, lastSeenBalance, daoBalance, maxBudget)`. Setters sync first. Commits `writeCheckpoint()`.
 - `BalanceBudget`: the DAO's whole balance of a token; commits nothing.
-- `MerkleClaimBudget`: cumulative Merkle claim of `(account, cumulative)` leaves (OpenZeppelin StandardMerkleTree format). Budget data `abi.encode(account, cumulative, proof, beneficiary)`; only the account can claim, and it may name another beneficiary (not the DAO). Releases only what's owed. Commits `recordClaim` (needs `RECORD_CLAIM_PERMISSION_ID`, granted to the DAO); `setRoot` needs `MANAGER_PERMISSION_ID`. One flow per instance: a second flow on the same budget could pay a claim again from a callback before the first records it.
+- `MerkleClaimBudget`: cumulative Merkle claim of `(account, cumulative)` leaves (OpenZeppelin StandardMerkleTree format). Budget data `abi.encode(account, cumulative, proof, beneficiary)`; only the account can claim, and it may name another beneficiary (not the DAO). Its `available` is only what's owed. Commits `recordClaim` (needs `RECORD_CLAIM_PERMISSION_ID`, granted to the DAO); `setRoot` needs `MANAGER_PERMISSION_ID`. One flow per instance: a second flow on the same budget could pay a claim again from a callback before the first records it.
 
 ### Actions
 

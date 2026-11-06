@@ -150,7 +150,8 @@ contract GenericOpenFillForkTest is Test {
         assertEq(WETH.balanceOf(address(d.solver)), 0);
         assertEq(USDC.balanceOf(address(d.solver)), 0);
         assertEq(WETH.allowance(address(d.dao), address(d.solver)), 0);
-        assertEq(d.budget.available(), 0);
+        (uint256 _available,) = d.budget.available(address(0), "");
+        assertEq(_available, 0);
         assertEq(d.budget.baseTimestamp(), block.timestamp);
     }
 

@@ -64,7 +64,7 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc IBudget
     /// @dev What the account is owed, for the beneficiary it names
-    function release(address _caller, bytes calldata _data)
+    function available(address _caller, bytes calldata _data)
         external
         view
         virtual
@@ -83,7 +83,7 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc IBudget
-    /// @dev Records the claim `release` paid out
+    /// @dev Records the claim `available` paid out
     function commitActions(address, bytes calldata _data) external view virtual returns (Action[] memory _actions) {
         (address _account, uint256 _cumulative,, address _beneficiary) = _decode(_data);
 

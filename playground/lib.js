@@ -369,7 +369,8 @@ export async function describeComponent(ctx, address) {
   if (name === "FundedStreamBudget" || name === "BalanceBudget") {
     const token = await get("token");
     const sym = await symbol(ctx, token);
-    details.push(`available ${units(await get("available"))} ${sym}`);
+    const [amount] = await read(ctx, address, abi, "available", [zeroAddress, "0x"]);
+    details.push(`available ${units(amount)} ${sym}`);
     if (name === "FundedStreamBudget") {
       details.push(`${units(await get("amountPerEpoch"))} ${sym} per ${await get("epochInterval")}s`);
       const cap = await get("maxBudget");

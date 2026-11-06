@@ -30,14 +30,10 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
         token = _token;
     }
 
-    /// @notice The DAO's balance of the token
-    function available() public view returns (uint256) {
-        return token.balanceOf(address(dao()));
-    }
-
     /// @inheritdoc IBudget
-    function release(address, bytes calldata) external view returns (uint256, address) {
-        return (available(), address(0));
+    /// @dev The DAO's balance of the token, for nobody in particular
+    function available(address, bytes calldata) external view returns (uint256, address) {
+        return (token.balanceOf(address(dao())), address(0));
     }
 
     /// @inheritdoc IBudget

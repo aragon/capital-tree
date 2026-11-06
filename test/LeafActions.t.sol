@@ -151,12 +151,12 @@ contract BalanceBudgetTest is Fixture {
     function test_AvailableIsTheDaoBalance() public {
         BalanceBudget _budget = _deployBalanceBudget(tokenA);
 
-        assertEq(_budget.available(), DAO_A);
+        assertEq(_available(_budget), DAO_A);
         assertEq(address(_budget.token()), address(tokenA));
     }
 
-    function test_ReleasesTheDaoBalance() public {
-        (uint256 _amount, address _beneficiary) = _deployBalanceBudget(tokenA).release(alice, "");
+    function test_AvailableBelongsToNobodyInParticular() public {
+        (uint256 _amount, address _beneficiary) = _deployBalanceBudget(tokenA).available(alice, "");
 
         assertEq(_amount, DAO_A);
         assertEq(_beneficiary, address(0), "nobody in particular");

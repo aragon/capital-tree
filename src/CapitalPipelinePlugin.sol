@@ -23,7 +23,7 @@ import {
 } from "./lib/constants.sol";
 
 /// @title CapitalPipelinePlugin
-/// @notice Runs one flow: a budget feeding a tree of actions. The budget releases the root's input
+/// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
 ///         once; every node passes its output to its children (split by fixed weights or a
 ///         splitter when there are several); leaves consume what they receive (transfer, burn,
 ///         keep). The budget commits once, after the whole tree ran.
@@ -97,7 +97,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         if (_data.length != 0 && _data.length != _len) revert DataLengthMismatch(_len, _data.length);
 
         uint256 _callNonce = _nonce++;
-        (uint256 _amount, address _beneficiary) = budget.release(msg.sender, _budgetData);
+        (uint256 _amount, address _beneficiary) = budget.available(msg.sender, _budgetData);
         _runNode(0, Input(budget.token(), _amount, _beneficiary), _data, _callNonce);
         _commitBudget(_callNonce, _budgetData);
     }
