@@ -9,7 +9,7 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
-import {ICheckpointedBudget} from "../interfaces/IBudget.sol";
+import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title FundedStreamBudget
@@ -137,8 +137,14 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
         return _available(_daoBalance());
     }
 
+    /// @inheritdoc IBudget
+    /// @dev Everything available right now, for nobody in particular
+    function release(address, bytes calldata) external view virtual returns (uint256, address) {
+        return (available(), address(0));
+    }
+
     /// @notice Restarts the stream after the spend: the plugin executes this once, after the whole flow
-    function commitActions() external view virtual returns (Action[] memory _actions) {
+    function commitActions(address, bytes calldata) external view virtual returns (Action[] memory _actions) {
         _actions = new Action[](1);
         _actions[0] = Action({to: address(this), value: 0, data: abi.encodeCall(this.writeCheckpoint, ())});
     }

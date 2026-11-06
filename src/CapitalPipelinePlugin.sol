@@ -23,13 +23,12 @@ import {
 } from "./lib/constants.sol";
 
 /// @title CapitalPipelinePlugin
-/// @notice Runs one flow: a budget feeding a tree of actions. The budget is read once; the root
-///         node takes up to what it allows; every node passes its output to its children (split by
-///         fixed weights or a splitter when there are several); leaves consume what they receive
-///         (transfer, burn, keep). The budget commits once, after the whole tree ran.
-/// @dev Every node that receives something must succeed: the root takes a non-zero amount up to its
-///      input, every other node takes exactly its input, and leaves output nothing. Anything else
-///      reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
+/// @notice Runs one flow: a budget feeding a tree of actions. The budget releases the root's input
+///         once; every node passes its output to its children (split by fixed weights or a
+///         splitter when there are several); leaves consume what they receive (transfer, burn,
+///         keep). The budget commits once, after the whole tree ran.
+/// @dev Every node that receives something must succeed: every node takes exactly its input, and
+///      leaves output nothing. Anything else reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
 ///      `skipWhenEmpty`: then neither it nor anything below it runs.
 ///      Each node with an action is built (view) right after its parent ran and executes in its
 ///      own `dao.execute`, followed by balance checks: the DAO spent no more than the node's input
@@ -86,14 +85,21 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     }
 
     /// @notice Runs the flow
+    /// @param _budgetData Passed to the budget (a Merkle claim's proof); empty for most budgets
     /// @param _data Empty, or one entry per node (passed to that node's action)
-    function trigger(bytes[] calldata _data) external nonReentrant whenNotPaused auth(TRIGGER_PERMISSION_ID) {
+    function trigger(bytes calldata _budgetData, bytes[] calldata _data)
+        external
+        nonReentrant
+        whenNotPaused
+        auth(TRIGGER_PERMISSION_ID)
+    {
         uint256 _len = _nodes.length;
         if (_data.length != 0 && _data.length != _len) revert DataLengthMismatch(_len, _data.length);
 
         uint256 _callNonce = _nonce++;
-        _runNode(0, Input(budget.token(), budget.available(), address(0)), _data, _callNonce);
-        _commitBudget(_callNonce);
+        (uint256 _amount, address _beneficiary) = budget.release(msg.sender, _budgetData);
+        _runNode(0, Input(budget.token(), _amount, _beneficiary), _data, _callNonce);
+        _commitBudget(_callNonce, _budgetData);
     }
 
     /// @notice Replaces the flow. DAO only: an action can return arbitrary DAO actions.
@@ -195,9 +201,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         if (_movement.inAmount > _input.amount) {
             revert InAmountExceedsInput(_index, _movement.inAmount, _input.amount);
         }
-        // The root may take less than the budget allows (but something): the rest never left the
-        // DAO. Every other node takes all of it.
-        if (_movement.inAmount == 0 || (_index != 0 && _movement.inAmount != _input.amount)) {
+        if (_movement.inAmount < _input.amount) {
             revert NodeIncomplete(_index, _movement.inAmount, _input.amount);
         }
         if (_movement.inToken != _input.token) revert InputTokenMismatch(_index);
@@ -237,8 +241,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     }
 
     /// @dev After the whole tree ran, so a stream checkpoint sees the final balance
-    function _commitBudget(uint256 _callNonce) internal {
-        Action[] memory _actions = budget.commitActions();
+    function _commitBudget(uint256 _callNonce, bytes calldata _budgetData) internal {
+        Action[] memory _actions = budget.commitActions(msg.sender, _budgetData);
         if (_actions.length == 0) return;
 
         bytes32 _executionId = keccak256(abi.encode(address(this), _callNonce, type(uint256).max));

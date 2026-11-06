@@ -9,8 +9,8 @@ import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
@@ -55,7 +55,7 @@ contract Deploy is Script {
         _components[1] = _registration(Recipes.BALANCE_BUDGET, "BalanceBudget", address(new BalanceBudget()), _uris);
         _components[2] = _registration(Recipes.OPEN_FILL, "OpenFillAction", address(new OpenFillAction()), _uris);
         _components[3] =
-            _registration(Recipes.MERKLE_CLAIM, "MerkleClaimAction", address(new MerkleClaimAction()), _uris);
+            _registration(Recipes.MERKLE_CLAIM, "MerkleClaimBudget", address(new MerkleClaimBudget()), _uris);
         _components[4] = _registration(Recipes.TRANSFER, "TransferAction", address(new TransferAction()), _uris);
         _components[5] = _registration(
             Recipes.TRANSFER_TO_BENEFICIARY,

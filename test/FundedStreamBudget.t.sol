@@ -41,8 +41,16 @@ contract FundedStreamBudgetTest is Fixture {
         assertEq(budget.available(), DAO_A + RATE, "growth resumes from where it froze");
     }
 
+    function test_ReleasesEverythingAvailable() public {
+        vm.warp(block.timestamp + EPOCH);
+
+        (uint256 _amount, address _beneficiary) = budget.release(alice, "");
+        assertEq(_amount, RATE);
+        assertEq(_beneficiary, address(0), "nobody in particular");
+    }
+
     function test_CommitActionsWriteCheckpoint() public view {
-        Action[] memory _actions = budget.commitActions();
+        Action[] memory _actions = budget.commitActions(alice, "");
 
         assertEq(_actions.length, 1);
         assertEq(_actions[0].to, address(budget));

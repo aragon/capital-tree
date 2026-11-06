@@ -1,7 +1,7 @@
 {
   "name": "TransferToBeneficiaryAction",
   "version": 1,
-  "description": "Leaf action. Sends its whole input to the flow's beneficiary, set by a Merkle claim at the root.",
+  "description": "Leaf action. Sends its whole input to the flow's beneficiary, set by a Merkle claim budget.",
   "initialize": {
     "inputs": [
       {

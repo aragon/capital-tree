@@ -29,7 +29,7 @@ contract LeafActionsTest is Fixture {
     function test_TransferSendsTheWholeInput() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(_deployTransfer(alice)));
 
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
 
         assertEq(tokenA.balanceOf(alice), DAO_A);
         assertEq(tokenA.balanceOf(address(dao)), 0);
@@ -54,7 +54,7 @@ contract LeafActionsTest is Fixture {
 
         // Action 0 is the transfer (returns false), action 1 the postcondition, which catches it
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_TransferRecipientIsUnset() public {
@@ -70,7 +70,7 @@ contract LeafActionsTest is Fixture {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(toBeneficiary));
 
         vm.expectRevert(TransferToBeneficiaryAction.NoBeneficiary.selector);
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
     }
 
     // Burn
@@ -79,7 +79,7 @@ contract LeafActionsTest is Fixture {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(burn));
         uint256 _supply = tokenA.totalSupply();
 
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
 
         assertEq(tokenA.totalSupply(), _supply - DAO_A);
     }
@@ -101,7 +101,7 @@ contract LeafActionsTest is Fixture {
 
         // Action 0 is the burn (a no-op), action 1 the postcondition, which catches it
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
     }
 
     // Keep
@@ -109,7 +109,7 @@ contract LeafActionsTest is Fixture {
     function test_KeepLeavesTheInputInTheDao() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(keep));
 
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
 
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
     }
@@ -128,7 +128,7 @@ contract LeafActionsTest is Fixture {
 
         // In the second leaf, action 0 is the transfer (returns false), action 1 the postcondition
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
     }
 
     // Implementations
@@ -155,8 +155,15 @@ contract BalanceBudgetTest is Fixture {
         assertEq(address(_budget.token()), address(tokenA));
     }
 
+    function test_ReleasesTheDaoBalance() public {
+        (uint256 _amount, address _beneficiary) = _deployBalanceBudget(tokenA).release(alice, "");
+
+        assertEq(_amount, DAO_A);
+        assertEq(_beneficiary, address(0), "nobody in particular");
+    }
+
     function test_CommitsNothing() public {
-        assertEq(_deployBalanceBudget(tokenA).commitActions().length, 0);
+        assertEq(_deployBalanceBudget(tokenA).commitActions(alice, "").length, 0);
     }
 
     function test_RevertWhen_TokenHasNoCode() public {

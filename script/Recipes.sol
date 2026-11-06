@@ -6,8 +6,8 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
@@ -30,7 +30,7 @@ library Recipes {
     bytes32 internal constant FUNDED_STREAM_BUDGET = "FundedStreamBudget@1";
     bytes32 internal constant BALANCE_BUDGET = "BalanceBudget@1";
     bytes32 internal constant OPEN_FILL = "OpenFillAction@1";
-    bytes32 internal constant MERKLE_CLAIM = "MerkleClaimAction@1";
+    bytes32 internal constant MERKLE_CLAIM = "MerkleClaimBudget@1";
     bytes32 internal constant TRANSFER = "TransferAction@1";
     bytes32 internal constant TRANSFER_TO_BENEFICIARY = "TransferToBeneficiaryAction@1";
     bytes32 internal constant BURN = "BurnAction@1";
@@ -100,33 +100,29 @@ library Recipes {
         _params.grants = _swapGrants(_manager);
     }
 
-    /// @notice The DAO's balance of `_token` → Merkle claim → pay the beneficiary.
-    ///         Components: 0 budget, 1 MerkleClaim, 2 TransferToBeneficiary.
+    /// @notice Merkle claim of `_token` → pay the beneficiary.
+    ///         Components: 0 MerkleClaimBudget, 1 TransferToBeneficiary.
     function merkleClaim(address _manager, IERC20 _token, bytes32 _root)
         internal
         pure
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
-        _params.components = new CapitalPipelinePluginSetup.Component[](3);
+        _params.components = new CapitalPipelinePluginSetup.Component[](2);
         _params.components[0] =
-            _component(BALANCE_BUDGET, abi.encodeCall(BalanceBudget.initialize, (IDAO(DAO_REF), _token)));
+            _component(MERKLE_CLAIM, abi.encodeCall(MerkleClaimBudget.initialize, (IDAO(DAO_REF), _token, _root)));
         _params.components[1] = _component(
-            MERKLE_CLAIM, abi.encodeCall(MerkleClaimAction.initialize, (IDAO(DAO_REF), IBudget(ref(0)), _root))
-        );
-        _params.components[2] = _component(
             TRANSFER_TO_BENEFICIARY, abi.encodeCall(TransferToBeneficiaryAction.initialize, (IDAO(DAO_REF)))
         );
 
         _params.budget = IBudget(ref(0));
-        _params.nodes = new Node[](2);
-        _params.nodes[0] = _then(1, 1);
-        _params.nodes[1] = _leaf(2);
+        _params.nodes = new Node[](1);
+        _params.nodes[0] = _leaf(1);
 
         _params.grants = new CapitalPipelinePluginSetup.Grant[](4);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
-        _params.grants[2] = _grant(ref(1), _manager, MANAGER_PERMISSION_ID);
-        _params.grants[3] = _grant(ref(1), DAO_REF, RECORD_CLAIM_PERMISSION_ID);
+        _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
+        _params.grants[3] = _grant(ref(0), DAO_REF, RECORD_CLAIM_PERMISSION_ID);
     }
 
     /// @notice Stream → a branch paying each recipient its weight (of RATIO_BASE). Two or more

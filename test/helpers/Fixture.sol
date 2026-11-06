@@ -8,8 +8,8 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../../src/actions/BurnAction.sol";
@@ -30,7 +30,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 /// @dev Metadata links for the deploy script, one per component (see metadata/uris.json)
 string constant METADATA_URIS = '{"release":"ipfs://release","build":"ipfs://build","components":{'
     '"FundedStreamBudget":"ipfs://FundedStreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
-    '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimAction":"ipfs://MerkleClaimAction",'
+    '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimBudget":"ipfs://MerkleClaimBudget",'
     '"TransferAction":"ipfs://TransferAction","TransferToBeneficiaryAction":"ipfs://TransferToBeneficiaryAction",'
     '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction"}}';
 
@@ -139,10 +139,10 @@ abstract contract Fixture is Test {
         dao.grant(address(_budget), address(_action), CHECKPOINT_PERMISSION_ID);
     }
 
-    function _deployMerkle(IBudget _budget, bytes32 _root) internal returns (MerkleClaimAction _merkle) {
-        _merkle = MerkleClaimAction(
+    function _deployMerkle(IERC20 _token, bytes32 _root) internal returns (MerkleClaimBudget _merkle) {
+        _merkle = MerkleClaimBudget(
             ProxyLib.deployMinimalProxy(
-                address(new MerkleClaimAction()), abi.encodeCall(MerkleClaimAction.initialize, (dao, _budget, _root))
+                address(new MerkleClaimBudget()), abi.encodeCall(MerkleClaimBudget.initialize, (dao, _token, _root))
             )
         );
         dao.grant(address(_merkle), manager, MANAGER_PERMISSION_ID);

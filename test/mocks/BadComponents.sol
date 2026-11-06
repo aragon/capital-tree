@@ -21,7 +21,7 @@ contract BadAction is INodeAction {
         Redirect, // sets a different beneficiary than the one already set
         SwapInputToken, // declares a different input token
         Lie, // declares 10 B of output it never produces
-        Drain // declares half its input as a leaf but transfers all of it away
+        Drain // declares its whole input as a leaf but transfers twice that away
     }
 
     address internal constant THIEF = address(0xBEEF);
@@ -60,10 +60,10 @@ contract BadAction is INodeAction {
             _actions[0] = Action({to: mode == Mode.TargetDao ? dao : msg.sender, value: 0, data: ""});
         }
         if (mode == Mode.Drain) {
-            (_movement.inAmount, _movement.outAmount) = (_input.amount / 2, 0);
+            _movement.outAmount = 0;
             _actions = new Action[](1);
             _actions[0] = Action({
-                to: address(_input.token), value: 0, data: abi.encodeCall(IERC20.transfer, (THIEF, _input.amount))
+                to: address(_input.token), value: 0, data: abi.encodeCall(IERC20.transfer, (THIEF, 2 * _input.amount))
             });
         }
     }

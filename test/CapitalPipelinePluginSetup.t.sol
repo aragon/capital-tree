@@ -87,11 +87,9 @@ contract CapitalPipelinePluginSetupTest is Fixture {
 
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _bobLeaf;
-        bytes[] memory _data = new bytes[](2);
-        _data[0] = abi.encode(alice, 10 ether, _proof, address(0));
 
         vm.prank(alice);
-        _plugin.trigger(_data);
+        _plugin.trigger(abi.encode(alice, 10 ether, _proof, address(0)), noData);
 
         assertEq(tokenA.balanceOf(alice), 10 ether);
     }
@@ -100,7 +98,7 @@ contract CapitalPipelinePluginSetupTest is Fixture {
         (CapitalPipelinePlugin _plugin,) = _install(Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights()));
         vm.warp(block.timestamp + EPOCH);
 
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
 
         assertEq(tokenA.balanceOf(alice), 9.5 ether);
         assertEq(tokenA.balanceOf(bob), 0.5 ether);
@@ -126,7 +124,7 @@ contract CapitalPipelinePluginSetupTest is Fixture {
 
         (CapitalPipelinePlugin _plugin, address[] memory _helpers) = _install(_params);
         vm.warp(block.timestamp + EPOCH);
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
 
         assertEq(address(_plugin.nodes()[0].splitter), _helpers[3]);
         assertTrue(_plugin.nodes()[2].skipWhenEmpty);

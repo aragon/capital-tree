@@ -184,7 +184,7 @@ contract GenericFillSolverTest is Fixture {
 
     function test_RevertWhen_BatchReentersPipeline() public {
         Action[] memory calls = new Action[](1);
-        calls[0] = Action(address(plugin), 0, abi.encodeCall(plugin.trigger, (new bytes[](0))));
+        calls[0] = Action(address(plugin), 0, abi.encodeCall(plugin.trigger, ("", new bytes[](0))));
         bytes[] memory data = _data(calls);
         uint256 checkpoint = budget.baseTimestamp();
 

@@ -30,7 +30,7 @@ contract Playground is Deploy {
     /// @dev The UI reads metadata from the local files, so the links only need to be non-empty
     string internal constant LINKS = '{"release":"ipfs://playground","build":"ipfs://playground","components":{'
         '"FundedStreamBudget":"ipfs://playground","BalanceBudget":"ipfs://playground",'
-        '"OpenFillAction":"ipfs://playground","MerkleClaimAction":"ipfs://playground",'
+        '"OpenFillAction":"ipfs://playground","MerkleClaimBudget":"ipfs://playground",'
         '"TransferAction":"ipfs://playground","TransferToBeneficiaryAction":"ipfs://playground",'
         '"BurnAction":"ipfs://playground","KeepAction":"ipfs://playground"}}';
 

@@ -6,7 +6,7 @@ import {INodeAction} from "../interfaces/INodeAction.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
 
 /// @notice What a node receives: the budget at the root, a share of its parent's output elsewhere
-/// @param beneficiary Who the amount belongs to, once an action sets it (a Merkle claim).
+/// @param beneficiary Who the amount belongs to, once the budget (a Merkle claim) or an action sets it.
 ///        Carried down every branch; it can't be changed once set.
 struct Input {
     IERC20 token;

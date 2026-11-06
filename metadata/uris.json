@@ -5,7 +5,7 @@
     "FundedStreamBudget": "",
     "BalanceBudget": "",
     "OpenFillAction": "",
-    "MerkleClaimAction": "",
+    "MerkleClaimBudget": "",
     "TransferAction": "",
     "TransferToBeneficiaryAction": "",
     "BurnAction": "",
