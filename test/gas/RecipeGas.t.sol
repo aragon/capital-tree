@@ -8,9 +8,11 @@ import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC2
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
+import {TransferAction} from "../../src/actions/TransferAction.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
 import {IFiller} from "../../src/interfaces/IFiller.sol";
 import {Node} from "../../src/lib/types.sol";
@@ -429,15 +431,23 @@ contract RecipeGasTest is Fixture {
         _weights[0] += uint32(RATIO_BASE - _assigned);
     }
 
-    /// @dev Recipes.payroll: a root without an action splitting into one Transfer leaf per recipient
+    /// @dev Recipes.payroll: a root without an action splitting into one Transfer leaf per recipient.
+    ///      The leaves are clones of one implementation, as the registry deploys them.
     function _payrollTree(address[] memory _to, uint32[] memory _weights) internal returns (Node[] memory _tree) {
+        address _implementation = address(new TransferAction());
         uint256 _count = _to.length;
         _tree = new Node[](1 + _count);
         _tree[0].children = new uint32[](_count);
         _tree[0].weights = _weights;
         for (uint256 i; i < _count; ++i) {
             _tree[0].children[i] = uint32(1 + i);
-            _tree[1 + i] = _leaf(_deployTransfer(_to[i]));
+            _tree[1 + i] = _leaf(
+                INodeAction(
+                    ProxyLib.deployMinimalProxy(
+                        _implementation, abi.encodeCall(TransferAction.initialize, (dao, _to[i]))
+                    )
+                )
+            );
         }
     }
 
