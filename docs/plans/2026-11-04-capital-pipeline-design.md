@@ -56,11 +56,13 @@ interface IBudget {
 
 interface INodeAction {
     function budget() external view returns (IBudget);   // the flow's budget when bound, or address(0)
-    function preconditions(address caller, Input calldata input) external view;   // revert = blocked
     function build(address caller, bytes calldata data, Input calldata input)
         external view returns (Movement memory movement, Action[] memory actions);
-    // read-only checks the plugin calls (staticcall) right after the node's dao.execute; no value
-    function postconditions(address caller, Movement calldata movement) external view returns (Action[] memory);
+    // after build, before the work: revert = blocked; returns what postconditions compares against
+    function preconditions(address caller, bytes calldata data, Movement calldata movement)
+        external view returns (bytes memory snapshot);
+    // right after the node's dao.execute: revert = the work went wrong
+    function postconditions(address caller, Movement calldata movement, bytes calldata snapshot) external view;
 }
 
 interface ISplitter {
@@ -92,12 +94,12 @@ run(node, input)                                        depth first
   input == 0                     → skipWhenEmpty: skip it and its subtree; else revert EmptyInput
   no action (branch)             → movement = input, passed on
   otherwise
-    action.preconditions(input) → action.build(input) → movement
+    action.build(input) → movement, acts
     movement.in == input                                              else revert
     same input token; leaves output 0; beneficiary not changed  else revert
-    acts = build actions; checks = action.postconditions
-    reject acts targeting the DAO or the plugin, and checks that send value
-    snapshot DAO balances → dao.execute(acts) → staticcall each check → verify DAO balances
+    snapshot = action.preconditions(movement)
+    reject acts targeting the DAO or the plugin
+    snapshot DAO balances → dao.execute(acts) → action.postconditions(movement, snapshot) → verify DAO balances
   children share record.forwarded = movement.out (split by weights or the splitter for a branch)
             forwardSurplus: everything that arrived instead
   splitter: one amount per child, summing to record.forwarded  else revert InvalidSplit
@@ -106,7 +108,7 @@ run(node, input)                                        depth first
 
 ### Balance checks (after every node)
 
-The DAO spent no more than the node's `inAmount` and received at least its `outAmount` (combined into one check when input and output are the same token). Recipient checks are the leaf actions' own postconditions (`assertReceived`), read-only calls the plugin makes right after the node's own `dao.execute`, so they never see another node's movements and a failed one reverts with its own error. Together these make each node's declared output a verified fact before its children spend it. On a node marked `forwardSurplus`, the children get the measured amount instead, which may exceed `outAmount`.
+The DAO spent no more than the node's `inAmount` and received at least its `outAmount` (combined into one check when input and output are the same token). Recipient checks are the leaf actions' own postconditions, called right after the node's own `dao.execute` against the snapshot their preconditions took just before it, so they never see another node's movements and a failed one reverts with its own error. Together these make each node's declared output a verified fact before its children spend it. On a node marked `forwardSurplus`, the children get the measured amount instead, which may exceed `outAmount`.
 
 ### Example flows
 
@@ -130,7 +132,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights n
 
 ## Rules
 
-1. **Preconditions and postconditions belong to the action interface.** The plugin calls all three hooks on every node with an action.
+1. **Preconditions and postconditions belong to the action interface.** The plugin calls all three hooks on every node with an action: `build`, then `preconditions` (which returns the snapshot the check compares against), then `postconditions` right after the work.
 2. **Every node that receives something must succeed.** Every node takes exactly its input, the root included: the budget releases only what the flow spends. Leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
 3. **The budget is read once and committed once, after the whole tree,** so a stream checkpoint sees the final balance and a claim is recorded only if the whole flow ran.
 4. **Planning is view-only.** Every state change is a DAO action; each node is planned right before its own `execute`.
@@ -162,7 +164,7 @@ Leaves share `LeafAction`: a locked implementation, no bound budget, and a movem
 
 | Action | Kind | Behaviour |
 |---|---|---|
-| `OpenFillAction` | anywhere, bound | Dutch-auction swap: offers its whole input, demands `demandPerFill`, calls the filler back (`IFiller.fillOffer`, payable). Postcondition `assertReceived`. `setDemandPerFill` restarts the auction. The stream's `maxBudget` caps the offer. ETH on either side. |
+| `OpenFillAction` | anywhere, bound | Dutch-auction swap: offers its whole input, demands `demandPerFill`, calls the filler back (`IFiller.fillOffer`, payable). Postcondition: the DAO received `demandPerFill`. `setDemandPerFill` restarts the auction. The stream's `maxBudget` caps the offer. ETH on either side. |
 | `TransferAction` | leaf | Sends its input to a fixed recipient; postcondition checks receipt. |
 | `TransferToBeneficiaryAction` | leaf | Sends its input to the flow's beneficiary. |
 | `BurnAction` | leaf | `ERC20Burnable.burn` of its input. |

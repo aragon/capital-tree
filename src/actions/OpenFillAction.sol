@@ -80,8 +80,15 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     // INodeAction
 
     /// @inheritdoc INodeAction
-    /// @dev No additional preconditions.
-    function preconditions(address, Input calldata) external view virtual {}
+    /// @dev Nothing blocks a fill. Snapshot: the DAO's balance of the demanded token before it.
+    function preconditions(address, bytes calldata, Movement calldata _movement)
+        external
+        view
+        virtual
+        returns (bytes memory)
+    {
+        return abi.encode(_movement.outToken.balanceOf(address(dao())));
+    }
 
     /// @inheritdoc INodeAction
     /// @dev ERC20 offer of the whole input: approve it to the caller, call it back, clear the approval.
@@ -111,24 +118,9 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc INodeAction
     /// @dev Reverts the whole trigger unless the DAO received at least `outAmount`
-    function postconditions(address, Movement calldata _movement)
-        external
-        view
-        virtual
-        returns (Action[] memory _actions)
-    {
-        uint256 _minBalance = _movement.outToken.balanceOf(address(dao())) + _movement.outAmount;
-
-        _actions = new Action[](1);
-        _actions[0] = Action({
-            to: address(this), value: 0, data: abi.encodeCall(this.assertReceived, (_movement.outToken, _minBalance))
-        });
-    }
-
-    /// @notice Reverts unless the DAO holds at least `_minBalance` of `_token`
-    /// @dev Called by the plugin as the postcondition of a fill. View, so harmless to call from anywhere.
-    function assertReceived(IERC20 _token, uint256 _minBalance) external view virtual {
-        uint256 _balance = _token.balanceOf(address(dao()));
+    function postconditions(address, Movement calldata _movement, bytes calldata _snapshot) external view virtual {
+        uint256 _minBalance = abi.decode(_snapshot, (uint256)) + _movement.outAmount;
+        uint256 _balance = _movement.outToken.balanceOf(address(dao()));
         if (_balance < _minBalance) revert DemandNotMet(_minBalance, _balance);
     }
 

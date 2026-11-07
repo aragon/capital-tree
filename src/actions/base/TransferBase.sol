@@ -29,29 +29,28 @@ abstract contract TransferBase is LeafAction {
     }
 
     /// @inheritdoc INodeAction
-    function postconditions(address, Movement calldata _movement)
+    /// @dev Snapshot: the recipient's balance before the transfer
+    function preconditions(address, bytes calldata, Movement calldata _movement)
         external
         view
         virtual
         override
-        returns (Action[] memory _checks)
+        returns (bytes memory)
     {
-        address _to = _recipient(_movement.beneficiary);
-        uint256 _minBalance = _movement.inToken.balanceOf(_to) + _movement.inAmount;
-
-        _checks = new Action[](1);
-        _checks[0] = Action({
-            to: address(this),
-            value: 0,
-            data: abi.encodeCall(this.assertReceived, (_movement.inToken, _to, _minBalance))
-        });
+        return abi.encode(_movement.inToken.balanceOf(_recipient(_movement.beneficiary)));
     }
 
-    /// @notice Reverts unless `_account` holds at least `_minBalance` of `_token`
-    /// @dev Called by the plugin right after the transfer. View, so harmless to call from anywhere.
-    function assertReceived(IERC20 _token, address _account, uint256 _minBalance) external view {
-        uint256 _balance = _token.balanceOf(_account);
-        if (_balance < _minBalance) revert ReceiptShortfall(_token, _account, _minBalance, _balance);
+    /// @inheritdoc INodeAction
+    function postconditions(address, Movement calldata _movement, bytes calldata _snapshot)
+        external
+        view
+        virtual
+        override
+    {
+        address _to = _recipient(_movement.beneficiary);
+        uint256 _expected = abi.decode(_snapshot, (uint256)) + _movement.inAmount;
+        uint256 _balance = _movement.inToken.balanceOf(_to);
+        if (_balance < _expected) revert ReceiptShortfall(_movement.inToken, _to, _expected, _balance);
     }
 
     /// @param _beneficiary The flow's beneficiary, address(0) if none was set

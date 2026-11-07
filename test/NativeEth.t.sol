@@ -54,23 +54,11 @@ contract NativeEthTest is Fixture {
         _assertValueRejected(NativeAction.Mode.Work);
     }
 
-    function test_RevertWhen_PostconditionSendsEth() public {
-        _assertValueRejected(
-            NativeAction.Mode.Check, abi.encodeWithSelector(CapitalPipelinePlugin.CheckSendsValue.selector, 0, 0)
-        );
-    }
-
     function _assertValueRejected(NativeAction.Mode _mode) internal {
-        _assertValueRejected(
-            _mode, abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 0, 0)
-        );
-    }
-
-    function _assertValueRejected(NativeAction.Mode _mode, bytes memory _error) internal {
         vm.deal(address(dao), 1 ether);
         NativeAction _action = new NativeAction(address(dao), _mode);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(_error);
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 0, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
@@ -152,7 +140,6 @@ contract NativeEthTest is Fixture {
 contract NativeAction is INodeAction {
     enum Mode {
         Work,
-        Check,
         Output
     }
 
@@ -172,7 +159,7 @@ contract NativeAction is INodeAction {
     }
 
     function budget() external pure returns (IBudget) {}
-    function preconditions(address, Input calldata) external pure {}
+    function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
 
     function build(address, bytes calldata, Input calldata _input)
         external
@@ -184,9 +171,7 @@ contract NativeAction is INodeAction {
         if (mode == Mode.Work) _actions = _sendEth();
     }
 
-    function postconditions(address, Movement calldata) external view returns (Action[] memory _checks) {
-        if (mode == Mode.Check) _checks = _sendEth();
-    }
+    function postconditions(address, Movement calldata, bytes calldata) external pure {}
 
     function _sendEth() internal view returns (Action[] memory _actions) {
         _actions = new Action[](1);

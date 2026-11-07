@@ -71,14 +71,13 @@ sequenceDiagram
     Plugin->>Budget: token(), available(caller, budgetData)
     Note over Plugin: root input = (token, amount, beneficiary)
     loop every node with an action, depth first
-        Plugin->>Action: preconditions(caller, input)
         Plugin->>Action: build(caller, data[i], input)
         Action-->>Plugin: Movement + actions
         Note over Plugin: check the Movement against the input
-        Plugin->>Action: postconditions(caller, movement)
-        Action-->>Plugin: check actions
+        Plugin->>Action: preconditions(caller, data[i], movement)
+        Action-->>Plugin: snapshot
         Plugin->>DAO: execute(actions)
-        Plugin->>Action: checks (read-only)
+        Plugin->>Action: postconditions(caller, movement, snapshot)
         Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
         Note over Plugin: split outAmount among the children (weights or splitter), or everything that arrived with forwardSurplus
     end
@@ -98,7 +97,7 @@ When a node runs:
 1. Every node takes exactly its input, the root included: the budget releases only what the flow spends.
 2. A node spends the token it received; a leaf outputs nothing; any output is a contract.
 3. Once the budget or an action sets a beneficiary, it can't change further down the tree.
-4. Actions can't target the DAO or the plugin. Postconditions run as read-only calls and can't send value.
+4. Actions can't target the DAO or the plugin. Preconditions and postconditions are views, called read-only.
 5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more. The children get `outAmount`; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
 6. A splitter returns one amount per child, adding up to what the children share (`forwarded`).
 7. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
@@ -189,14 +188,14 @@ One claim per trigger.
 ### Actions
 
 Every action implements `INodeAction`, and the plugin calls all of its hooks on every node, so an
-action's safety checks can't be skipped.
+action's safety checks can't be skipped. The hooks run in the order of the table.
 
-| Hook                               | Returns                                                                       |
-| ---------------------------------- | ----------------------------------------------------------------------------- |
-| `budget()`                         | The budget the action is bound to, or `address(0)` if it works with any input |
-| `preconditions(caller, input)`     | Nothing; reverts when the action must not run                                 |
-| `build(caller, data, input)`       | The `Movement` and the DAO actions that do the work                           |
-| `postconditions(caller, movement)` | Read-only checks the plugin calls right after the work                        |
+| Hook                                         | Returns                                                                                        |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `budget()`                                   | The budget the action is bound to, or `address(0)` if it works with any input                  |
+| `build(caller, data, input)`                 | The `Movement` and the DAO actions that do the work                                            |
+| `preconditions(caller, data, movement)`      | A snapshot of what the check compares against (a balance before the work); reverts to block it |
+| `postconditions(caller, movement, snapshot)` | Nothing; reverts when the work went wrong. Runs right after the work                           |
 
 #### OpenFillAction
 
@@ -229,13 +228,15 @@ sequenceDiagram
     Filler->>Plugin: trigger("", [fillerData, ...])
     Plugin->>Fill: build(filler, fillerData, input)
     Fill-->>Plugin: offer X of A for D of B
+    Plugin->>Fill: preconditions(filler, fillerData, movement)
+    Fill-->>Plugin: DAO's balance of B before
     Plugin->>DAO: execute
     DAO->>TokenA: approve(filler, X)
     DAO->>Filler: fillOffer(A, X, B, D, fillerData)
     Filler->>TokenA: transferFrom(DAO, filler, X)
     Filler->>DAO: send D of token B
     DAO->>TokenA: approve(filler, 0)
-    Plugin->>Fill: assertReceived(B, balance before + D)
+    Plugin->>Fill: postconditions: DAO holds ≥ balance before + D
     Note over Plugin: balance check, then the children share D (all the B that arrived, with forwardSurplus)
 ```
 

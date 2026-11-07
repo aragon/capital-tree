@@ -47,18 +47,16 @@ contract OpenFillActionTest is Fixture {
         assertEq(_actions[2].data, abi.encodeCall(IERC20.approve, (filler, 0)));
     }
 
-    function test_PostconditionsAssertTheDaoReceivedTheDemand() public view {
+    function test_PostconditionsCheckTheDaoReceivedTheDemand() public {
         (Movement memory _movement,) = action.build(filler, "", _input(10 ether));
-        Action[] memory _checks = action.postconditions(filler, _movement);
+        bytes memory _snapshot = action.preconditions(filler, "", _movement);
+        assertEq(_snapshot, abi.encode(DAO_B));
 
-        assertEq(_checks.length, 1);
-        assertEq(_checks[0].to, address(action));
-        assertEq(_checks[0].data, abi.encodeCall(action.assertReceived, (IERC20(tokenB), DAO_B + DEMAND)));
-    }
-
-    function test_RevertWhen_DemandNotReceived() public {
         vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B));
-        action.assertReceived(tokenB, DAO_B + DEMAND);
+        action.postconditions(filler, _movement, _snapshot);
+
+        tokenB.mint(address(dao), DEMAND);
+        action.postconditions(filler, _movement, _snapshot);
     }
 
     function test_SetDemandPerFillRestartsTheAuction() public {

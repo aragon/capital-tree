@@ -21,7 +21,7 @@ import {Fixture} from "./helpers/Fixture.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
 import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
-import {BadAction} from "./mocks/BadComponents.sol";
+import {BadAction, WritingCheckAction} from "./mocks/BadComponents.sol";
 import {CapSplitter, FixedSplitter, SurplusSplitter} from "./mocks/MockSplitter.sol";
 import {IncomeAction, IncomeSource} from "./mocks/MockIncome.sol";
 
@@ -787,9 +787,10 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_RevertWhen_ACheckChangesState() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.WriteInCheck), keep));
+        WritingCheckAction _writer = new WritingCheckAction(address(dao));
+        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(INodeAction(address(_writer)), keep));
 
-        vm.expectRevert("Address: low-level static call failed");
+        vm.expectRevert(); // the write fails in the static call, with no revert data
         _plugin.trigger("", noData);
     }
 

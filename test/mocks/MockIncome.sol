@@ -32,7 +32,7 @@ contract IncomeAction is INodeAction {
 
     function budget() external pure returns (IBudget) {}
 
-    function preconditions(address, Input calldata) external pure {}
+    function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
 
     function build(address, bytes calldata, Input calldata _input)
         external
@@ -48,5 +48,5 @@ contract IncomeAction is INodeAction {
         _actions[1] = Action(address(_input.token), 0, abi.encodeCall(IERC20.transfer, (address(source), loss)));
     }
 
-    function postconditions(address, Movement calldata) external pure returns (Action[] memory) {}
+    function postconditions(address, Movement calldata, bytes calldata) external pure {}
 }

@@ -33,7 +33,7 @@ contract MockSwapAction is INodeAction {
 
     function budget() external pure returns (IBudget) {}
 
-    function preconditions(address, Input calldata) external pure {}
+    function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
 
     function build(address, bytes calldata, Input calldata _input)
         external
@@ -51,5 +51,5 @@ contract MockSwapAction is INodeAction {
         );
     }
 
-    function postconditions(address, Movement calldata) external pure returns (Action[] memory) {}
+    function postconditions(address, Movement calldata, bytes calldata) external pure {}
 }

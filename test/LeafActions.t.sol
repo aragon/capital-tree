@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
@@ -37,12 +36,20 @@ contract LeafActionsTest is Fixture {
     function test_TransferPostconditionMeasuresTheRecipient() public {
         TransferAction _transfer = _deployTransfer(alice);
         Movement memory _movement = Movement(tokenA, 7 ether, tokenA, 0, address(0));
+        uint256 _before = tokenA.balanceOf(alice);
 
-        Action[] memory _checks = _transfer.postconditions(address(0), _movement);
+        bytes memory _snapshot = _transfer.preconditions(address(0), "", _movement);
+        assertEq(_snapshot, abi.encode(_before));
 
-        assertEq(_checks.length, 1);
-        assertEq(_checks[0].to, address(_transfer));
-        assertEq(_checks[0].data, abi.encodeCall(TransferBase.assertReceived, (IERC20(tokenA), alice, 7 ether)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TransferBase.ReceiptShortfall.selector, address(tokenA), alice, _before + 7 ether, _before
+            )
+        );
+        _transfer.postconditions(address(0), _movement, _snapshot);
+
+        tokenA.mint(alice, 7 ether);
+        _transfer.postconditions(address(0), _movement, _snapshot);
     }
 
     function test_RevertWhen_ATransferSilentlyFails() public {
@@ -85,14 +92,18 @@ contract LeafActionsTest is Fixture {
         assertEq(tokenA.totalSupply(), _supply - DAO_A);
     }
 
-    function test_BurnPostconditionMeasuresTheDao() public view {
+    function test_BurnPostconditionMeasuresTheDao() public {
         Movement memory _movement = Movement(tokenA, 7 ether, tokenA, 0, address(0));
 
-        Action[] memory _checks = burn.postconditions(address(0), _movement);
+        bytes memory _snapshot = burn.preconditions(address(0), "", _movement);
+        assertEq(_snapshot, abi.encode(DAO_A));
 
-        assertEq(_checks.length, 1);
-        assertEq(_checks[0].to, address(burn));
-        assertEq(_checks[0].data, abi.encodeCall(BurnAction.assertBurned, (IERC20(tokenA), DAO_A - 7 ether)));
+        vm.expectRevert(abi.encodeWithSelector(BurnAction.NotBurned.selector, address(tokenA), DAO_A - 7 ether, DAO_A));
+        burn.postconditions(address(0), _movement, _snapshot);
+
+        vm.prank(address(dao));
+        tokenA.burn(7 ether);
+        burn.postconditions(address(0), _movement, _snapshot);
     }
 
     function test_RevertWhen_TheTokenIgnoresBurn() public {
