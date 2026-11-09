@@ -32,6 +32,10 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, M
 contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice What the flow may spend; read at the start, committed at the end
     IBudget public budget;
+    /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
+    ///      it can't change during one (`nonReentrant`), so the nodes read it from storage. Shares
+    ///      `budget`'s slot, which every trigger reads anyway: keep the two declarations together.
+    uint96 internal _nonce;
 
     Node[] internal _nodes;
 
@@ -92,6 +96,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             revert DataLengthMismatch(_len, _data.length);
         }
 
+        ++_nonce;
         IERC20 _token = budget.token();
         uint256 _amount = budget.available(msg.sender, _budgetData);
 
@@ -176,7 +181,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         bool _forwards = _nodes[_index].forwardSurplus;
         uint256 _before = _forwards ? _output.token.balanceOf(address(dao())) : 0;
 
-        bytes32 _executionId = keccak256(abi.encode(address(this), block.timestamp, _index));
+        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, _index));
         _execute(_index, _actions, _executionId);
         _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
         _verify(_index, _input, _output, _inBefore, _outBefore);
@@ -276,7 +281,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         Action[] memory _actions = budget.commitActions(msg.sender, _budgetData);
         if (_actions.length == 0) return;
 
-        bytes32 _executionId = keccak256(abi.encode(address(this), block.timestamp, type(uint256).max));
+        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, type(uint256).max));
         _execute(_nodes.length, _actions, _executionId);
         emit BudgetCommitted(_executionId);
     }

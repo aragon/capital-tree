@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
@@ -703,6 +704,17 @@ contract CapitalPipelinePluginTest is Fixture {
         _plugin.trigger("", noData);
     }
 
+    /// Two fillers, or a solver batching triggers, in the same block: indexers can still tell them apart
+    function test_TwoTriggersInOneBlockGetTheirOwnExecutionIds() public {
+        CapitalPipelinePlugin _plugin =
+            _deployPlugin(_deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), keep));
+
+        bytes32 _first = _triggerAndGetRootExecutionId(_plugin);
+        bytes32 _second = _triggerAndGetRootExecutionId(_plugin);
+
+        assertTrue(_first != _second);
+    }
+
     /// A branch without an action runs nothing: its splitter shares the input as it came
     function test_ABranchWithoutActionPassesOnItsInput() public {
         ISplitter _splitter = _capSplitter(dao, 30 ether);
@@ -789,11 +801,25 @@ contract CapitalPipelinePluginTest is Fixture {
         _filler.setFillDelta(int256(_extra));
     }
 
-    /// @dev The root (node 0) of `_plugin`'s next trigger, in this block, emits exactly this input and output
+    /// @dev Triggers `_plugin` once and returns the execution ID its root (node 0) emitted
+    function _triggerAndGetRootExecutionId(CapitalPipelinePlugin _plugin) internal returns (bytes32) {
+        vm.recordLogs();
+        _plugin.trigger("", noData);
+        Vm.Log[] memory _logs = vm.getRecordedLogs();
+        for (uint256 i; i < _logs.length; ++i) {
+            bool _isRoot = _logs[i].emitter == address(_plugin)
+                && _logs[i].topics[0] == CapitalPipelinePlugin.NodeExecuted.selector && uint256(_logs[i].topics[1]) == 0;
+            // The execution ID is the first non-indexed field
+            if (_isRoot) return abi.decode(_logs[i].data, (bytes32));
+        }
+        revert("no NodeExecuted for the root");
+    }
+
+    /// @dev The root (node 0) of `_plugin`'s first trigger emits exactly this input and output
     function _expectNodeExecuted(address _plugin, address _caller, Asset memory _input, Asset memory _output)
         internal
     {
-        bytes32 _executionId = keccak256(abi.encode(_plugin, block.timestamp, uint256(0)));
+        bytes32 _executionId = keccak256(abi.encode(_plugin, uint256(1), uint256(0)));
         vm.expectEmit(_plugin);
         emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionId, _input, _output);
     }
