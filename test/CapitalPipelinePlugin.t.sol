@@ -12,6 +12,7 @@ import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
 import {ISplitter} from "../src/interfaces/ISplitter.sol";
@@ -57,7 +58,7 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(_stored.length, 3);
         assertEq(address(_stored[0].action), address(action));
         assertEq(_stored[0].children[1], 2);
-        assertEq(_stored[0].weights[0], 950_000);
+        assertEq(WeightSplitter(address(_stored[0].splitter)).weights()[0], 950_000);
         assertEq(_stored[2].children.length, 0);
     }
 
@@ -147,12 +148,11 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.UnreachableNode.selector, 1));
     }
 
-    function test_RevertWhen_WeightsDoNotSumTo100() public {
-        _expectInitRevert(
-            budget,
-            _fork(NO_ACTION, 600_000, keep, 300_000, keep),
-            abi.encodeWithSelector(CapitalPipelinePlugin.InvalidWeights.selector, 0)
-        );
+    function test_RevertWhen_ABranchHasNoSplitter() public {
+        Node[] memory _tree = _fork(NO_ACTION, 500_000, keep, 500_000, keep);
+        _tree[0].splitter = ISplitter(address(0));
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
     }
 
     function test_RevertWhen_ABoundActionBelowTheRootUsesAnotherBudget() public {
@@ -683,11 +683,16 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
     }
 
-    function test_RevertWhen_ASplitterComesWithWeights() public {
-        Node[] memory _tree = _fork(NO_ACTION, 500_000, keep, 500_000, keep);
-        _tree[0].splitter = _capSplitter(dao, 1);
+    /// The child count isn't checked at configuration: weights for 3 children on a 2-child branch
+    /// revert at the first trigger
+    function test_RevertWhen_WeightsDoNotMatchTheChildren() public {
+        uint32[] memory _weights = new uint32[](3);
+        (_weights[0], _weights[1], _weights[2]) = (400_000, 300_000, 300_000);
+        CapitalPipelinePlugin _plugin =
+            _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_deployWeightSplitter(_weights)));
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplit.selector, 0));
+        _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_ASplitterBelongsToAnotherDao() public {

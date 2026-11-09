@@ -438,7 +438,7 @@ contract RecipeGasTest is Fixture {
         uint256 _count = _to.length;
         _tree = new Node[](1 + _count);
         _tree[0].children = new uint32[](_count);
-        _tree[0].weights = _weights;
+        _tree[0].splitter = _deployWeightSplitter(_weights);
         for (uint256 i; i < _count; ++i) {
             _tree[0].children[i] = uint32(1 + i);
             _tree[1 + i] = _leaf(

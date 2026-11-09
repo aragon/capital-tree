@@ -4,6 +4,7 @@
 // into a `df-demandPerFill` input under `demandperfill`.
 
 export const BRANCH = "branch";
+const WEIGHT_SPLITTER = "WeightSplitter@1";
 const KINDS = {
   FundedStreamBudget: "budget",
   BalanceBudget: "budget",
@@ -14,7 +15,7 @@ const KINDS = {
   BurnAction: "leaf",
   KeepAction: "leaf",
 };
-const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimBudget"]);
+const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimBudget", "WeightSplitter"]);
 const HIDDEN = new Set(["dao", "budget"]); // always DAO_REF, and the flow's budget
 
 const nameOf = (id) => id.split("@")[0];
@@ -74,7 +75,7 @@ const connect = (boxes, from, to) => {
 export function recipeToGraph(recipe, meta) {
   const args = (c) => lowerKeys(Object.fromEntries(Object.entries(c.args).filter(([k]) => !HIDDEN.has(k))));
   const children = recipe.nodes.map((n) => numbers(n.children));
-  const weights = recipe.nodes.map((n) => numbers(n.weights));
+  const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(recipe.components[n.splitter].args.weights)));
 
   // Leaves take consecutive rows; a parent sits level with the middle of its children
   const row = [];
@@ -152,17 +153,19 @@ export function graphToRecipe(graph, account, meta) {
   const nodes = order.map((b) => {
     const list = kids(b);
     if (b.name === BRANCH && list.length < 2) throw new Error(`${label(b)} needs at least 2 children`);
-    let weights = "";
+    // 2+ children split by their shares, through a WeightSplitter component listed after the actions
+    let splitter = null;
     if (list.length >= 2) {
       const shares = list.map((k) => String(k.data.share ?? "").trim());
       const sum = shares.reduce((s, x) => s + (/^\d+$/.test(x) ? Number(x) : NaN), 0);
       if (sum !== 1_000_000) throw new Error(`The shares under ${label(b)} add up to ${shares.join(" + ")}, not 1,000,000`);
-      weights = shares.join(", ");
+      splitter = components.length;
+      components.push({ id: WEIGHT_SPLITTER, args: { dao: "DAO", weights: shares.join(", ") } });
     }
     return {
       action: b.name === BRANCH ? null : refs.get(b.id),
       children: list.map((k) => position.get(k.id)).join(", "),
-      weights,
+      splitter,
     };
   });
 
