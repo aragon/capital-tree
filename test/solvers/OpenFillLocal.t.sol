@@ -107,7 +107,7 @@ contract OpenFillLocalTest is Test {
         assertEq(d.sell.balanceOf(address(router)), 0);
         assertEq(d.sell.allowance(address(d.dao), address(d.solver)), 0);
         assertEq(d.sell.allowance(address(d.solver), address(router.spender())), 0);
-        (uint256 _available,) = d.budget.available(address(0), "");
+        uint256 _available = d.budget.available(address(0), "");
         assertEq(_available, 100 ether);
         assertEq(d.budget.baseTimestamp(), checkpoint);
     }
@@ -138,7 +138,7 @@ contract OpenFillLocalTest is Test {
         console2.log("3. solver.trigger -> plugin.trigger -> build -> DAO -> fillOffer -> calls");
         d.solver.trigger(quotes.forNode(d.plugin.nodes().length, 0, data));
         console2.log("4. DAO received demanded tokens; balances and allowances checked");
-        (uint256 _available,) = d.budget.available(address(0), "");
+        uint256 _available = d.budget.available(address(0), "");
         assertEq(_available, 0);
         assertEq(d.budget.baseTimestamp(), block.timestamp);
         assertEq(d.sell.balanceOf(address(d.dao)), 0);

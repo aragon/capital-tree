@@ -6,22 +6,19 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
-import {Input, Movement} from "../../src/lib/types.sol";
+import {Asset} from "../../src/lib/types.sol";
 
 /// @notice A node action that misbehaves in one chosen way. Otherwise it passes its input through.
 contract BadAction is INodeAction {
     enum Mode {
         Pass, // behaves: passes its whole input on
         Block, // preconditions revert
-        Skip, // takes nothing
-        TakeHalf, // takes half its input
-        Overspend, // claims 1 wei more than its input
+        Skip, // outputs nothing
+        TakeHalf, // outputs half its input
         TargetDao, // returns an action whose target is the DAO
         TargetPlugin, // returns an action whose target is the plugin
-        Redirect, // sets a different beneficiary than the one already set
-        SwapInputToken, // declares a different input token
         Lie, // declares 10 B of output it never produces
-        Drain // declares its whole input as a leaf but transfers twice that away
+        Drain // outputs nothing as a leaf but transfers twice its input away
     }
 
     address internal constant THIEF = address(0xBEEF);
@@ -38,30 +35,30 @@ contract BadAction is INodeAction {
 
     function budget() external pure returns (IBudget) {}
 
-    function preconditions(address, bytes calldata, Movement calldata) external view returns (bytes memory) {
+    function preconditions(address, bytes calldata, Asset calldata, Asset calldata)
+        external
+        view
+        returns (bytes memory)
+    {
         if (mode == Mode.Block) revert Blocked();
         return "";
     }
 
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         view
-        returns (Movement memory _movement, Action[] memory _actions)
+        returns (Asset memory _output, Action[] memory _actions)
     {
-        if (mode == Mode.Skip) return (_movement, _actions);
-
-        _movement = Movement(_input.token, _input.amount, _input.token, _input.amount, _input.beneficiary);
-        if (mode == Mode.TakeHalf) (_movement.inAmount, _movement.outAmount) = (_input.amount / 2, _input.amount / 2);
-        if (mode == Mode.Overspend) _movement.inAmount += 1;
-        if (mode == Mode.Redirect) _movement.beneficiary = THIEF;
-        if (mode == Mode.SwapInputToken) _movement.inToken = IERC20(THIEF);
-        if (mode == Mode.Lie) (_movement.outToken, _movement.outAmount) = (tokenB, 10 ether);
+        _output = Asset(_input.token, _input.amount);
+        if (mode == Mode.Skip) _output.amount = 0;
+        if (mode == Mode.TakeHalf) _output.amount = _input.amount / 2;
+        if (mode == Mode.Lie) _output = Asset(tokenB, 10 ether);
         if (mode == Mode.TargetDao || mode == Mode.TargetPlugin) {
             _actions = new Action[](1);
             _actions[0] = Action({to: mode == Mode.TargetDao ? dao : msg.sender, value: 0, data: ""});
         }
         if (mode == Mode.Drain) {
-            _movement.outAmount = 0;
+            _output.amount = 0;
             _actions = new Action[](1);
             _actions[0] = Action({
                 to: address(_input.token), value: 0, data: abi.encodeCall(IERC20.transfer, (THIEF, 2 * _input.amount))
@@ -69,7 +66,7 @@ contract BadAction is INodeAction {
         }
     }
 
-    function postconditions(address, Movement calldata, bytes calldata) external pure {}
+    function postconditions(address, Asset calldata, Asset calldata, bytes calldata) external pure {}
 }
 
 /// @notice Has INodeAction's selectors, but its postconditions writes to storage. It doesn't
@@ -84,17 +81,21 @@ contract WritingCheckAction {
 
     function budget() external pure returns (IBudget) {}
 
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         pure
-        returns (Movement memory, Action[] memory)
+        returns (Asset memory, Action[] memory)
     {
-        return (Movement(_input.token, _input.amount, _input.token, _input.amount, _input.beneficiary), new Action[](0));
+        return (Asset(_input.token, _input.amount), new Action[](0));
     }
 
-    function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
+    function preconditions(address, bytes calldata, Asset calldata, Asset calldata)
+        external
+        pure
+        returns (bytes memory)
+    {}
 
-    function postconditions(address, Movement calldata, bytes calldata) external {
+    function postconditions(address, Asset calldata, Asset calldata, bytes calldata) external {
         ++checks;
     }
 }

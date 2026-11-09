@@ -30,27 +30,24 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 
 | Term | Meaning |
 |---|---|
-| **Budget** | How much of one token the flow spends in this trigger, and possibly who it belongs to (a Merkle claim). Read once at the start of a trigger, committed once at the end. |
+| **Budget** | How much of one token the flow spends in this trigger. Read once at the start of a trigger, committed once at the end. |
 | **Node** | One step of the tree: an action, its children, the splitter that divides its output among them, whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
 | **Leaf** | A node without children. Its action consumes its whole input and outputs nothing. |
 | **Splitter** | A contract that divides a branch's output among its children when the flow runs: fixed weights (`WeightSplitter`) or shares computed at run time. It only returns amounts: the children stay nodes of the tree. |
 
-Amounts move down the tree as three structs:
+Amounts move down the tree as one struct:
 
 ```solidity
-struct Input    { IERC20 token; uint256 amount; address beneficiary; }        // what a node receives
-struct Movement { IERC20 inToken; uint256 inAmount;                           // what it declares it spends
-                  IERC20 outToken; uint256 outAmount; address beneficiary; }  // and produces (a minimum)
-struct Record   { Movement expected; uint256 spent;                           // what really happened,
-                  uint256 received; uint256 forwarded; }                      // and what its children share
+struct Asset { IERC20 token; uint256 amount; }
 ```
 
-The plugin measures `spent` and `received` on the DAO's balances after the node runs. With one
-token only the net change is visible: a node that pays 10 and gets 20 back records 0 spent and 10
-received. `forwarded` is `outAmount`, or everything that arrived on a node marked `forwardSurplus`.
-The node's splitter gets the record, and `NodeExecuted` emits it.
+A node's input is the asset it receives: the budget at the root, a share of its parent's output
+elsewhere. It spends all of it. Its output is the asset its action declares for its children: the
+least the action accepts, zero for a leaf. The children get that output, or everything that arrived
+on a node marked `forwardSurplus`. The node's splitter divides it, and `NodeExecuted` emits the input
+and what the children got.
 
 ### One trigger, step by step
 
@@ -69,18 +66,19 @@ sequenceDiagram
 
     Caller->>Plugin: trigger(budgetData, data)
     Plugin->>Budget: token(), available(caller, budgetData)
-    Note over Plugin: root input = (token, amount, beneficiary)
+    Note over Plugin: root input = (token, amount)
     loop every node with an action, depth first
         Plugin->>Action: build(caller, data[i], input)
-        Action-->>Plugin: Movement + actions
-        Note over Plugin: check the Movement against the input
-        Plugin->>Action: preconditions(caller, data[i], movement)
+        Action-->>Plugin: output + actions
+        Note over Plugin: a leaf's output must be 0
+        Plugin->>Action: preconditions(caller, data[i], input, output)
         Action-->>Plugin: snapshot
         Plugin->>DAO: execute(actions)
-        Plugin->>Action: postconditions(caller, movement, snapshot)
-        Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
-        Note over Plugin: split outAmount among the children (splitter), or everything that arrived with forwardSurplus
+        Plugin->>Action: postconditions(caller, input, output, snapshot)
+        Note over Plugin: DAO spent ≤ input and received ≥ output
+        Note over Plugin: split the output among the children (splitter), or everything that arrived with forwardSurplus
     end
+    Note over Plugin: the tree spent ≤ available of the budget's token
     Plugin->>Budget: commitActions(caller, budgetData)
     Plugin->>DAO: execute(commit actions)
 ```
@@ -88,20 +86,25 @@ sequenceDiagram
 Any failure reverts the whole trigger: a flow never runs halfway. When a `WeightSplitter` divides
 a node's output, the rounding remainder goes to the child with the largest weight. A node
 that receives nothing reverts the trigger too, unless it's marked `skipWhenEmpty`: then neither it
-nor anything below it runs.
+nor anything below it runs. Every trigger counts up a nonce, so its execution IDs (in the DAO's
+`Executed`, `NodeExecuted` and `BudgetCommitted`) differ from another trigger's, even in the same block.
 
 ### What the plugin enforces
 
+The plugin only enforces limits that hold for any action. Whether a result is acceptable (a few wei
+short, a cap on the surplus, a recipient really paid) is up to each action's postconditions.
+
 When a node runs:
 
-1. Every node takes exactly its input, the root included: the budget releases only what the flow spends.
-2. A node spends the token it received; a leaf outputs nothing; any output is a contract.
-3. Once the budget or an action sets a beneficiary, it can't change further down the tree.
+1. After its `dao.execute`, the DAO lost at most the node's input of the input token: a node never spends more than it was given (`UnexpectedBalance`).
+2. At least the output the action declared arrived. With one token only the net change is visible: the DAO lost at most input − output. An action that accepts less than it asked for declares that lower amount, so its children only spend what really arrived. They get the declared output; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
+3. A leaf outputs nothing (`OutputWithoutChildren`).
 4. Actions can't target the DAO or the plugin. Preconditions and postconditions are views, called read-only.
-5. After the node's `dao.execute`, the DAO spent at most `inAmount` and holds at least `outAmount` more. The children get `outAmount`; anything above it stays in the DAO, unless the node is marked `forwardSurplus`.
-6. A splitter returns one amount per child, adding up to what the children share (`forwarded`).
-7. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
-8. A node marked `forwardSurplus` gives its children everything that arrived: the output token's increase with two tokens, its input plus the net change with one. With one token it must pass its whole input on (`outAmount ≥ inAmount`, `OutputBelowInput`).
+5. A splitter returns one amount per child, adding up to the output it divides.
+6. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
+7. A node marked `forwardSurplus` gives its children everything that arrived: the output token's increase with two tokens, its input plus the net change with one.
+
+After the whole tree, the DAO lost at most `available` of the budget's token (`BudgetExceeded`).
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
@@ -117,15 +120,14 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 
 ### Budgets
 
-A budget implements `IBudget`: `token()`; `available(caller, data)`, the root's input and possibly
-a beneficiary; and `commitActions(caller, data)`, the DAO actions that record the spend after the
-whole tree ran.
+A budget implements `IBudget`: `token()`; `available(caller, data)`, the root's input; and
+`commitActions(caller, data)`, the DAO actions that record the spend after the whole tree ran.
 
 | Budget               | `available()`                                                              | Commit             |
 | -------------------- | -------------------------------------------------------------------------- | ------------------ |
 | `FundedStreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
 | `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
-| `MerkleClaimBudget`  | What the caller is owed, for the beneficiary it names                      | Records the claim  |
+| `MerkleClaimBudget`  | What the caller is owed                                                    | Records the claim  |
 
 #### FundedStreamBudget
 
@@ -172,10 +174,10 @@ Cumulative Merkle distribution. Each leaf is `(account, cumulative amount)`, in 
 StandardMerkleTree format, and an account can claim `cumulative − claimed` at any time. A new root
 raises the cumulative amounts for the next round.
 
-- **Budget data**: `abi.encode(account, cumulative, proof, beneficiary)`. Only the account itself
-  can claim; `beneficiary == 0` pays the account.
-- **Available**: what the account is owed, with the flow's beneficiary set, so the tree can split
-  it, swap it or take a fee before a `TransferToBeneficiaryAction` pays it.
+- **Budget data**: `abi.encode(account, cumulative, proof)`. Only the account itself can claim,
+  and it picks where the payout goes in the data of the `TransferToBeneficiaryAction` node.
+- **Available**: what the account is owed, so the tree can split it, swap it or take a fee before a
+  `TransferToBeneficiaryAction` pays it out.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
   rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
 - **Settings**: `setRoot` (`MANAGER_PERMISSION_ID`). Whoever holds it can direct payouts up to the
@@ -190,12 +192,12 @@ One claim per trigger.
 Every action implements `INodeAction`, and the plugin calls all of its hooks on every node, so an
 action's safety checks can't be skipped. The hooks run in the order of the table.
 
-| Hook                                         | Returns                                                                                        |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `budget()`                                   | The budget the action is bound to, or `address(0)` if it works with any input                  |
-| `build(caller, data, input)`                 | The `Movement` and the DAO actions that do the work                                            |
-| `preconditions(caller, data, movement)`      | A snapshot of what the check compares against (a balance before the work); reverts to block it |
-| `postconditions(caller, movement, snapshot)` | Nothing; reverts when the work went wrong. Runs right after the work                           |
+| Hook                                              | Returns                                                                                                                               |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `budget()`                                        | The budget the action is bound to, or `address(0)` if it works with any input                                                         |
+| `build(caller, data, input)`                      | The output (the least the action accepts) and the DAO actions that do the work                                                        |
+| `preconditions(caller, data, input, output)`      | A snapshot of what the check compares against (a balance before the work); reverts to block it                                        |
+| `postconditions(caller, input, output, snapshot)` | Nothing; reverts when the work went wrong by the action's own standard. Runs right after the work, before the plugin's balance checks |
 
 #### OpenFillAction
 
@@ -228,7 +230,7 @@ sequenceDiagram
     Filler->>Plugin: trigger("", [fillerData, ...])
     Plugin->>Fill: build(filler, fillerData, input)
     Fill-->>Plugin: offer X of A for D of B
-    Plugin->>Fill: preconditions(filler, fillerData, movement)
+    Plugin->>Fill: preconditions(filler, fillerData, input, output)
     Fill-->>Plugin: DAO's balance of B before
     Plugin->>DAO: execute
     DAO->>TokenA: approve(filler, X)
@@ -251,9 +253,14 @@ Leaves extend `LeafAction`: they spend their whole input and output nothing.
 | Leaf                          | Does                                                                        | Check                                      |
 | ----------------------------- | --------------------------------------------------------------------------- | ------------------------------------------ |
 | `TransferAction`              | Sends the input to a fixed recipient                                        | The recipient's balance rose by the amount |
-| `TransferToBeneficiaryAction` | Sends the input to the flow's beneficiary; reverts if none was set          | Same as above                              |
+| `TransferToBeneficiaryAction` | Sends the input to the address in its node data, picked by the caller       | Same as above                              |
 | `BurnAction`                  | Calls `burn(amount)` on an `ERC20Burnable` token                            | The DAO's balance dropped by the amount    |
 | `KeepAction`                  | Nothing: the input stays in the DAO, so keeping funds is an explicit choice | —                                          |
+
+Since the caller picks `TransferToBeneficiaryAction`'s payout address, use it only where the caller
+may direct the funds: under a `MerkleClaimBudget` (only the claiming account can trigger) or on a
+flow whose trigger is restricted. On a flow anyone can trigger with a stream or balance budget,
+anyone could pay themselves.
 
 The transfer check catches tokens that return `false` instead of reverting. Fee-on-transfer and
 rebasing tokens fail it by design.
@@ -266,17 +273,15 @@ balance, shares that change over time.
 
 ```solidity
 interface ISplitter {
-    function split(address caller, Record calldata parent, uint256 childCount)
+    function split(address caller, Asset calldata output, uint256 childCount)
         external view returns (uint256[] memory amounts);
 }
 ```
 
 - **Amounts only:** one per child, in the order of the node's children. A splitter can't pick
   other nodes, so the tree's shape stays what `setFlow` checked.
-- **Checked by the plugin:** the amounts must add up to what the children share, `parent.forwarded`
-  (`InvalidSplit`).
-- **Expected and real:** the record lets a splitter tell the declared output
-  (`parent.expected.outAmount`) from a surplus, for example to send the surplus to a Keep leaf.
+- **Checked by the plugin:** the amounts must add up to `output.amount`: the node's declared output,
+  or everything that arrived on a node marked `forwardSurplus` (`InvalidSplit`).
 - **Empty shares:** a child that gets 0 reverts the trigger, unless it's marked `skipWhenEmpty`:
   then it and everything below it are skipped, as with a weight that rounds down.
 - **View only:** a split changes no state.
@@ -309,15 +314,16 @@ flowchart LR
     fill -- "all the B received" --> burn
 ```
 
-**Merkle claim**: an account claims what it's owed and gets paid, possibly at another address.
+**Merkle claim**: an account claims what it's owed and gets paid at the address it names in the
+leaf's node data.
 
 ```mermaid
 flowchart LR
     budget[("MerkleClaimBudget<br/>token A, proof for the caller")]
-    pay["TransferToBeneficiaryAction"]
-    who(("beneficiary"))
+    pay["TransferToBeneficiaryAction<br/>to the address in its node data"]
+    who(("payout address"))
 
-    budget -- "amount owed, beneficiary set" --> pay
+    budget -- "amount owed" --> pay
     pay -- "A" --> who
 ```
 
@@ -442,12 +448,12 @@ flowchart LR
 | `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
 | `src/budgets/FundedStreamBudget.sol`           | Streaming pot that never jumps                                                                             |
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
-| `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims with a redirectable beneficiary                                                   |
+| `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims; the account picks the payout address                                             |
 | `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |
 | `src/actions/base/LeafAction.sol`              | Base for leaves: spends the whole input, outputs nothing                                                   |
 | `src/actions/base/TransferBase.sol`            | Base for transfer leaves: one transfer plus a receipt check                                                |
 | `src/actions/TransferAction.sol`               | Leaf: sends its input to a fixed recipient                                                                 |
-| `src/actions/TransferToBeneficiaryAction.sol`  | Leaf: sends its input to the flow's beneficiary                                                            |
+| `src/actions/TransferToBeneficiaryAction.sol`  | Leaf: sends its input to the address in its node data                                                      |
 | `src/actions/BurnAction.sol`                   | Leaf: burns its input                                                                                      |
 | `src/actions/KeepAction.sol`                   | Leaf: leaves its input in the DAO                                                                          |
 | `src/splitters/WeightSplitter.sol`             | Splits a branch's output by fixed weights                                                                  |

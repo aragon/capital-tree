@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
-import {Movement, Record} from "../src/lib/types.sol";
+import {Asset} from "../src/lib/types.sol";
 import {RATIO_BASE, MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
@@ -25,7 +25,7 @@ contract WeightSplitterTest is Fixture {
         uint32[] memory _weights = new uint32[](3);
         (_weights[0], _weights[1], _weights[2]) = (333_333, 333_334, 333_333);
 
-        uint256[] memory _amounts = _deployWeightSplitter(_weights).split(address(this), _forwarding(10), 3);
+        uint256[] memory _amounts = _deployWeightSplitter(_weights).split(address(this), _output(10), 3);
 
         assertEq(_amounts[0], 3);
         assertEq(_amounts[1], 4);
@@ -34,7 +34,7 @@ contract WeightSplitterTest is Fixture {
 
     function test_TheFirstLargestWeightTakesTheRemainderOnATie() public {
         uint256[] memory _amounts =
-            _deployWeightSplitter(_pair(500_000, 500_000)).split(address(this), _forwarding(3), 2);
+            _deployWeightSplitter(_pair(500_000, 500_000)).split(address(this), _output(3), 2);
 
         assertEq(_amounts[0], 2);
         assertEq(_amounts[1], 1);
@@ -47,24 +47,13 @@ contract WeightSplitterTest is Fixture {
         uint32[] memory _weights = new uint32[](3);
         (_weights[0], _weights[1], _weights[2]) = (_a, _b, uint32(RATIO_BASE) - _a - _b);
 
-        uint256[] memory _amounts = _deployWeightSplitter(_weights).split(address(this), _forwarding(_out), 3);
+        uint256[] memory _amounts = _deployWeightSplitter(_weights).split(address(this), _output(_out), 3);
 
         assertEq(_amounts.length, 3);
         assertEq(_amounts[0] + _amounts[1] + _amounts[2], _out);
         for (uint256 k; k < 3; ++k) {
             assertGe(_amounts[k], (_out * _weights[k]) / RATIO_BASE);
         }
-    }
-
-    /// A surplus forwarded by the node is split too, not just the expected output
-    function test_SplitsWhatTheNodeForwards() public {
-        Record memory _parent = _forwarding(150);
-        _parent.expected.outAmount = 100;
-
-        uint256[] memory _amounts = _deployWeightSplitter(_pair(700_000, 300_000)).split(address(this), _parent, 2);
-
-        assertEq(_amounts[0], 105);
-        assertEq(_amounts[1], 45);
     }
 
     function test_RevertWhen_ThereIsOneWeight() public {
@@ -98,7 +87,7 @@ contract WeightSplitterTest is Fixture {
         vm.prank(manager);
         _splitter.setWeights(_pair(250_000, 750_000));
 
-        uint256[] memory _amounts = _splitter.split(address(this), _forwarding(100), 2);
+        uint256[] memory _amounts = _splitter.split(address(this), _output(100), 2);
         assertEq(_amounts[0], 25);
         assertEq(_amounts[1], 75);
     }
@@ -146,7 +135,7 @@ contract WeightSplitterTest is Fixture {
         (_weights[0], _weights[1]) = (_a, _b);
     }
 
-    function _forwarding(uint256 _out) internal pure returns (Record memory) {
-        return Record(Movement(IERC20(address(1)), _out, IERC20(address(1)), _out, address(0)), _out, _out, _out);
+    function _output(uint256 _amount) internal pure returns (Asset memory) {
+        return Asset(IERC20(address(1)), _amount);
     }
 }

@@ -15,19 +15,20 @@ import {MANAGER_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/constant
 /// @notice Cumulative Merkle distribution as a budget. Each leaf is (account, cumulative amount); an
 ///         account can claim `cumulative − claimed` at any time. A new root raises the cumulative
 ///         amounts for the next round.
-/// @dev The flow's root receives exactly what the account is owed, with the beneficiary set, so the
-///      nodes can split it, swap it or take a fee before a `TransferToBeneficiaryAction` pays it out.
+/// @dev The flow's root receives exactly what the account is owed, so the nodes can split it, swap
+///      it or take a fee before a `TransferToBeneficiaryAction` pays it out, to the address the
+///      account names in that node's data.
 ///      One claim per trigger. Leaves use OpenZeppelin's StandardMerkleTree format:
 ///      keccak256(bytes.concat(keccak256(abi.encode(account, cumulative)))).
 ///
-///      Budget data: abi.encode(address account, uint256 cumulative, bytes32[] proof, address beneficiary).
+///      Budget data: abi.encode(address account, uint256 cumulative, bytes32[] proof).
 ///      Only the account itself can claim (`caller == account`), so nobody else can pick the data
-///      of the nodes or front-run a redirect. `beneficiary == 0` pays the account.
+///      of the nodes.
 ///      The claim is recorded when the budget commits, after the whole tree ran, so it rolls back
 ///      with the flow. One flow per instance: a second flow on the same budget could pay a claim
 ///      again from a node's callback before the first one records it.
 ///      Relayed (gasless) claims could be added later with a signature from the account over the
-///      beneficiary and the data of every node.
+///      data of every node.
 contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
     /// @inheritdoc IBudget
     IERC20 public token;
@@ -39,13 +40,12 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
     mapping(address => uint256) public claimed;
 
     event RootUpdated(bytes32 root);
-    event Claimed(address indexed account, address indexed beneficiary, uint256 amount);
+    event Claimed(address indexed account, uint256 amount);
 
     error InvalidToken();
     error InvalidProof();
     error NotTheAccount();
     error NothingToClaim();
-    error InvalidBeneficiary();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -63,21 +63,12 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
     // IBudget
 
     /// @inheritdoc IBudget
-    /// @dev What the account is owed, for the beneficiary it names
-    function available(address _caller, bytes calldata _data)
-        external
-        view
-        virtual
-        returns (uint256 _owed, address _beneficiary)
-    {
-        address _account;
-        uint256 _cumulative;
-        bytes32[] memory _proof;
-        (_account, _cumulative, _proof, _beneficiary) = _decode(_data);
+    /// @dev What the account is owed
+    function available(address _caller, bytes calldata _data) external view virtual returns (uint256 _owed) {
+        (address _account, uint256 _cumulative, bytes32[] memory _proof) = _decode(_data);
 
         if (_caller != _account) revert NotTheAccount();
         if (!MerkleProof.verify(_proof, root, leaf(_account, _cumulative))) revert InvalidProof();
-        if (_beneficiary == address(dao())) revert InvalidBeneficiary();
         if (_cumulative <= claimed[_account]) revert NothingToClaim();
         _owed = _cumulative - claimed[_account];
     }
@@ -85,23 +76,19 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
     /// @inheritdoc IBudget
     /// @dev Records the claim `available` paid out
     function commitActions(address, bytes calldata _data) external view virtual returns (Action[] memory _actions) {
-        (address _account, uint256 _cumulative,, address _beneficiary) = _decode(_data);
+        (address _account, uint256 _cumulative,) = _decode(_data);
 
         _actions = new Action[](1);
         _actions[0] = Action({
-            to: address(this), value: 0, data: abi.encodeCall(this.recordClaim, (_account, _cumulative, _beneficiary))
+            to: address(this), value: 0, data: abi.encodeCall(this.recordClaim, (_account, _cumulative))
         });
     }
 
     // Claim record
 
     /// @notice Records a claim. Executed by the DAO when the budget commits, so it rolls back with the flow.
-    function recordClaim(address _account, uint256 _cumulative, address _beneficiary)
-        external
-        virtual
-        auth(RECORD_CLAIM_PERMISSION_ID)
-    {
-        emit Claimed(_account, _beneficiary, _cumulative - claimed[_account]);
+    function recordClaim(address _account, uint256 _cumulative) external virtual auth(RECORD_CLAIM_PERMISSION_ID) {
+        emit Claimed(_account, _cumulative - claimed[_account]);
         claimed[_account] = _cumulative;
     }
 
@@ -121,13 +108,12 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
         emit RootUpdated(_root);
     }
 
-    /// @dev The claim in the budget data; an unset beneficiary is the account
+    /// @dev The claim in the budget data
     function _decode(bytes calldata _data)
         internal
         pure
-        returns (address _account, uint256 _cumulative, bytes32[] memory _proof, address _beneficiary)
+        returns (address _account, uint256 _cumulative, bytes32[] memory _proof)
     {
-        (_account, _cumulative, _proof, _beneficiary) = abi.decode(_data, (address, uint256, bytes32[], address));
-        if (_beneficiary == address(0)) _beneficiary = _account;
+        (_account, _cumulative, _proof) = abi.decode(_data, (address, uint256, bytes32[]));
     }
 }

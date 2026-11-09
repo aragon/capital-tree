@@ -16,8 +16,7 @@ interface IBudget {
     /// @param caller Who triggered the flow
     /// @param data The trigger's budget data, empty for a budget that needs none
     /// @return amount The amount the root receives
-    /// @return beneficiary Who the amount belongs to, or address(0) for nobody in particular
-    function available(address caller, bytes calldata data) external view returns (uint256 amount, address beneficiary);
+    function available(address caller, bytes calldata data) external view returns (uint256 amount);
 
     /// @notice DAO actions that record the spend. The plugin executes them once, in their own
     ///         `dao.execute`, after the whole tree ran.

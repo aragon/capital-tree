@@ -10,7 +10,7 @@ import {
 import {INodeAction} from "../interfaces/INodeAction.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
-import {Input, Movement} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 import {MANAGER_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title OpenFillAction
@@ -53,6 +53,9 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     /// @notice Thrown when the DAO holds less of the demanded token than the fill requires
     error DemandNotMet(uint256 required, uint256 actual);
 
+    /// @notice Thrown when the DAO gave away more of the offered token than the offer
+    error OfferExceeded(uint256 minBalance, uint256 actual);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -80,31 +83,27 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     // INodeAction
 
     /// @inheritdoc INodeAction
-    /// @dev Nothing blocks a fill. Snapshot: the DAO's balance of the demanded token before it.
-    function preconditions(address, bytes calldata, Movement calldata _movement)
+    /// @dev Nothing blocks a fill. Snapshot: the DAO's balances of the offered and the demanded
+    ///      token before it.
+    function preconditions(address, bytes calldata, Asset calldata _input, Asset calldata _output)
         external
         view
         virtual
         returns (bytes memory)
     {
-        return abi.encode(_movement.outToken.balanceOf(address(dao())));
+        address _dao = address(dao());
+        return abi.encode(_input.token.balanceOf(_dao), _output.token.balanceOf(_dao));
     }
 
     /// @inheritdoc INodeAction
     /// @dev ERC20 offer of the whole input: approve it to the caller, call it back, clear the approval.
-    function build(address _caller, bytes calldata _data, Input calldata _input)
+    function build(address _caller, bytes calldata _data, Asset calldata _input)
         external
         view
         virtual
-        returns (Movement memory _movement, Action[] memory _actions)
+        returns (Asset memory _output, Action[] memory _actions)
     {
-        _movement = Movement({
-            inToken: _input.token,
-            inAmount: _input.amount,
-            outToken: demandedToken,
-            outAmount: demandPerFill,
-            beneficiary: _input.beneficiary
-        });
+        _output = Asset({token: demandedToken, amount: demandPerFill});
 
         bytes memory _callback =
             abi.encodeCall(IFiller.fillOffer, (_input.token, _input.amount, demandedToken, demandPerFill, _data));
@@ -117,11 +116,25 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc INodeAction
-    /// @dev Reverts the whole trigger unless the DAO received at least `outAmount`
-    function postconditions(address, Movement calldata _movement, bytes calldata _snapshot) external view virtual {
-        uint256 _minBalance = abi.decode(_snapshot, (uint256)) + _movement.outAmount;
-        uint256 _balance = _movement.outToken.balanceOf(address(dao()));
-        if (_balance < _minBalance) revert DemandNotMet(_minBalance, _balance);
+    /// @dev Reverts the whole trigger unless the DAO gave at most the input and received at least
+    ///      the output. The two tokens differ (`SameToken`), so each balance moves on its own.
+    function postconditions(address, Asset calldata _input, Asset calldata _output, bytes calldata _snapshot)
+        external
+        view
+        virtual
+    {
+        (uint256 _inBefore, uint256 _outBefore) = abi.decode(_snapshot, (uint256, uint256));
+        address _dao = address(dao());
+
+        uint256 _inBalance = _input.token.balanceOf(_dao);
+        if (_inBalance + _input.amount < _inBefore) {
+            // Safe: the condition implies `_inBefore > _input.amount`
+            revert OfferExceeded(_inBefore - _input.amount, _inBalance);
+        }
+
+        uint256 _minOutBalance = _outBefore + _output.amount;
+        uint256 _outBalance = _output.token.balanceOf(_dao);
+        if (_outBalance < _minOutBalance) revert DemandNotMet(_minOutBalance, _outBalance);
     }
 
     // Manager settings

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.28;
 
-import {Record} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 
 /// @title ISplitter
 /// @notice Divides a branch's output among its children when the flow runs (`WeightSplitter` for
@@ -10,11 +10,11 @@ import {Record} from "../lib/types.sol";
 ///      (`DaoAuthorizableUpgradeable`). The plugin rejects splitters bound to another DAO or to none.
 interface ISplitter {
     /// @notice One amount per child, in the order of the node's children, summing to
-    ///         `parent.forwarded`. A child that gets 0 reverts the trigger, unless it's marked
+    ///         `output.amount`. A child that gets 0 reverts the trigger, unless it's marked
     ///         `skipWhenEmpty`.
-    /// @param parent What the node expected and what really happened, so a splitter can tell the
-    ///        expected output (`parent.expected.outAmount`) from a surplus
-    function split(address caller, Record calldata parent, uint256 childCount)
+    /// @param output What the node passes to its children: the declared output, or everything that
+    ///        arrived when the node forwards its surplus
+    function split(address caller, Asset calldata output, uint256 childCount)
         external
         view
         returns (uint256[] memory amounts);

@@ -115,7 +115,7 @@ abstract contract Fixture is Test {
 
     /// @dev What `_budget` gives a flow triggered without budget data
     function _available(IBudget _budget) internal view returns (uint256 _amount) {
-        (_amount,) = _budget.available(address(0), "");
+        _amount = _budget.available(address(0), "");
     }
 
     function _deployBalanceBudget(IERC20 _token) internal returns (BalanceBudget _budget) {

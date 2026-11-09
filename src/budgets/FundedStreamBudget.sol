@@ -132,10 +132,9 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     // IBudget
 
     /// @inheritdoc IBudget
-    /// @dev min(baseAmount + rate x (now - baseTimestamp), lastSeenBalance, daoBalance, maxBudget), for
-    ///      nobody in particular
-    function available(address, bytes calldata) external view virtual returns (uint256, address) {
-        return (_available(_daoBalance()), address(0));
+    /// @dev min(baseAmount + rate x (now - baseTimestamp), lastSeenBalance, daoBalance, maxBudget)
+    function available(address, bytes calldata) external view virtual returns (uint256) {
+        return _available(_daoBalance());
     }
 
     /// @notice Restarts the stream after the spend: the plugin executes this once, after the whole flow

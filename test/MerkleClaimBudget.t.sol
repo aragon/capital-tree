@@ -29,23 +29,20 @@ contract MerkleClaimBudgetTest is Fixture {
     }
 
     function test_AvailableIsWhatTheAccountIsOwed() public view {
-        (uint256 _amount, address _beneficiary) = merkle.available(alice, _claim(alice, 10 ether, carol));
-
-        assertEq(_amount, 10 ether);
-        assertEq(_beneficiary, carol);
+        assertEq(merkle.available(alice, _claim(alice, 10 ether)), 10 ether);
     }
 
     function test_CommitRecordsTheClaim() public view {
-        Action[] memory _actions = merkle.commitActions(alice, _claim(alice, 10 ether, address(0)));
+        Action[] memory _actions = merkle.commitActions(alice, _claim(alice, 10 ether));
 
         assertEq(_actions.length, 1);
         assertEq(_actions[0].to, address(merkle));
-        assertEq(_actions[0].data, abi.encodeCall(merkle.recordClaim, (alice, 10 ether, alice)));
+        assertEq(_actions[0].data, abi.encodeCall(merkle.recordClaim, (alice, 10 ether)));
     }
 
     function test_AccountClaimsItsAmount() public {
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
 
         assertEq(tokenA.balanceOf(alice), 10 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A - 10 ether);
@@ -54,48 +51,43 @@ contract MerkleClaimBudgetTest is Fixture {
 
     function test_RevertWhen_ClaimingAgain() public {
         vm.startPrank(alice);
-        plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
 
         vm.expectRevert(MerkleClaimBudget.NothingToClaim.selector);
-        plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
         vm.stopPrank();
     }
 
     function test_RevertWhen_SomeoneElseClaims() public {
         vm.expectRevert(MerkleClaimBudget.NotTheAccount.selector);
         vm.prank(carol);
-        plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 1));
     }
 
+    /// The account names who gets paid in the payout leaf's data
     function test_AccountRedirectsToAnotherBeneficiary() public {
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether, carol), noData);
+        plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 1));
 
         assertEq(tokenA.balanceOf(carol), 10 ether);
         assertEq(tokenA.balanceOf(alice), 0);
     }
 
-    function test_RevertWhen_BeneficiaryIsTheDao() public {
-        vm.expectRevert(MerkleClaimBudget.InvalidBeneficiary.selector);
-        vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether, address(dao)), noData);
-    }
-
     function test_RevertWhen_ProofIsInvalid() public {
         vm.expectRevert(MerkleClaimBudget.InvalidProof.selector);
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 20 ether, address(0)), noData); // the tree says 10
+        plugin.trigger(_claim(alice, 20 ether), _payTo(alice, 1)); // the tree says 10
     }
 
     function test_NewRootPaysTheDifference() public {
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
 
         vm.prank(manager);
         merkle.setRoot(_root(25 ether, 30 ether));
 
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 25 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 25 ether), _payTo(alice, 1));
 
         assertEq(tokenA.balanceOf(alice), 25 ether, "10 in round one, 15 more in round two");
     }
@@ -115,7 +107,7 @@ contract MerkleClaimBudgetTest is Fixture {
                 DaoUnauthorized.selector, address(dao), address(merkle), address(this), RECORD_CLAIM_PERMISSION_ID
             )
         );
-        merkle.recordClaim(alice, 10 ether, alice);
+        merkle.recordClaim(alice, 10 ether);
     }
 
     function test_RevertWhen_TokenHasNoCode() public {
@@ -131,7 +123,7 @@ contract MerkleClaimBudgetTest is Fixture {
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 1_000 ether, address(0)), noData);
+        plugin.trigger(_claim(alice, 1_000 ether), _payTo(alice, 1));
     }
 
     /// Claim → swap A to B at 2 → pay the beneficiary (redirected to carol)
@@ -139,7 +131,7 @@ contract MerkleClaimBudgetTest is Fixture {
         CapitalPipelinePlugin _plugin = _deployPlugin(merkle, _chain(_swap(), toBeneficiary));
 
         vm.prank(alice);
-        _plugin.trigger(_claim(alice, 10 ether, carol), noData);
+        _plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 2));
 
         assertEq(tokenB.balanceOf(carol), 20 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A - 10 ether);
@@ -156,7 +148,7 @@ contract MerkleClaimBudgetTest is Fixture {
         CapitalPipelinePlugin _plugin = _deployPlugin(merkle, _tree);
 
         vm.prank(alice);
-        _plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        _plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 4));
 
         assertEq(tokenA.balanceOf(fee), 0.1 ether);
         assertEq(tokenB.balanceOf(alice), 19.8 ether);
@@ -167,9 +159,10 @@ contract MerkleClaimBudgetTest is Fixture {
         CapitalPipelinePlugin _plugin =
             _deployPlugin(merkle, _chain(new BadAction(BadAction.Mode.Skip, address(dao), tokenB), toBeneficiary));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 0, 0, 10 ether));
+        // The root outputs nothing, so its child receives nothing
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 1));
         vm.prank(alice);
-        _plugin.trigger(_claim(alice, 10 ether, address(0)), noData);
+        _plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 2));
 
         assertEq(merkle.claimed(alice), 0, "nothing recorded");
     }
@@ -197,9 +190,15 @@ contract MerkleClaimBudgetTest is Fixture {
     }
 
     /// @dev The trigger's budget data. In a two-leaf tree, the proof is the other leaf.
-    function _claim(address _account, uint256 _cumulative, address _beneficiary) internal view returns (bytes memory) {
+    function _claim(address _account, uint256 _cumulative) internal view returns (bytes memory) {
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _account == alice ? _leafHash(bob, bobAmount) : _leafHash(alice, aliceAmount);
-        return abi.encode(_account, _cumulative, _proof, _beneficiary);
+        return abi.encode(_account, _cumulative, _proof);
+    }
+
+    /// @dev Node data for a flow of `_nodes` nodes whose last node is the payout leaf, paying `_to`
+    function _payTo(address _to, uint256 _nodes) internal pure returns (bytes[] memory _data) {
+        _data = new bytes[](_nodes);
+        _data[_nodes - 1] = abi.encode(_to);
     }
 }

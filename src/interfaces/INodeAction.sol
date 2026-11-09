@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IBudget} from "./IBudget.sol";
-import {Input, Movement} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 
 /// @title INodeAction
 /// @notice What a node of a flow tree does with its input. The plugin calls `build`,
@@ -17,27 +17,31 @@ interface INodeAction {
     ///         A bound action must be bound to the flow's budget.
     function budget() external view returns (IBudget);
 
-    /// @notice What the node spends from `input` (`inAmount`, which must be all of it), what it
-    ///         produces (`outToken`/`outAmount`, zero for a leaf) and optionally a `beneficiary`,
-    ///         plus the actions that do the work.
-    /// @dev `outAmount` is the least the node produces, checked after it runs. The children get
-    ///      `outAmount`, or everything that arrived when the node is marked `forwardSurplus`.
-    function build(address caller, bytes calldata data, Input calldata input)
+    /// @notice What the node produces for its children (`output`, zero for a leaf), plus the
+    ///         actions that do the work. The node spends its whole input.
+    /// @dev `output` is the least the action accepts: the plugin checks that it arrived after the
+    ///      node runs. The children get it, or everything that arrived when the node is marked
+    ///      `forwardSurplus`.
+    function build(address caller, bytes calldata data, Asset calldata input)
         external
         view
-        returns (Movement memory movement, Action[] memory actions);
+        returns (Asset memory output, Action[] memory actions);
 
-    /// @notice Reverts if the action must not run. Called after `build`, on the movement the plugin
+    /// @notice Reverts if the action must not run. Called after `build`, on the output the plugin
     ///         checked, right before the node's `dao.execute`.
     /// @param data The node's trigger data, as passed to `build`
     /// @return snapshot What `postconditions` compares against, read before the work runs (a
     ///         balance, and anything the check needs to find it again, such as a lock id)
-    function preconditions(address caller, bytes calldata data, Movement calldata movement)
+    function preconditions(address caller, bytes calldata data, Asset calldata input, Asset calldata output)
         external
         view
         returns (bytes memory snapshot);
 
-    /// @notice Reverts unless the work went right. Called right after the node's `dao.execute`.
+    /// @notice Reverts unless the work went right by the action's own standard (a tolerance, a
+    ///         surplus cap, a recipient check). Called right after the node's `dao.execute`, before
+    ///         the plugin checks that the node spent at most its input and its output arrived.
     /// @param snapshot What `preconditions` returned
-    function postconditions(address caller, Movement calldata movement, bytes calldata snapshot) external view;
+    function postconditions(address caller, Asset calldata input, Asset calldata output, bytes calldata snapshot)
+        external
+        view;
 }

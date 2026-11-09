@@ -6,7 +6,7 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
-import {Record} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 import {RATIO_BASE, MANAGER_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title WeightSplitter
@@ -44,7 +44,7 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc ISplitter
     /// @dev Returns one amount per weight; the plugin reverts if that isn't one per child
-    function split(address, Record calldata _parent, uint256) external view returns (uint256[] memory _amounts) {
+    function split(address, Asset calldata _output, uint256) external view returns (uint256[] memory _amounts) {
         uint32[] memory _w = _weights;
         uint256 _count = _w.length;
         _amounts = new uint256[](_count);
@@ -52,11 +52,11 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
         uint256 _assigned;
         uint256 _largest;
         for (uint256 k; k < _count; ++k) {
-            _amounts[k] = (_parent.forwarded * _w[k]) / RATIO_BASE;
+            _amounts[k] = (_output.amount * _w[k]) / RATIO_BASE;
             _assigned += _amounts[k];
             if (_w[k] > _w[_largest]) _largest = k;
         }
-        _amounts[_largest] += _parent.forwarded - _assigned;
+        _amounts[_largest] += _output.amount - _assigned;
     }
 
     function _setWeights(uint32[] calldata _newWeights) internal {

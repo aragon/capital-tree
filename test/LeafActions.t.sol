@@ -10,7 +10,7 @@ import {TransferBase} from "../src/actions/base/TransferBase.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
-import {Input, Movement} from "../src/lib/types.sol";
+import {Asset} from "../src/lib/types.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {FalseReturnToken, FallbackToken} from "./mocks/BadComponents.sol";
 
@@ -35,21 +35,22 @@ contract LeafActionsTest is Fixture {
 
     function test_TransferPostconditionMeasuresTheRecipient() public {
         TransferAction _transfer = _deployTransfer(alice);
-        Movement memory _movement = Movement(tokenA, 7 ether, tokenA, 0, address(0));
+        Asset memory _in = Asset(tokenA, 7 ether);
+        Asset memory _out = Asset(tokenA, 0);
         uint256 _before = tokenA.balanceOf(alice);
 
-        bytes memory _snapshot = _transfer.preconditions(address(0), "", _movement);
-        assertEq(_snapshot, abi.encode(_before));
+        bytes memory _snapshot = _transfer.preconditions(address(0), "", _in, _out);
+        assertEq(_snapshot, abi.encode(alice, DAO_A, _before));
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 TransferBase.ReceiptShortfall.selector, address(tokenA), alice, _before + 7 ether, _before
             )
         );
-        _transfer.postconditions(address(0), _movement, _snapshot);
+        _transfer.postconditions(address(0), _in, _out, _snapshot);
 
         tokenA.mint(alice, 7 ether);
-        _transfer.postconditions(address(0), _movement, _snapshot);
+        _transfer.postconditions(address(0), _in, _out, _snapshot);
     }
 
     function test_RevertWhen_ATransferSilentlyFails() public {
@@ -93,17 +94,18 @@ contract LeafActionsTest is Fixture {
     }
 
     function test_BurnPostconditionMeasuresTheDao() public {
-        Movement memory _movement = Movement(tokenA, 7 ether, tokenA, 0, address(0));
+        Asset memory _in = Asset(tokenA, 7 ether);
+        Asset memory _out = Asset(tokenA, 0);
 
-        bytes memory _snapshot = burn.preconditions(address(0), "", _movement);
+        bytes memory _snapshot = burn.preconditions(address(0), "", _in, _out);
         assertEq(_snapshot, abi.encode(DAO_A));
 
         vm.expectRevert(abi.encodeWithSelector(BurnAction.NotBurned.selector, address(tokenA), DAO_A - 7 ether, DAO_A));
-        burn.postconditions(address(0), _movement, _snapshot);
+        burn.postconditions(address(0), _in, _out, _snapshot);
 
         vm.prank(address(dao));
         tokenA.burn(7 ether);
-        burn.postconditions(address(0), _movement, _snapshot);
+        burn.postconditions(address(0), _in, _out, _snapshot);
     }
 
     function test_RevertWhen_TheTokenIgnoresBurn() public {
@@ -167,13 +169,6 @@ contract BalanceBudgetTest is Fixture {
 
         assertEq(_available(_budget), DAO_A);
         assertEq(address(_budget.token()), address(tokenA));
-    }
-
-    function test_AvailableBelongsToNobodyInParticular() public {
-        (uint256 _amount, address _beneficiary) = _deployBalanceBudget(tokenA).available(alice, "");
-
-        assertEq(_amount, DAO_A);
-        assertEq(_beneficiary, address(0), "nobody in particular");
     }
 
     function test_CommitsNothing() public {

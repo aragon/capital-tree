@@ -36,7 +36,7 @@ contract Handler is Test {
     }
 
     function fill() external {
-        (uint256 _available,) = budget.available(address(0), "");
+        uint256 _available = budget.available(address(0), "");
         if (_available == 0) return; // nothing on offer: a trigger would revert by design
         filler.fillWithoutData();
     }

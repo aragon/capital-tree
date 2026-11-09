@@ -13,7 +13,7 @@ import {
 import {IBudget} from "./interfaces/IBudget.sol";
 import {INodeAction} from "./interfaces/INodeAction.sol";
 import {ISplitter} from "./interfaces/ISplitter.sol";
-import {Input, Movement, Node, Record} from "./lib/types.sol";
+import {Asset, Node} from "./lib/types.sol";
 import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, MAX_NODES} from "./lib/constants.sol";
 
 /// @title CapitalPipelinePlugin
@@ -32,14 +32,19 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, M
 contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice What the flow may spend; read at the start, committed at the end
     IBudget public budget;
+    /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
+    ///      it can't change during one (`nonReentrant`), so the nodes read it from storage. Shares
+    ///      `budget`'s slot, which every trigger reads anyway: keep the two declarations together.
+    uint96 internal _nonce;
 
     Node[] internal _nodes;
 
-    /// @dev Makes every execution ID unique
-    uint256 internal _nonce;
-
     event FlowUpdated(IBudget budget, Node[] nodes);
-    event NodeExecuted(uint256 indexed nodeIndex, address indexed caller, bytes32 executionId, Record record);
+    /// @param output What the children got: the declared output, or everything that arrived when the
+    ///        node forwards its surplus
+    event NodeExecuted(
+        uint256 indexed nodeIndex, address indexed caller, bytes32 executionId, Asset input, Asset output
+    );
     event BudgetCommitted(bytes32 executionId);
 
     // Configuration errors
@@ -57,18 +62,15 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     // Trigger errors
     error DataLengthMismatch(uint256 expected, uint256 actual);
     error EmptyInput(uint256 nodeIndex);
-    error InputTokenMismatch(uint256 nodeIndex);
-    error InAmountExceedsInput(uint256 nodeIndex, uint256 inAmount, uint256 input);
-    error NodeIncomplete(uint256 nodeIndex, uint256 inAmount, uint256 input);
     error InvalidSplit(uint256 nodeIndex);
-    error LeafLeftOutput(uint256 nodeIndex, uint256 outAmount);
-    error InvalidOutToken(uint256 nodeIndex);
-    error OutputBelowInput(uint256 nodeIndex, uint256 outAmount, uint256 inAmount);
-    error BeneficiaryChanged(uint256 nodeIndex);
+    /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
+    error OutputWithoutChildren(uint256 nodeIndex, uint256 amount);
     error MissingFunctionSelector(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsDao(uint256 nodeIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 nodeIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
+    /// @notice The tree spent more of the budget's token than the budget made available
+    error BudgetExceeded(uint256 available, uint256 spent);
 
     function initialize(IDAO _dao, IBudget _budget, Node[] calldata _newNodes) external initializer {
         __PluginCloneable_init(_dao);
@@ -87,12 +89,19 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         auth(TRIGGER_PERMISSION_ID)
     {
         uint256 _len = _nodes.length;
-        if (_data.length != 0 && _data.length != _len) revert DataLengthMismatch(_len, _data.length);
+        if (_data.length != 0 && _data.length != _len) {
+            revert DataLengthMismatch(_len, _data.length);
+        }
 
-        uint256 _callNonce = _nonce++;
-        (uint256 _amount, address _beneficiary) = budget.available(msg.sender, _budgetData);
-        _runNode(0, Input(budget.token(), _amount, _beneficiary), _data, _callNonce);
-        _commitBudget(_callNonce, _budgetData);
+        ++_nonce;
+        IERC20 _token = budget.token();
+        uint256 _amount = budget.available(msg.sender, _budgetData);
+
+        uint256 _before = _token.balanceOf(address(dao()));
+        _runNode(0, Asset(_token, _amount), _data);
+        _checkBudgetSpend(_token, _amount, _before);
+
+        _commitBudget(_budgetData);
     }
 
     /// @notice Replaces the flow. DAO only: an action can return arbitrary DAO actions.
@@ -117,104 +126,90 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     // Running the tree
 
     /// @dev Runs node `_index` on `_input`, then its children, depth first
-    function _runNode(uint256 _index, Input memory _input, bytes[] calldata _data, uint256 _callNonce) internal {
+    function _runNode(uint256 _index, Asset memory _input, bytes[] calldata _data) internal {
         Node storage _node = _nodes[_index];
         if (_input.amount == 0) {
             // Skipping a node skips everything below it
             if (_node.skipWhenEmpty) return;
             revert EmptyInput(_index);
         }
-
-        Record memory _record;
+        
+        Asset memory _output;
         if (address(_node.action) == address(0)) {
-            // A branch without an action passes its input on: nothing runs, so nothing moves
-            _record.expected = Movement(_input.token, _input.amount, _input.token, _input.amount, _input.beneficiary);
-            _record.forwarded = _input.amount;
+            // If node has no action, the input becomes an output.
+            _output = Asset(_input.token, _input.amount);
         } else {
             bytes calldata _nodeData = _data.length == 0 ? msg.data[0:0] : _data[_index];
-            _record = _runAction(_index, _node.action, _input, _nodeData, _node.children.length == 0, _callNonce);
+            _output = _runAction(_index, _node.action, _input, _nodeData, _node.children.length == 0);
         }
 
-        _runChildren(_index, _node, _record, _data, _callNonce);
+        _runChildren(_index, _node, _output, _data);
     }
 
-    /// @dev The children share `_record.forwarded`
-    function _runChildren(
-        uint256 _index,
-        Node storage _node,
-        Record memory _record,
-        bytes[] calldata _data,
-        uint256 _callNonce
-    ) internal {
+    /// @dev The children share `_output.amount`, each getting it as its input
+    function _runChildren(uint256 _index, Node storage _node, Asset memory _output, bytes[] calldata _data)
+        internal
+    {
         uint256 _count = _node.children.length;
         if (_count == 0) return;
         if (_count == 1) {
-            _runNode(_node.children[0], _childInput(_record, _record.forwarded), _data, _callNonce);
+            _runNode(_node.children[0], Asset(_output.token, _output.amount), _data);
             return;
         }
 
-        uint256[] memory _amounts = _split(_index, _node.splitter, _record, _count);
+        uint256[] memory _amounts = _split(_index, _node.splitter, _output, _count);
         for (uint256 k; k < _count; ++k) {
-            _runNode(_node.children[k], _childInput(_record, _amounts[k]), _data, _callNonce);
+            _runNode(_node.children[k], Asset(_output.token, _amounts[k]), _data);
         }
     }
 
     function _runAction(
         uint256 _index,
         INodeAction _action,
-        Input memory _input,
+        Asset memory _input,
         bytes calldata _data,
-        bool _leaf,
-        uint256 _callNonce
-    ) internal returns (Record memory _record) {
-        (Movement memory _movement, Action[] memory _actions, bytes memory _actionSnapshot) =
-            _buildAction(_index, _action, _input, _data, _leaf);
+        bool _leaf
+    ) internal returns (Asset memory _output) {
+        Action[] memory _actions;
+        bytes memory _actionSnapshot;
+        (_output, _actions, _actionSnapshot) = _buildAction(_index, _action, _input, _data, _leaf);
+        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_input, _output);
 
-        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_movement);
-        bytes32 _executionId = keccak256(abi.encode(address(this), _callNonce, _index));
+        bool _forwards = _nodes[_index].forwardSurplus;
+        uint256 _before = _forwards ? _output.token.balanceOf(address(dao())) : 0;
+
+        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, _index));
         _execute(_index, _actions, _executionId);
-        _action.postconditions(msg.sender, _movement, _actionSnapshot);
-        _verify(_index, _movement, _inBefore, _outBefore);
-        _record = _measure(_index, _movement, _inBefore, _outBefore);
+        _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
+        _verify(_index, _input, _output, _inBefore, _outBefore);
 
-        emit NodeExecuted(_index, msg.sender, _executionId, _record);
+        // Give the children everything that arrived, not just the declared amount
+        if (_forwards) _output.amount = _arrived(_input, _output, _before);
+
+        emit NodeExecuted(_index, msg.sender, _executionId, _input, _output);
     }
 
-    /// @dev Builds the node, checks its movement against the node's input, then calls the action's
-    ///      preconditions on that movement
-    function _buildAction(uint256 _index, INodeAction _action, Input memory _input, bytes calldata _data, bool _leaf)
+    /// @dev Builds the node, then calls the action's preconditions on its output.
+    ///      The node spends its whole input; the action's postconditions check that it did.
+    function _buildAction(uint256 _index, INodeAction _action, Asset memory _input, bytes calldata _data, bool _leaf)
         internal
         view
-        returns (Movement memory _movement, Action[] memory _actions, bytes memory _actionSnapshot)
+        returns (Asset memory _output, Action[] memory _actions, bytes memory _actionSnapshot)
     {
-        (_movement, _actions) = _action.build(msg.sender, _data, _input);
+        (_output, _actions) = _action.build(msg.sender, _data, _input);
 
-        if (_movement.inAmount > _input.amount) {
-            revert InAmountExceedsInput(_index, _movement.inAmount, _input.amount);
+        // `_leaf` means the node has no children: it's at the bottom of the tree.
+        // `_output.amount` is how much the node says it produces for its children.
+        // A leaf has no children to give anything to. So if a leaf says "I produce 250 GOV", 
+        // those 250 GOV would arrive in the DAO and nobody would receive them.
+        if (_leaf && _output.amount != 0) {
+            revert OutputWithoutChildren(_index, _output.amount);
         }
-        if (_movement.inAmount < _input.amount) {
-            revert NodeIncomplete(_index, _movement.inAmount, _input.amount);
-        }
-        if (_movement.inToken != _input.token) revert InputTokenMismatch(_index);
-        if (_leaf && _movement.outAmount != 0) revert LeafLeftOutput(_index, _movement.outAmount);
-        _checkOutput(_index, _movement);
-        _movement.beneficiary = _keepBeneficiary(_index, _input.beneficiary, _movement.beneficiary);
 
-        _actionSnapshot = _action.preconditions(msg.sender, _data, _movement);
+
+        _actionSnapshot = _action.preconditions(msg.sender, _data, _input, _output);
     }
-
-    /// @dev An output that will be measured must be a token, and a node that forwards its surplus
-    ///      with one token passes its whole input on
-    function _checkOutput(uint256 _index, Movement memory _movement) internal view {
-        bool _forwards = _nodes[_index].forwardSurplus;
-        if ((_movement.outAmount != 0 || _forwards) && address(_movement.outToken).code.length == 0) {
-            revert InvalidOutToken(_index);
-        }
-        if (_forwards && _movement.outToken == _movement.inToken && _movement.outAmount < _movement.inAmount) {
-            revert OutputBelowInput(_index, _movement.outAmount, _movement.inAmount);
-        }
-    }
-
+    
     function _execute(uint256 _index, Action[] memory _actions, bytes32 _executionId) internal {
         if (_actions.length == 0) return;
 
@@ -231,65 +226,33 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         IExecutor(_dao).execute(_executionId, _actions, 0);
     }
 
-    /// @dev After the whole tree ran, so a stream checkpoint sees the final balance
-    function _commitBudget(uint256 _callNonce, bytes calldata _budgetData) internal {
-        Action[] memory _actions = budget.commitActions(msg.sender, _budgetData);
-        if (_actions.length == 0) return;
-
-        bytes32 _executionId = keccak256(abi.encode(address(this), _callNonce, type(uint256).max));
-        _execute(_nodes.length, _actions, _executionId);
-        emit BudgetCommitted(_executionId);
-    }
-
     // Balance checks
 
-    function _snapshot(Movement memory _movement) internal view returns (uint256 _inBefore, uint256 _outBefore) {
-        address _dao = address(dao());
-        _inBefore = _movement.inToken.balanceOf(_dao);
-        if (_measuresOut(_movement)) _outBefore = _movement.outToken.balanceOf(_dao);
-    }
-
-    /// @dev Whether the output is a token of its own to measure. `_checkOutput` makes sure it is one
-    ///      whenever the node declares an output or forwards its surplus.
-    function _measuresOut(Movement memory _movement) internal view returns (bool) {
-        return _movement.outToken != _movement.inToken && address(_movement.outToken).code.length != 0;
-    }
-
-    /// @dev The DAO spent at most `inAmount` and received at least `outAmount`
-    function _verify(uint256 _index, Movement memory _movement, uint256 _inBefore, uint256 _outBefore) internal view {
-        if (_movement.outToken == _movement.inToken) {
-            _checkDao(_index, _movement.inToken, _inBefore + _movement.outAmount, _movement.inAmount);
-        } else {
-            _checkDao(_index, _movement.inToken, _inBefore, _movement.inAmount);
-            if (_movement.outAmount != 0) _checkDao(_index, _movement.outToken, _outBefore + _movement.outAmount, 0);
-        }
-    }
-
-    /// @dev What the node really did, from the DAO's balances, and what its children share:
-    ///      `outAmount`, or everything that arrived when the node forwards its surplus. With one token
-    ///      only the net change is visible. `_verify` and `OutputBelowInput` keep `forwarded` at or
-    ///      above `outAmount`.
-    function _measure(uint256 _index, Movement memory _movement, uint256 _inBefore, uint256 _outBefore)
+    /// @dev The DAO's balances a node is checked against: its input token, and its output token
+    ///      when that's another one and the node declares some
+    function _snapshot(Asset memory _input, Asset memory _output)
         internal
         view
-        returns (Record memory _record)
+        returns (uint256 _inBefore, uint256 _outBefore)
     {
-        _record.expected = _movement;
         address _dao = address(dao());
-        uint256 _inAfter = _movement.inToken.balanceOf(_dao);
-        if (_inAfter < _inBefore) _record.spent = _inBefore - _inAfter;
+        _inBefore = _input.token.balanceOf(_dao);
+        if (_output.token != _input.token && _output.amount != 0) _outBefore = _output.token.balanceOf(_dao);
+    }
 
-        bool _oneToken = _movement.outToken == _movement.inToken;
-        if (_oneToken) {
-            if (_inAfter > _inBefore) _record.received = _inAfter - _inBefore;
-        } else if (_measuresOut(_movement)) {
-            uint256 _outAfter = _movement.outToken.balanceOf(_dao);
-            if (_outAfter > _outBefore) _record.received = _outAfter - _outBefore;
+    /// @dev The node spent at most its input, and at least its declared output arrived: whatever
+    ///      the action accepts, its children only get what really arrived. With one token only the
+    ///      net change is visible: the DAO lost at most `input - output`.
+    function _verify(uint256 _index, Asset memory _input, Asset memory _output, uint256 _inBefore, uint256 _outBefore)
+        internal
+        view
+    {
+        if (_output.token == _input.token) {
+            _checkDao(_index, _input.token, _inBefore + _output.amount, _input.amount);
+        } else {
+            _checkDao(_index, _input.token, _inBefore, _input.amount);
+            if (_output.amount != 0) _checkDao(_index, _output.token, _outBefore + _output.amount, 0);
         }
-
-        if (!_nodes[_index].forwardSurplus) _record.forwarded = _movement.outAmount;
-        else if (_oneToken) _record.forwarded = _movement.inAmount + _record.received;
-        else _record.forwarded = _record.received;
     }
 
     /// @dev Reverts unless `balance + spent >= target`
@@ -300,33 +263,54 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
     }
 
-    // Helpers
-
-    function _childInput(Record memory _record, uint256 _amount) internal pure returns (Input memory) {
-        return Input(_record.expected.outToken, _amount, _record.expected.beneficiary);
+    /// @dev Whatever the nodes did, the whole tree spent at most what the budget made available.
+    ///      Each action checks its own node; this catches anything that slips between them.
+    function _checkBudgetSpend(IERC20 _token, uint256 _available, uint256 _before) internal view {
+        uint256 _after = _token.balanceOf(address(dao()));
+        if (_after + _available < _before) {
+            // Safe: the condition implies `_before > _available`
+            revert BudgetExceeded(_available, _before - _after);
+        }
     }
 
+    /// @dev After the whole tree ran, so a stream checkpoint sees the final balance
+    function _commitBudget(bytes calldata _budgetData) internal {
+        Action[] memory _actions = budget.commitActions(msg.sender, _budgetData);
+        if (_actions.length == 0) return;
+
+        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, type(uint256).max));
+        _execute(_nodes.length, _actions, _executionId);
+        emit BudgetCommitted(_executionId);
+    }
+
+    /// @dev What the children get from a forwarding node. With one token the input never left the
+    ///      DAO, so it counts too: input + net change.
+    function _arrived(Asset memory _input, Asset memory _output, uint256 _before) internal view returns (uint256) {
+        uint256 _after = _output.token.balanceOf(address(dao()));
+
+        // Example: the DAO holds 5000 USDC, 100 of them are the node's input. The node pays a
+        // 2 USDC fee, so the DAO holds 4998. `4998 - 5000` loses the node's 100; adding the
+        // input back gives `(4998 + 100) - 5000 = 98`, what's left for the children.
+        if (_output.token == _input.token) _after += _input.amount;
+        return _after > _before ? _after - _before : 0;
+    }
+
+    // Helpers
+
     /// @dev The splitter's amounts, which must be one per child and add up to what the children share
-    function _split(uint256 _index, ISplitter _splitter, Record memory _record, uint256 _count)
+    function _split(uint256 _index, ISplitter _splitter, Asset memory _output, uint256 _count)
         internal
         view
         returns (uint256[] memory _amounts)
     {
-        _amounts = _splitter.split(msg.sender, _record, _count);
+        _amounts = _splitter.split(msg.sender, _output, _count);
         if (_amounts.length != _count) revert InvalidSplit(_index);
 
         uint256 _sum;
         for (uint256 k; k < _count; ++k) {
             _sum += _amounts[k];
         }
-        if (_sum != _record.forwarded) revert InvalidSplit(_index);
-    }
-
-    /// @dev Once set, the beneficiary carries on; an action may leave it unset but not change it
-    function _keepBeneficiary(uint256 _index, address _current, address _proposed) internal pure returns (address) {
-        if (_current == address(0) || _proposed == _current) return _proposed;
-        if (_proposed == address(0)) return _current;
-        revert BeneficiaryChanged(_index);
+        if (_sum != _output.amount) revert InvalidSplit(_index);
     }
 
     // Configuration
