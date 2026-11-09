@@ -12,7 +12,7 @@ One composable shape for every treasury flow: a budget feeding a tree of explici
 
 | Topic | Decision |
 |---|---|
-| Entrypoint | One `trigger(bytes budgetData, bytes[] data)`: data for the budget (a Merkle claim's proof), and one entry per node. |
+| Entrypoint | One `trigger(bytes budgetData, bytes[] nodeData)`: data for the budget (a Merkle claim's proof), and one entry per node. |
 | Flow shape | One flow per plugin: a budget and a tree of nodes, committed once at the end. |
 | Execution | Each node with an action runs in its own `dao.execute`, planned right after its parent ran. |
 | Success | Every node must succeed. Anything else reverts the whole trigger. |
@@ -86,7 +86,7 @@ interface ISplitter {
 ### Running a trigger
 
 ```
-trigger(bytes budgetData, bytes[] data)                 nonReentrant, whenNotPaused, auth(TRIGGER)
+trigger(bytes budgetData, bytes[] nodeData)             nonReentrant, whenNotPaused, auth(TRIGGER)
   nonce += 1                                            makes this trigger's execution IDs unique
   amount = budget.available(caller, budgetData)
   run(node 0, input = { budget.token(), amount })
@@ -150,7 +150,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights n
 ### `CapitalPipelinePlugin` (PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable)
 
 - Storage: `IBudget budget`, a `uint96` trigger nonce packed in the same slot (execution IDs), `Node[] nodes`.
-- `trigger(bytes budgetData, bytes[] data)`: `auth(TRIGGER_PERMISSION_ID)` (granted to `ANY_ADDR`), `nonReentrant`, `whenNotPaused`.
+- `trigger(bytes budgetData, bytes[] nodeData)`: `auth(TRIGGER_PERMISSION_ID)` (granted to `ANY_ADDR`), `nonReentrant`, `whenNotPaused`.
 - `setFlow(budget, nodes)`: `auth(CONFIGURE_PERMISSION_ID)`, DAO only, `nonReentrant`. Validates the tree.
 - `pause()`, `unpause()`: `auth(MANAGER_PERMISSION_ID)`.
 

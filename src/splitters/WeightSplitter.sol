@@ -43,6 +43,12 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc ISplitter
+    /// @dev One child per weight; `setWeights` keeps their number
+    function childCount() external view returns (uint256) {
+        return _weights.length;
+    }
+
+    /// @inheritdoc ISplitter
     /// @dev Returns one amount per weight; the plugin reverts if that isn't one per child
     function split(address, Asset calldata _output, uint256) external view returns (uint256[] memory _amounts) {
         uint32[] memory _w = _weights;

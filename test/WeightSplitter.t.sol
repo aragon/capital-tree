@@ -20,6 +20,10 @@ contract WeightSplitterTest is Fixture {
         assertEq(_splitter.weights()[1], 300_000);
     }
 
+    function test_IsMadeForOneChildPerWeight() public {
+        assertEq(_deployWeightSplitter(_pair(700_000, 300_000)).childCount(), 2);
+    }
+
     /// 10 by thirds floors to 3 each; the remainder goes to the largest weight
     function test_TheRemainderGoesToTheLargestWeight() public {
         uint32[] memory _weights = new uint32[](3);

@@ -635,16 +635,16 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
     }
 
-    /// The child count isn't checked at configuration: weights for 3 children on a 2-child branch
-    /// revert at the first trigger
+    /// Weights for 3 children on a 2-child branch are rejected when the flow is set
     function test_RevertWhen_WeightsDoNotMatchTheChildren() public {
         uint32[] memory _weights = new uint32[](3);
         (_weights[0], _weights[1], _weights[2]) = (400_000, 300_000, 300_000);
-        CapitalPipelinePlugin _plugin =
-            _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_deployWeightSplitter(_weights)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplit.selector, 0));
-        _plugin.trigger("", noData);
+        _expectInitRevert(
+            budget,
+            _splitBy(_deployWeightSplitter(_weights)),
+            abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0)
+        );
     }
 
     function test_RevertWhen_ASplitterBelongsToAnotherDao() public {

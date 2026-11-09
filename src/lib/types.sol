@@ -23,9 +23,9 @@ struct Asset {
 /// @param skipWhenEmpty When the node receives 0 (a splitter's 0, a weight that rounds down, a
 ///        parent that produced nothing), skip it and everything below it instead of reverting.
 ///        Never on the root.
-/// @param forwardSurplus Give the children everything that arrived, not just `outAmount`. Off by
-///        default: anything above `outAmount` stays in the DAO. Only on a node with an action and
-///        children. With one token, the node passes its whole input on (`outAmount ≥ inAmount`).
+/// @param forwardSurplus Give the children everything that arrived, not just the declared output. Off
+///        by default: anything above the declared output stays in the DAO. Only on a node with an
+///        action and children. With one token, what arrived is the input plus the net change.
 struct Node {
     INodeAction action;
     uint32[] children;

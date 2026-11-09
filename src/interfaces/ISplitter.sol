@@ -18,4 +18,8 @@ interface ISplitter {
         external
         view
         returns (uint256[] memory amounts);
+
+    /// @notice How many children the splitter is made for, or 0 if it splits among any number.
+    ///         The plugin rejects a branch with another number of children when the flow is set.
+    function childCount() external view returns (uint256);
 }

@@ -22,6 +22,10 @@ contract CapSplitter is ISplitter, DaoAuthorizableUpgradeable {
         _amounts[0] = _output.amount < cap ? _output.amount : cap;
         _amounts[1] = _output.amount - _amounts[0];
     }
+
+    function childCount() external pure returns (uint256) {
+        return 2;
+    }
 }
 
 /// @dev Returns the amounts it was given, whatever the output
@@ -35,5 +39,10 @@ contract FixedSplitter is ISplitter, DaoAuthorizableUpgradeable {
 
     function split(address, Asset calldata, uint256) external view returns (uint256[] memory) {
         return _amounts;
+    }
+
+    /// @dev Any: lets a wrong number of amounts reach the trigger
+    function childCount() external pure returns (uint256) {
+        return 0;
     }
 }
