@@ -51,7 +51,7 @@ and what the children got.
 
 ### One trigger, step by step
 
-`trigger(bytes budgetData, bytes[] data)` passes `budgetData` to the budget (a Merkle claim's
+`trigger(bytes budgetData, bytes[] nodeData)` passes `budgetData` to the budget (a Merkle claim's
 proof; empty for the other budgets) and takes either no node data or one entry per node. The budget
 and each action receive their own data and the caller's address.
 
