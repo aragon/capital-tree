@@ -348,8 +348,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     }
 
     /// @dev Children come after their parent and have exactly one parent, so the nodes form a tree
-    ///      rooted at node 0 with no cycles. A branch (2+ children) splits by a splitter of this DAO;
-    ///      other nodes have none. A bound action must be bound to the flow's budget.
+    ///      rooted at node 0 with no cycles. A branch (2+ children) splits by a splitter of this DAO
+    ///      made for its number of children, or for any; other nodes have none. A bound action must
+    ///      be bound to the flow's budget.
     function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent) internal view {
         uint256 _count = _node.children.length;
         if (address(_node.action) == address(0)) {
@@ -374,7 +375,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
         bool _hasSplitter = address(_node.splitter) != address(0);
         if (_hasSplitter != (_count >= 2)) revert InvalidSplitter(_index);
-        if (_hasSplitter) _checkOwnDao(address(_node.splitter));
+        if (_hasSplitter) {
+            _checkOwnDao(address(_node.splitter));
+            uint256 _madeFor = _node.splitter.childCount();
+            if (_madeFor != 0 && _madeFor != _count) revert InvalidSplitter(_index);
+        }
     }
 
     /// @dev Every component is a clone initialized for this plugin's DAO. Implementations (bound to

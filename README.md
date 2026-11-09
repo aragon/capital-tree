@@ -110,7 +110,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 
 1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
 2. A node without an action has at least 2 children.
-3. A node with 2+ children has a splitter; other nodes have none. Whether the splitter returns one amount per child is only checked at trigger (`InvalidSplit`).
+3. A node with 2+ children has a splitter made for that many children, or for any (`childCount()` returns 0); other nodes have none (`InvalidSplitter`). Whether the splitter returns one amount per child is checked at trigger (`InvalidSplit`).
 4. An action bound to a budget (OpenFill) must be bound to the flow's budget. It may sit anywhere.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
@@ -275,11 +275,15 @@ balance, shares that change over time.
 interface ISplitter {
     function split(address caller, Asset calldata output, uint256 childCount)
         external view returns (uint256[] memory amounts);
+
+    function childCount() external view returns (uint256);
 }
 ```
 
 - **Amounts only:** one per child, in the order of the node's children. A splitter can't pick
   other nodes, so the tree's shape stays what `setFlow` checked.
+- **Child count:** `childCount()` is how many children the splitter is made for, or 0 for any.
+  `setFlow` rejects a branch with another number of children (`InvalidSplitter`).
 - **Checked by the plugin:** the amounts must add up to `output.amount`: the node's declared output,
   or everything that arrived on a node marked `forwardSurplus` (`InvalidSplit`).
 - **Empty shares:** a child that gets 0 reverts the trigger, unless it's marked `skipWhenEmpty`:
@@ -290,10 +294,10 @@ interface ISplitter {
   grant to the manager.
 
 `WeightSplitter` takes one weight per child, in the node's child order, each non-zero, summing to
-1,000,000, and gives the rounding remainder to the largest weight (the first one on a tie). It
-doesn't know the node's child count until the flow runs: weights for another number of children
-revert the trigger with `InvalidSplit`, so the recipe must match them. `setWeights` keeps their
-number (`WeightCountChanged`): the children only change with `setFlow`.
+1,000,000, and gives the rounding remainder to the largest weight (the first one on a tie). Its
+`childCount()` is the number of weights, so weights for another number of children fail `setFlow`
+(`InvalidSplitter`). `setWeights` keeps their number (`WeightCountChanged`): the children only
+change with `setFlow`.
 
 A splitter is a component like any other (a clone bound to the DAO, registered in the
 `ComponentRegistry`, referenced as `ref(i)` in a recipe).
