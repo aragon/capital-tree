@@ -100,7 +100,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
 
         IERC20 _token = budget.token();
-        (uint256 _amount,) = budget.available(msg.sender, _budgetData);
+        uint256 _amount = budget.available(msg.sender, _budgetData);
 
         uint256 _before = _token.balanceOf(address(dao()));
         _runNode(0, Asset(_token, _amount), _data);

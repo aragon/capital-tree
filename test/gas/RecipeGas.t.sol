@@ -69,7 +69,7 @@ contract MinimalSwap is ITrigger {
 
     function trigger(bytes calldata, bytes[] calldata) external {
         IERC20 _offered = budget.token();
-        (uint256 _amount,) = budget.available(msg.sender, "");
+        uint256 _amount = budget.available(msg.sender, "");
         uint256 _demand = demandPerFill;
         uint256 _fee = (_demand * feeWeight) / RATIO_BASE;
         uint256 _before = demanded.balanceOf(address(dao));
@@ -123,7 +123,7 @@ contract MinimalPayroll is ITrigger {
 
     function trigger(bytes calldata, bytes[] calldata) external {
         IERC20 _token = budget.token();
-        (uint256 _amount,) = budget.available(msg.sender, "");
+        uint256 _amount = budget.available(msg.sender, "");
         uint256 _count = recipients.length;
 
         Action[] memory _actions = new Action[](_count + 1);
