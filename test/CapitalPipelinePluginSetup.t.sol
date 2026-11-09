@@ -87,9 +87,12 @@ contract CapitalPipelinePluginSetupTest is Fixture {
 
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _bobLeaf;
+        // The TransferToBeneficiary root pays the address in its node data
+        bytes[] memory _data = new bytes[](1);
+        _data[0] = abi.encode(alice);
 
         vm.prank(alice);
-        _plugin.trigger(abi.encode(alice, 10 ether, _proof, address(0)), noData);
+        _plugin.trigger(abi.encode(alice, 10 ether, _proof), _data);
 
         assertEq(tokenA.balanceOf(alice), 10 ether);
     }

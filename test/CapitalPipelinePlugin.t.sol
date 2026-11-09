@@ -514,46 +514,30 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.SkippableRoot.selector));
     }
 
-    function test_RevertWhen_TheRootTakesNothing() public {
+    /// Its child then receives nothing
+    function test_RevertWhen_TheRootOutputsNothing() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Skip), keep));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 0, 0, RATE));
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 1));
         _plugin.trigger("", noData);
     }
 
-    function test_RevertWhen_TheRootTakesPartOfItsInput() public {
-        CapitalPipelinePlugin _plugin =
-            _deployPlugin(_deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.TakeHalf), keep));
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 0, DAO_A / 2, DAO_A));
-        _plugin.trigger("", noData);
-    }
-
-    function test_RevertWhen_AChildTakesPartOfItsInput() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(
-            _deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), _bad(BadAction.Mode.TakeHalf), keep)
-        );
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 1, DAO_A / 2, DAO_A));
-        _plugin.trigger("", noData);
-    }
-
-    /// Only the root may take part of its input, even below a branch without an action
-    function test_RevertWhen_ANodeBelowABranchTakesPartOfItsInput() public {
+    /// A leaf below a branch without an action can't output anything either
+    function test_RevertWhen_ALeafBelowABranchOutputsSomething() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(tokenA), _fork(NO_ACTION, 500_000, _bad(BadAction.Mode.TakeHalf), 500_000, keep)
         );
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 1, DAO_A / 4, DAO_A / 2));
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputWithoutChildren.selector, 1, DAO_A / 4));
         _plugin.trigger("", noData);
     }
 
-    function test_RevertWhen_AChildSkips() public {
+    function test_RevertWhen_AChildOutputsNothing() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), _bad(BadAction.Mode.Skip), keep)
         );
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.NodeIncomplete.selector, 1, 0, DAO_A));
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 2));
         _plugin.trigger("", noData);
     }
 

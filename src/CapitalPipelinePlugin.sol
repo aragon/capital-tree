@@ -171,6 +171,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         Action[] memory _actions;
         bytes memory _actionSnapshot;
         (_output, _actions, _actionSnapshot) = _buildAction(_index, _action, _input, _data, _leaf);
+        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_input, _output);
 
         bool _forwards = _nodes[_index].forwardSurplus;
         uint256 _before = _forwards ? _output.token.balanceOf(address(dao())) : 0;
@@ -178,6 +179,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         bytes32 _executionId = keccak256(abi.encode(address(this), block.timestamp, _index));
         _execute(_index, _actions, _executionId);
         _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
+        _verify(_index, _input, _output, _inBefore, _outBefore);
 
         // Give the children everything that arrived, not just the declared amount
         if (_forwards) _output.amount = _arrived(_input, _output, _before);
@@ -220,6 +222,43 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (_actions[i].to == address(this)) revert ActionTargetsPlugin(_index, i);
         }
         IExecutor(_dao).execute(_executionId, _actions, 0);
+    }
+
+    // Balance checks
+
+    /// @dev The DAO's balances a node is checked against: its input token, and its output token
+    ///      when that's another one and the node declares some
+    function _snapshot(Asset memory _input, Asset memory _output)
+        internal
+        view
+        returns (uint256 _inBefore, uint256 _outBefore)
+    {
+        address _dao = address(dao());
+        _inBefore = _input.token.balanceOf(_dao);
+        if (_output.token != _input.token && _output.amount != 0) _outBefore = _output.token.balanceOf(_dao);
+    }
+
+    /// @dev The node spent at most its input, and at least its declared output arrived: whatever
+    ///      the action accepts, its children only get what really arrived. With one token only the
+    ///      net change is visible: the DAO lost at most `input - output`.
+    function _verify(uint256 _index, Asset memory _input, Asset memory _output, uint256 _inBefore, uint256 _outBefore)
+        internal
+        view
+    {
+        if (_output.token == _input.token) {
+            _checkDao(_index, _input.token, _inBefore + _output.amount, _input.amount);
+        } else {
+            _checkDao(_index, _input.token, _inBefore, _input.amount);
+            if (_output.amount != 0) _checkDao(_index, _output.token, _outBefore + _output.amount, 0);
+        }
+    }
+
+    /// @dev Reverts unless `balance + spent >= target`
+    function _checkDao(uint256 _index, IERC20 _token, uint256 _target, uint256 _spent) internal view {
+        uint256 _actual = _token.balanceOf(address(dao()));
+        if (_actual + _spent < _target) {
+            revert UnexpectedBalance(_index, address(_token), _target > _spent ? _target - _spent : 0, _actual);
+        }
     }
 
     /// @dev Whatever the nodes did, the whole tree spent at most what the budget made available.
