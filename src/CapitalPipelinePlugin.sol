@@ -173,18 +173,16 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         Action[] memory _actions;
         bytes memory _actionSnapshot;
         (_output, _actions, _actionSnapshot) = _buildAction(_index, _action, _input, _data, _leaf);
-        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_input, _output);
-
         bool _forwards = _nodes[_index].forwardSurplus;
-        uint256 _before = _forwards ? _output.token.balanceOf(address(dao())) : 0;
+        (uint256 _inBefore, uint256 _outBefore) = _snapshot(_input, _output, _forwards);
 
         bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, _index));
         _execute(_index, _actions, _executionId);
         _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
-        _verify(_index, _input, _output, _inBefore, _outBefore);
+        uint256 _arrived = _verify(_index, _input, _output, _forwards, _inBefore, _outBefore);
 
         // Give the children everything that arrived, not just the declared amount
-        if (_forwards) _output.amount = _arrived(_input, _output, _before);
+        if (_forwards) _output.amount = _arrived;
 
         emit NodeExecuted(_index, msg.sender, _executionId, _input, _output);
     }
@@ -228,36 +226,54 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Balance checks
 
-    /// @dev The DAO's balances a node is checked against: its input token, and its output token
-    ///      when that's another one and the node declares some
-    function _snapshot(Asset memory _input, Asset memory _output)
+    /// @dev The DAO's balances a node is checked against, read once before it runs and once after:
+    ///      its input token, and its output token when that's another one and the node declares
+    ///      some or forwards what arrived
+    function _snapshot(Asset memory _input, Asset memory _output, bool _forwards)
         internal
         view
-        returns (uint256 _inBefore, uint256 _outBefore)
+        returns (uint256 _inBalance, uint256 _outBalance)
     {
         address _dao = address(dao());
-        _inBefore = _input.token.balanceOf(_dao);
-        if (_output.token != _input.token && _output.amount != 0) _outBefore = _output.token.balanceOf(_dao);
+        _inBalance = _input.token.balanceOf(_dao);
+        if (_output.token != _input.token && (_output.amount != 0 || _forwards)) {
+            _outBalance = _output.token.balanceOf(_dao);
+        }
     }
 
     /// @dev The node spent at most its input, and at least its declared output arrived: whatever
     ///      the action accepts, its children only get what really arrived. With one token only the
     ///      net change is visible: the DAO lost at most `input - output`.
-    function _verify(uint256 _index, Asset memory _input, Asset memory _output, uint256 _inBefore, uint256 _outBefore)
-        internal
-        view
-    {
+    /// @return _arrived What the children get from a forwarding node
+    function _verify(
+        uint256 _index,
+        Asset memory _input,
+        Asset memory _output,
+        bool _forwards,
+        uint256 _inBefore,
+        uint256 _outBefore
+    ) internal view returns (uint256 _arrived) {
+        (uint256 _inAfter, uint256 _outAfter) = _snapshot(_input, _output, _forwards);
         if (_output.token == _input.token) {
-            _checkDao(_index, _input.token, _inBefore + _output.amount, _input.amount);
-        } else {
-            _checkDao(_index, _input.token, _inBefore, _input.amount);
-            if (_output.amount != 0) _checkDao(_index, _output.token, _outBefore + _output.amount, 0);
+            _checkDao(_index, _input.token, _inAfter, _inBefore + _output.amount, _input.amount);
+
+            // The input never left the DAO, so it counts too: input + net change. Example: the DAO
+            // holds 5000 USDC, 100 of them are the node's input. The node pays a 2 USDC fee, so the
+            // DAO holds 4998. `4998 - 5000` loses the node's 100; adding the input back gives
+            // `(4998 + 100) - 5000 = 98`, what's left for the children. The check above keeps it
+            // from underflowing.
+            return _inAfter + _input.amount - _inBefore;
         }
+        _checkDao(_index, _input.token, _inAfter, _inBefore, _input.amount);
+        if (_output.amount != 0) _checkDao(_index, _output.token, _outAfter, _outBefore + _output.amount, 0);
+        return _outAfter > _outBefore ? _outAfter - _outBefore : 0;
     }
 
-    /// @dev Reverts unless `balance + spent >= target`
-    function _checkDao(uint256 _index, IERC20 _token, uint256 _target, uint256 _spent) internal view {
-        uint256 _actual = _token.balanceOf(address(dao()));
+    /// @dev Reverts unless `actual + spent >= target`
+    function _checkDao(uint256 _index, IERC20 _token, uint256 _actual, uint256 _target, uint256 _spent)
+        internal
+        pure
+    {
         if (_actual + _spent < _target) {
             revert UnexpectedBalance(_index, address(_token), _target > _spent ? _target - _spent : 0, _actual);
         }
@@ -281,18 +297,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, type(uint256).max));
         _execute(_nodes.length, _actions, _executionId);
         emit BudgetCommitted(_executionId);
-    }
-
-    /// @dev What the children get from a forwarding node. With one token the input never left the
-    ///      DAO, so it counts too: input + net change.
-    function _arrived(Asset memory _input, Asset memory _output, uint256 _before) internal view returns (uint256) {
-        uint256 _after = _output.token.balanceOf(address(dao()));
-
-        // Example: the DAO holds 5000 USDC, 100 of them are the node's input. The node pays a
-        // 2 USDC fee, so the DAO holds 4998. `4998 - 5000` loses the node's 100; adding the
-        // input back gives `(4998 + 100) - 5000 = 98`, what's left for the children.
-        if (_output.token == _input.token) _after += _input.amount;
-        return _after > _before ? _after - _before : 0;
     }
 
     // Helpers
