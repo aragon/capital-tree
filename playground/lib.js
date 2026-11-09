@@ -78,6 +78,7 @@ export const numbers = (text) =>
 function arg(type, value, where) {
   try {
     if (type === "address") return target(value);
+    if (type === "uint32[]") return numbers(value);
     if (type.startsWith("uint")) return amount(value);
     if (type === "bytes32") {
       if (!/^0x[0-9a-fA-F]{64}$/.test(String(value).trim())) throw new Error(`"${value}" is not 32 bytes of hex`);
@@ -147,7 +148,8 @@ const stream = (token, maxBudget = "0") =>
 // 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
 const openFill = (tokenB) =>
   component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
-const leaf = (action) => ({ action, children: "", weights: "" });
+const weightSplitter = (weights) => component("WeightSplitter@1", { weights });
+const leaf = (action) => ({ action, children: "", splitter: null });
 const swapGrants = (manager) => [
   { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
   { where: "PLUGIN", who: manager, permission: "MANAGER" },
@@ -163,24 +165,36 @@ export function templates({ tokenA, tokenB, account }) {
     "Buy and burn": {
       components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {})],
       budget: 0,
-      nodes: [{ action: 1, children: "1", weights: "" }, leaf(2)],
+      nodes: [{ action: 1, children: "1", splitter: null }, leaf(2)],
       grants: swapGrants(account),
     },
     "Buyback with a fee": {
-      components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {}), component("TransferAction@1", { to: BOB })],
+      components: [
+        stream(tokenA, "20e18"),
+        openFill(tokenB),
+        component("BurnAction@1", {}),
+        component("TransferAction@1", { to: BOB }),
+        weightSplitter("950000, 50000"),
+      ],
       budget: 0,
-      nodes: [{ action: 1, children: "1, 2", weights: "950000, 50000" }, leaf(2), leaf(3)],
-      grants: swapGrants(account),
+      nodes: [{ action: 1, children: "1, 2", splitter: 4 }, leaf(2), leaf(3)],
+      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "MANAGER" }],
     },
     Payroll: {
-      components: [stream(tokenA), component("TransferAction@1", { to: ALICE }), component("TransferAction@1", { to: BOB })],
+      components: [
+        stream(tokenA),
+        component("TransferAction@1", { to: ALICE }),
+        component("TransferAction@1", { to: BOB }),
+        weightSplitter("700000, 300000"),
+      ],
       budget: 0,
-      nodes: [{ action: null, children: "1, 2", weights: "700000, 300000" }, leaf(1), leaf(2)],
+      nodes: [{ action: null, children: "1, 2", splitter: 3 }, leaf(1), leaf(2)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "MANAGER" },
         { where: "ref(0)", who: account, permission: "MANAGER" },
         { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
+        { where: "ref(3)", who: account, permission: "MANAGER" },
       ],
     },
     "Merkle claim": {
@@ -190,7 +204,7 @@ export function templates({ tokenA, tokenB, account }) {
         component("TransferToBeneficiaryAction@1", {}),
       ],
       budget: 0,
-      nodes: [{ action: 1, children: "1", weights: "" }, leaf(2)],
+      nodes: [{ action: 1, children: "1", splitter: null }, leaf(2)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "MANAGER" },
@@ -219,8 +233,7 @@ export function encodeRecipe(ctx, recipe) {
     nodes: recipe.nodes.map((n, i) => ({
       action: n.action === null ? zeroAddress : ref(n.action),
       children: wrap(`node ${i} children`, () => numbers(n.children)),
-      weights: wrap(`node ${i} weights`, () => numbers(n.weights)),
-      splitter: zeroAddress, // no splitter component is registered yet
+      splitter: n.splitter === null ? zeroAddress : ref(n.splitter),
       skipWhenEmpty: false,
       forwardSurplus: false,
     })),
@@ -411,12 +424,19 @@ export async function readFlow(ctx, plugin) {
     describeComponent(ctx, budget),
     ...nodes.map((n) => describeComponent(ctx, n.action)),
   ]);
+  const weights = await Promise.all(nodes.map((n) => splitterWeights(ctx, n.splitter)));
   return {
     plugin,
     paused,
     budget: budgetInfo,
-    nodes: nodes.map((n, i) => ({ ...actions[i], children: n.children.map(Number), weights: n.weights.map(Number) })),
+    nodes: nodes.map((n, i) => ({ ...actions[i], children: n.children.map(Number), weights: weights[i] })),
   };
+}
+
+/** A branch's weights, read from its WeightSplitter (the only splitter registered here) */
+async function splitterWeights(ctx, splitter) {
+  if (splitter === zeroAddress) return [];
+  return (await read(ctx, splitter, ctx.abis.WeightSplitter, "weights")).map(Number);
 }
 
 // Running flows

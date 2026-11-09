@@ -36,6 +36,7 @@ Add boxes from the palette and drag from a box's right dot to another box's left
 them. The budget feeds exactly one root box; every other box has one parent; children are ordered
 top to bottom. Each box holds its component's settings, and every box but the budget has a
 **share**: its part of the parent's output, out of 1,000,000, when the parent has 2+ children.
+The shares under a box become a WeightSplitter component for it.
 
 | Box | Ports | Components |
 |---|---|---|
@@ -46,7 +47,8 @@ top to bottom. Each box holds its component's settings, and every box but the bu
 | Leaf | input | TransferAction, TransferToBeneficiaryAction, BurnAction, KeepAction |
 
 The preview shows the tree the graph turns into, or what's wrong with it. Component order and
-`ref(i)` come from the graph (budget first, then breadth first), and the permissions are suggested
+`ref(i)` come from the graph (budget first, then actions breadth first, then one WeightSplitter
+per box with 2+ children), and the permissions are suggested
 from it with the same rules as `script/Recipes.sol`: TRIGGER for anyone, MANAGER for you on the
 plugin and on components with settings, CHECKPOINT on a stream for the DAO and its OpenFill,
 RECORD_CLAIM on a Merkle claim for the DAO.

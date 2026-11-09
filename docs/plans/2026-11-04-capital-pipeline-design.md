@@ -6,7 +6,7 @@ Reference implementation: `../capital-router`
 
 ## Goal
 
-One composable shape for every treasury flow: a budget feeding a tree of explicit actions. Each action can split its output into branches by fixed weights or a splitter, and every branch ends in a leaf that consumes what it receives (transfer, burn, keep). Every action exposes preconditions and postconditions; managers tune parameters after install; the DAO owns the shape of the tree.
+One composable shape for every treasury flow: a budget feeding a tree of explicit actions. Each action can split its output into branches through a splitter (fixed weights or custom shares), and every branch ends in a leaf that consumes what it receives (transfer, burn, keep). Every action exposes preconditions and postconditions; managers tune parameters after install; the DAO owns the shape of the tree.
 
 ## Decisions
 
@@ -16,7 +16,7 @@ One composable shape for every treasury flow: a budget feeding a tree of explici
 | Flow shape | One flow per plugin: a budget and a tree of nodes, committed once at the end. |
 | Execution | Each node with an action runs in its own `dao.execute`, planned right after its parent ran. |
 | Success | Every node must succeed. Anything else reverts the whole trigger. |
-| Branches | Fixed weights stored in the tree, or a splitter that divides the output when the flow runs. The DAO changes them with `setFlow`. |
+| Branches | A splitter divides the output when the flow runs: `WeightSplitter` for fixed weights, or a custom one. The tree stores no weights. The DAO changes splitters with `setFlow`. |
 | Leaves | Explicit actions: `Transfer`, `TransferToBeneficiary`, `Burn`, `Keep`. A list of recipients is a branch of `Transfer` leaves. |
 | Claims | Merkle only, cumulative leaves, one claim per trigger, only the account itself can claim. |
 | Budgets | `FundedStreamBudget` for streams, `BalanceBudget` for "whatever the DAO holds". |
@@ -46,7 +46,7 @@ commit  writeCheckpoint                   once, after the whole tree
 struct Input { IERC20 token; uint256 amount; address beneficiary; }   // what a node receives
 struct Movement { IERC20 inToken; uint256 inAmount; IERC20 outToken; uint256 outAmount; address beneficiary; }   // what it declares it spends and produces
 struct Record { Movement expected; uint256 spent; uint256 received; uint256 forwarded; }   // what really happened, and what the children share
-struct Node { INodeAction action; uint32[] children; uint32[] weights; ISplitter splitter; bool skipWhenEmpty; bool forwardSurplus; }
+struct Node { INodeAction action; uint32[] children; ISplitter splitter; bool skipWhenEmpty; bool forwardSurplus; }
 
 interface IBudget {
     function token() external view returns (IERC20);
@@ -72,8 +72,9 @@ interface ISplitter {
 ### The tree
 
 - Node 0 is the root and receives the budget. Children always have a higher index than their parent and exactly one parent, so the nodes form a tree with no cycles.
-- A node with 2+ children is a branch: its output is split by `weights` (summing to 1,000,000), the rounding remainder going to the largest weight, or by a `splitter` instead (no weights). A branch may have no action, in which case it splits its input unchanged.
-- A splitter only returns amounts, one per child in order, adding up to the output. It can't pick other nodes, so the shape checks made at `setFlow` still hold.
+- A node with 2+ children is a branch: its output is split by its `splitter`. Other nodes have none. A branch may have no action, in which case it splits its input unchanged.
+- A splitter only returns amounts, one per child in order, adding up to the output. It can't pick other nodes, so the shape checks made at `setFlow` still hold. Whether it returns one amount per child is only checked at trigger.
+- `WeightSplitter` holds fixed weights (one per child, non-zero, summing to 1,000,000) and gives the rounding remainder to the largest weight. `setWeights` needs `MANAGER_PERMISSION_ID`, which recipes grant to the manager, and can't change the number of weights (`WeightCountChanged`).
 - A node marked `skipWhenEmpty` that receives 0 (a weight that rounds down, a splitter's 0, a parent that produced nothing) is skipped with everything below it. Any other node that receives 0 reverts. The root can't be marked.
 - A node marked `forwardSurplus` gives its children everything that arrived instead of its declared `outAmount`: the output token's increase with two tokens, its input plus the net change with one. With one token it passes its whole input on (`outAmount ≥ inAmount`). Only a node with an action and children can be marked. See `2026-11-06-forward-surplus-design.md`.
 - A node with no children is a leaf: its action must output nothing.
@@ -96,7 +97,7 @@ run(node, input)                                        depth first
     acts = build actions + action.postconditions
     reject acts targeting the DAO or the plugin
     snapshot DAO balances → dao.execute(acts) → verify DAO balances
-  children share record.forwarded = movement.out (split by weights or the splitter for a branch)
+  children share record.forwarded = movement.out (split by the splitter for a branch)
             forwardSurplus: everything that arrived instead
   splitter: one amount per child, summing to record.forwarded  else revert InvalidSplit
   the splitter gets the node's record; NodeExecuted emits it
@@ -124,7 +125,7 @@ budget  FundedStreamBudget(USDC)             budget  FundedStreamBudget(ETH)
    └─ 20% → Transfer(carol)
 ```
 
-Rejected shapes: an action bound to another budget (`BudgetMismatch`), a Merkle claim below a branch (`NotTheWholeBudget` at trigger), weights not summing to 100% (`InvalidWeights`), a splitter on a node with fewer than 2 children or next to weights (`InvalidSplitter`), a split that isn't one amount per child adding up to the output (`InvalidSplit` at trigger), a skippable root (`SkippableRoot`), an action-less leaf (`MissingAction`), a leaf that outputs something (`LeafLeftOutput` at trigger), a node other than the root that takes part of its input (`NodeIncomplete` at trigger).
+Rejected shapes: an action bound to another budget (`BudgetMismatch`), a Merkle claim below a branch (`NotTheWholeBudget` at trigger), weights not summing to 100% (`InvalidWeights` in `WeightSplitter.initialize`), a branch without a splitter or a splitter on a node with fewer than 2 children (`InvalidSplitter`), a split that isn't one amount per child adding up to the output (`InvalidSplit` at trigger), a skippable root (`SkippableRoot`), an action-less leaf (`MissingAction`), a leaf that outputs something (`LeafLeftOutput` at trigger), a node other than the root that takes part of its input (`NodeIncomplete` at trigger).
 
 ## Rules
 
@@ -132,7 +133,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), a Merkle 
 2. **Every node that receives something must succeed.** The root takes a non-zero amount, up to its input; every other node takes exactly its input; leaves output nothing. A node that receives nothing reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped. The root can't be. A trigger with nothing to do reverts.
 3. **The budget is read once and committed once, after the whole tree,** so a stream checkpoint sees the final balance.
 4. **Planning is view-only.** Every state change is a DAO action; each node is planned right before its own `execute`.
-5. **Actions declare their output in `build`.** The declared output is a minimum. Branch weights or a splitter divide it, and anything above it stays in the DAO, unless the recipe marks the node `forwardSurplus`: then they divide everything that arrived.
+5. **Actions declare their output in `build`.** The declared output is a minimum. A branch's splitter divides it, and anything above it stays in the DAO, unless the recipe marks the node `forwardSurplus`: then the splitter divides everything that arrived.
 6. **A beneficiary, once set, can't change.** Only `MerkleClaimAction` sets one; it flows down every branch.
 7. **Bound actions (OpenFill, MerkleClaim) must be bound to the flow's budget,** wherever they sit. OpenFill only restarts it when its demand changes. `MerkleClaimAction` stays at the root: below a branch its siblings would take a share of the whole budget on every claim, so it reverts unless its input is the whole budget. What the root doesn't take never left the DAO.
 8. **No action may target the DAO or the plugin itself**, so no node can grant permissions, upgrade the DAO or reconfigure the flow mid-trigger. `setFlow` is also `nonReentrant`.
@@ -165,6 +166,12 @@ Leaves share `LeafAction`: a locked implementation, no bound budget, and a movem
 | `TransferToBeneficiaryAction` | leaf | Sends its input to the flow's beneficiary. |
 | `BurnAction` | leaf | `ERC20Burnable.burn` of its input. |
 | `KeepAction` | leaf | Leaves its input in the DAO. |
+
+### Splitters
+
+| Splitter | Behaviour |
+|---|---|
+| `WeightSplitter` | Fixed weights, one per child in order, non-zero, summing to 1,000,000. The rounding remainder goes to the largest weight (the first on a tie). Weights for another number of children revert the trigger with `InvalidSplit`. `setWeights` needs `MANAGER_PERMISSION_ID`. |
 
 ### `ComponentRegistry`
 
@@ -217,7 +224,7 @@ Aragon's framework contracts import ENS, so `lib/ens-contracts` (v0.0.8) is a de
 - Any revert in any node, hook or balance check reverts the whole `trigger`.
 - Paused plugin: `Pausable: paused`. Re-entry: `ReentrancyGuard: reentrant call`.
 - Setup errors: `UnknownComponent` (registry), `UnknownReference`, `GrantOutsideInstallation`, `ReservedPermission`, `GrantsMismatch` (uninstall).
-- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidWeights`, `InvalidSplitter`, `BudgetMismatch`, `InvalidForwardSurplus`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InAmountExceedsInput`, `NodeIncomplete`, `InvalidSplit`, `InputTokenMismatch`, `LeafLeftOutput`, `InvalidOutToken`, `OutputBelowInput`, `BeneficiaryChanged`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`).
+- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidSplitter`, `BudgetMismatch`, `InvalidForwardSurplus`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InAmountExceedsInput`, `NodeIncomplete`, `InvalidSplit`, `InputTokenMismatch`, `LeafLeftOutput`, `InvalidOutToken`, `OutputBelowInput`, `BeneficiaryChanged`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`).
 
 ## Constraints and known limits
 
@@ -226,7 +233,7 @@ Aragon's framework contracts import ENS, so `lib/ens-contracts` (v0.0.8) is a de
 - An ETH recipient without `receive()` reverts the whole flow.
 - A trigger with nothing to do reverts (empty budget, closed gate), so keepers and fillers should simulate first.
 - One claim per trigger, by the account itself.
-- Manager power is spend power within installed flows (prices, Merkle roots). Recipients and weights are DAO-only (`setFlow`). A splitter with its own setters gives its shares to whoever the recipe grants that permission.
+- Manager power is spend power within installed flows (prices, Merkle roots, a `WeightSplitter`'s weights). Recipients are DAO-only (`setFlow`). A splitter with its own setters gives its shares to whoever the recipe grants that permission.
 - Gas: one `dao.execute` per action node (a swap paying two recipients is about 585k gas).
 - At most 16 nodes, so one flow pays at most 15 recipients; longer lists go through Merkle claims.
 - A share that rounds to zero reverts the trigger (every node must run), e.g. a 5% branch of less than 20 wei.
