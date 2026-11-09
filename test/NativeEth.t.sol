@@ -198,6 +198,8 @@ contract NativeCommitBudget is IBudget {
         return token.balanceOf(dao);
     }
 
+    function fundActions(address, bytes calldata) external pure returns (Action[] memory) {}
+
     function commitActions(address, bytes calldata) external view returns (Action[] memory _actions) {
         _actions = new Action[](1);
         _actions[0] = Action(target, 1 ether, callData);

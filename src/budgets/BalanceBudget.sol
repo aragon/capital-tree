@@ -37,5 +37,8 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc IBudget
+    function fundActions(address, bytes calldata) external pure returns (Action[] memory) {}
+
+    /// @inheritdoc IBudget
     function commitActions(address, bytes calldata) external pure returns (Action[] memory) {}
 }

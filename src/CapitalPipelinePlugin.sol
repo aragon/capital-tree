@@ -18,9 +18,10 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, M
 
 /// @title CapitalPipelinePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
-///         once; every node passes its output to its children (split by a splitter when there are
-///         several); leaves consume what they receive (transfer, burn, keep). The budget commits
-///         once, after the whole tree ran.
+///         once, first bringing it into the DAO when it sits elsewhere; every node passes its
+///         output to its children (split by a splitter when there are several); leaves consume
+///         what they receive (transfer, burn, keep). The budget commits once, after the whole
+///         tree ran.
 /// @dev Every node that receives something must succeed: every node takes exactly its input, and
 ///      leaves output nothing. Anything else reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
 ///      `skipWhenEmpty`: then neither it nor anything below it runs.
@@ -30,7 +31,7 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, M
 ///      declared output. The children get that declared output, or
 ///      everything that arrived when the node is marked `forwardSurplus`.
 contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
-    /// @notice What the flow may spend; read at the start, committed at the end
+    /// @notice What the flow may spend; read and funded at the start, committed at the end
     IBudget public budget;
     /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
     ///      it can't change during one (`nonReentrant`), so the nodes read it from storage. Shares
@@ -39,8 +40,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     Node[] internal _nodes;
 
-    /// @dev Stands in for a node index when the budget's commit actions run: in their execution ID
-    ///      and in `_execute`'s errors. No node has it.
+    /// @dev Stand in for a node index when the budget's fund and commit actions run: in their
+    ///      execution IDs and in `_execute`'s errors. No node has them.
+    uint256 internal constant FUND_INDEX = type(uint256).max - 1;
     uint256 internal constant COMMIT_INDEX = type(uint256).max;
 
     event FlowUpdated(IBudget budget, Node[] nodes);
@@ -49,6 +51,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     event NodeExecuted(
         uint256 indexed nodeIndex, address indexed caller, bytes32 executionId, Asset input, Asset output
     );
+    event BudgetFunded(bytes32 executionId);
     event BudgetCommitted(bytes32 executionId);
 
     // Configuration errors
@@ -65,6 +68,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Trigger errors
     error DataLengthMismatch(uint256 expected, uint256 actual);
+    error BudgetNotFunded(uint256 expected, uint256 received);
     error EmptyInput(uint256 nodeIndex);
     error InvalidSplit(uint256 nodeIndex);
     /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
@@ -100,7 +104,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         ++_nonce;
         IERC20 _token = budget.token();
         uint256 _available = budget.available(msg.sender, _budgetData);
+        _fundBudget(_token, _available, _budgetData);
 
+        // Read after funding: otherwise the tree could spend the funded tokens on top of the amount
         uint256 _before = _token.balanceOf(address(dao()));
         _runNode(0, Asset(_token, _available), _nodeData);
         _checkBudgetSpend(_token, _available, _before);
@@ -226,6 +232,23 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (_daoActions[i].to == address(this)) revert ActionTargetsPlugin(_index, i);
         }
         IExecutor(_dao).execute(_executionId, _daoActions, 0);
+    }
+
+    /// @dev Before the root, for a budget whose tokens sit outside the DAO: the DAO must then hold at
+    ///      least `_available` more of the budget's token
+    function _fundBudget(IERC20 _token, uint256 _available, bytes calldata _budgetData) internal {
+        Action[] memory _daoActions = budget.fundActions(msg.sender, _budgetData);
+        if (_daoActions.length == 0) return;
+
+        address _dao = address(dao());
+        uint256 _before = _token.balanceOf(_dao);
+        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, FUND_INDEX));
+        _execute(FUND_INDEX, _daoActions, _executionId);
+
+        uint256 _after = _token.balanceOf(_dao);
+        uint256 _received = _after > _before ? _after - _before : 0;
+        if (_received < _available) revert BudgetNotFunded(_available, _received);
+        emit BudgetFunded(_executionId);
     }
 
     // Balance checks

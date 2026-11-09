@@ -26,6 +26,7 @@ import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
 import {BadAction, WritingCheckAction} from "./mocks/BadComponents.sol";
 import {CapSplitter, FixedSplitter} from "./mocks/MockSplitter.sol";
 import {IncomeAction, IncomeSource} from "./mocks/MockIncome.sol";
+import {MockHolderBudget} from "./mocks/MockHolderBudget.sol";
 
 contract CapitalPipelinePluginTest is Fixture {
     IERC20 internal constant NO_TOKEN = IERC20(address(0));
@@ -325,6 +326,65 @@ contract CapitalPipelinePluginTest is Fixture {
         filler.fill("");
 
         assertEq(_available(budget), RATE, "offer not consumed");
+    }
+
+    // =========================================================================================
+    // Funding the budget
+    // =========================================================================================
+
+    /// The DAO holds none of the token: the budget brings it in before the root pays it out
+    function test_TheBudgetFundsTheDaoBeforeTheRoot() public {
+        (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+
+        vm.expectEmit(address(_plugin));
+        // The first trigger counts the nonce up to 1
+        emit CapitalPipelinePlugin.BudgetFunded(keccak256(abi.encode(address(_plugin), 1, type(uint256).max - 1)));
+        _plugin.trigger("", noData);
+
+        assertEq(_held.balanceOf(alice), 10 ether);
+        assertEq(_held.balanceOf(address(_budget)), 0);
+        assertEq(_held.balanceOf(address(dao)), 0);
+    }
+
+    function test_RevertWhen_TheBudgetFundsLessThanItReleases() public {
+        (MockHolderBudget _budget,) = _holderBudget(10 ether);
+        _budget.setDelivered(9 ether);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.BudgetNotFunded.selector, 10 ether, 9 ether));
+        _plugin.trigger("", noData);
+    }
+
+    /// The root still gets what `available` returned; the rest stays in the DAO
+    function test_FundingAboveTheAmountStaysInTheDao() public {
+        (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
+        _held.mint(address(_budget), 2 ether);
+        _budget.setDelivered(12 ether);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+
+        _plugin.trigger("", noData);
+
+        assertEq(_held.balanceOf(alice), 10 ether);
+        assertEq(_held.balanceOf(address(dao)), 2 ether);
+    }
+
+    /// Fund actions go through the same guards as a node's, reported at the index their execution ID uses
+    function test_RevertWhen_AFundActionTargetsTheDao() public {
+        (MockHolderBudget _budget,) = _holderBudget(10 ether);
+        _budget.setFundTarget(address(dao));
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, type(uint256).max - 1, 0)
+        );
+        _plugin.trigger("", noData);
+    }
+
+    function test_TheBudgetsThatPayFromTheDaoFundNothing() public {
+        assertEq(budget.fundActions(alice, "").length, 0);
+        assertEq(_deployBalanceBudget(tokenA).fundActions(alice, "").length, 0);
+        assertEq(_deployMerkle(tokenA, bytes32(0)).fundActions(alice, "").length, 0);
     }
 
     // =========================================================================================
@@ -792,6 +852,13 @@ contract CapitalPipelinePluginTest is Fixture {
 
     function _bad(BadAction.Mode _mode) internal returns (INodeAction) {
         return new BadAction(_mode, address(dao), tokenB);
+    }
+
+    /// @dev A budget holding `_amount` of a new token the DAO doesn't hold
+    function _holderBudget(uint256 _amount) internal returns (MockHolderBudget _budget, ERC20Mock _held) {
+        _held = new ERC20Mock("Held", "H");
+        _budget = new MockHolderBudget(address(dao), _held, _amount);
+        _held.mint(address(_budget), _amount);
     }
 
     /// @dev A filler for a new plugin running `_tree` on the stream budget, paying `_extra` B above the demand

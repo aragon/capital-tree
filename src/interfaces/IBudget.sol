@@ -18,6 +18,15 @@ interface IBudget {
     /// @return amount The amount the root receives
     function available(address caller, bytes calldata data) external view returns (uint256 amount);
 
+    /// @notice DAO actions that bring the amount `available` returned into the DAO, for a budget
+    ///         whose tokens sit elsewhere (a vault, a holder, a claimable position). Empty when the
+    ///         DAO already holds them. The plugin executes them once, in their own `dao.execute`,
+    ///         before the root, and reverts unless the DAO's balance of `token()` grew by at least
+    ///         that amount. Anything above it stays in the DAO.
+    /// @param caller Who triggered the flow
+    /// @param data The trigger's budget data, as passed to `available`
+    function fundActions(address caller, bytes calldata data) external view returns (Action[] memory);
+
     /// @notice DAO actions that record the spend. The plugin executes them once, in their own
     ///         `dao.execute`, after the whole tree ran.
     /// @param caller Who triggered the flow
