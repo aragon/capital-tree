@@ -7,7 +7,7 @@ import {ISplitter} from "../interfaces/ISplitter.sol";
 
 /// @notice An amount of a token. A node's input is the asset it receives (the budget at the root, a
 ///         share of its parent's output elsewhere); its output is the asset it produces for its
-///         children: the least its action guarantees, checked by its postconditions, zero for a leaf.
+///         children: the least its action accepts, checked after it runs, zero for a leaf.
 struct Asset {
     IERC20 token;
     uint256 amount;

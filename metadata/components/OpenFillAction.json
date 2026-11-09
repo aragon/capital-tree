@@ -20,7 +20,7 @@
         "name": "demandedToken",
         "type": "address",
         "internalType": "contract IERC20",
-        "description": "The token the DAO must receive. 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE for native ETH."
+        "description": "The token the DAO must receive: an ERC20 (use WETH for ether). Native ETH isn't supported."
       },
       {
         "name": "demandPerFill",

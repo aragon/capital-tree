@@ -62,9 +62,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     // Trigger errors
     error DataLengthMismatch(uint256 expected, uint256 actual);
     error EmptyInput(uint256 nodeIndex);
-    error InputTokenMismatch(uint256 nodeIndex);
-    error InAmountExceedsInput(uint256 nodeIndex, uint256 inAmount, uint256 input);
-    error NodeIncomplete(uint256 nodeIndex, uint256 inAmount, uint256 input);
     error InvalidSplit(uint256 nodeIndex);
     /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
     error OutputWithoutChildren(uint256 nodeIndex, uint256 amount);
