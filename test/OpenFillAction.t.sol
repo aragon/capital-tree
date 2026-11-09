@@ -8,7 +8,7 @@ import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/Proxy
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IFiller} from "../src/interfaces/IFiller.sol";
-import {Asset, Movement} from "../src/lib/types.sol";
+import {Asset} from "../src/lib/types.sol";
 import {MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
@@ -24,12 +24,11 @@ contract OpenFillActionTest is Fixture {
     }
 
     function test_BuildOffersTheWholeInput() public view {
-        (Movement memory _movement,) = action.build(filler, "", _input(50 ether));
+        (Asset memory _output, Action[] memory _actions) = action.build(filler, "", _input(50 ether));
 
-        assertEq(_movement.inAmount, 50 ether, "no cap of its own");
-        assertEq(address(_movement.outToken), address(tokenB));
-        assertEq(_movement.outAmount, DEMAND);
-        assertEq(_movement.beneficiary, alice, "carries the beneficiary on");
+        assertEq(_actions[0].data, abi.encodeCall(IERC20.approve, (filler, 50 ether)), "no cap of its own");
+        assertEq(address(_output.token), address(tokenB));
+        assertEq(_output.amount, DEMAND);
     }
 
     function test_BuildApprovesCallsBackAndClearsApproval() public view {
@@ -48,15 +47,16 @@ contract OpenFillActionTest is Fixture {
     }
 
     function test_PostconditionsCheckTheDaoReceivedTheDemand() public {
-        (Movement memory _movement,) = action.build(filler, "", _input(10 ether));
-        bytes memory _snapshot = action.preconditions(filler, "", _movement);
-        assertEq(_snapshot, abi.encode(DAO_B));
+        Asset memory _in = _input(10 ether);
+        (Asset memory _output,) = action.build(filler, "", _in);
+        bytes memory _snapshot = action.preconditions(filler, "", _in, _output);
+        assertEq(_snapshot, abi.encode(DAO_A, DAO_B));
 
         vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B));
-        action.postconditions(filler, _movement, _snapshot);
+        action.postconditions(filler, _in, _output, _snapshot);
 
         tokenB.mint(address(dao), DEMAND);
-        action.postconditions(filler, _movement, _snapshot);
+        action.postconditions(filler, _in, _output, _snapshot);
     }
 
     function test_SetDemandPerFillRestartsTheAuction() public {
@@ -98,7 +98,7 @@ contract OpenFillActionTest is Fixture {
     }
 
     function _input(uint256 _available) internal view returns (Asset memory) {
-        return Asset({token: tokenA, amount: _available, beneficiary: alice});
+        return Asset({token: tokenA, amount: _available});
     }
 
     function _clone() internal returns (OpenFillAction) {

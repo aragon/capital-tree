@@ -98,14 +98,13 @@ contract MinimalClaim is ITrigger {
     }
 
     function trigger(bytes calldata _budgetData, bytes[] calldata) external {
-        (uint256 _amount, address _beneficiary) = budget.available(msg.sender, _budgetData);
-        (address _account, uint256 _cumulative,,) = abi.decode(_budgetData, (address, uint256, bytes32[], address));
+        uint256 _amount = budget.available(msg.sender, _budgetData);
+        (address _account, uint256 _cumulative,) = abi.decode(_budgetData, (address, uint256, bytes32[]));
 
         Action[] memory _actions = new Action[](2);
-        _actions[0] = _transfer(budget.token(), _beneficiary, _amount);
-        _actions[1] = Action(
-            address(budget), 0, abi.encodeCall(MerkleClaimBudget.recordClaim, (_account, _cumulative, _beneficiary))
-        );
+        _actions[0] = _transfer(budget.token(), _account, _amount);
+        _actions[1] =
+            Action(address(budget), 0, abi.encodeCall(MerkleClaimBudget.recordClaim, (_account, _cumulative)));
         IExecutor(address(dao)).execute(bytes32(0), _actions, 0);
     }
 }
@@ -184,13 +183,13 @@ contract RawClaim is ITrigger {
     }
 
     function trigger(bytes calldata _budgetData, bytes[] calldata) external {
-        (address _account, uint256 _cumulative, bytes32[] memory _proof, address _beneficiary) =
-            abi.decode(_budgetData, (address, uint256, bytes32[], address));
+        (address _account, uint256 _cumulative, bytes32[] memory _proof) =
+            abi.decode(_budgetData, (address, uint256, bytes32[]));
         require(msg.sender == _account);
         require(MerkleProof.verify(_proof, root, keccak256(bytes.concat(keccak256(abi.encode(_account, _cumulative))))));
         uint256 _owed = _cumulative - claimed[_account];
         claimed[_account] = _cumulative;
-        token.transfer(_beneficiary == address(0) ? _account : _beneficiary, _owed);
+        token.transfer(_account, _owed);
     }
 }
 
@@ -348,15 +347,22 @@ contract RecipeGasTest is Fixture {
         console.log(string.concat("GAS ", _flow, " ", _tier), _gas);
     }
 
+    /// @dev Node data for the one-node claim flow: its TransferToBeneficiary leaf pays `_to`.
+    ///      The minimal and raw versions ignore it and pay the account.
+    function _payTo(address _to) internal pure returns (bytes[] memory _data) {
+        _data = new bytes[](1);
+        _data[0] = abi.encode(_to);
+    }
+
     /// @dev Bob claims first; alice's measured claim is still her first
     function _measureClaim(string memory _tier, ITrigger _target, bytes memory _aliceData, bytes memory _bobData)
         internal
     {
         vm.prank(bob);
-        _target.trigger(_bobData, new bytes[](0));
+        _target.trigger(_bobData, _payTo(bob));
 
         vm.prank(alice);
-        _target.trigger(_aliceData, new bytes[](0));
+        _target.trigger(_aliceData, _payTo(alice));
         uint256 _gas = _netGas();
 
         assertEq(tokenA.balanceOf(alice), FLOW_AMOUNT + 1, "alice paid");
@@ -410,8 +416,8 @@ contract RecipeGasTest is Fixture {
             _aliceProof[i] = _bobProof[i] = keccak256(abi.encode("sibling", i));
             _root = _hashPair(_root, _aliceProof[i]);
         }
-        _aliceData = abi.encode(alice, FLOW_AMOUNT, _aliceProof, address(0));
-        _bobData = abi.encode(bob, FLOW_AMOUNT, _bobProof, address(0));
+        _aliceData = abi.encode(alice, FLOW_AMOUNT, _aliceProof);
+        _bobData = abi.encode(bob, FLOW_AMOUNT, _bobProof);
     }
 
     function _hashPair(bytes32 _a, bytes32 _b) internal pure returns (bytes32) {

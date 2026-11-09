@@ -10,7 +10,7 @@ import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
-import {Asset, Movement} from "../src/lib/types.sol";
+import {Asset} from "../src/lib/types.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
 contract NativeEthTest is Fixture {
@@ -152,19 +152,23 @@ contract NativeAction is INodeAction {
     }
 
     function budget() external pure returns (IBudget) {}
-    function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
+    function preconditions(address, bytes calldata, Asset calldata, Asset calldata)
+        external
+        pure
+        returns (bytes memory)
+    {}
 
     function build(address, bytes calldata, Asset calldata _input)
         external
         view
-        returns (Movement memory _movement, Action[] memory _actions)
+        returns (Asset memory _output, Action[] memory _actions)
     {
-        IERC20 _output = mode == Mode.Output ? IERC20(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE) : _input.token;
-        _movement = Movement(_input.token, _input.amount, _output, _input.amount, _input.beneficiary);
+        IERC20 _token = mode == Mode.Output ? IERC20(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE) : _input.token;
+        _output = Asset(_token, _input.amount);
         if (mode == Mode.Work) _actions = _sendEth();
     }
 
-    function postconditions(address, Movement calldata, bytes calldata) external pure {}
+    function postconditions(address, Asset calldata, Asset calldata, bytes calldata) external pure {}
 
     function _sendEth() internal view returns (Action[] memory _actions) {
         _actions = new Action[](1);
@@ -188,8 +192,8 @@ contract NativeCommitBudget is IBudget {
         token = _token;
     }
 
-    function available(address, bytes calldata) external view returns (uint256, address) {
-        return (token.balanceOf(dao), address(0));
+    function available(address, bytes calldata) external view returns (uint256) {
+        return token.balanceOf(dao);
     }
 
     function commitActions(address, bytes calldata) external view returns (Action[] memory _actions) {

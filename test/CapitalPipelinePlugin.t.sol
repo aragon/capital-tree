@@ -15,14 +15,14 @@ import {KeepAction} from "../src/actions/KeepAction.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
 import {ISplitter} from "../src/interfaces/ISplitter.sol";
-import {Movement, Node, Record} from "../src/lib/types.sol";
+import {Asset, Node} from "../src/lib/types.sol";
 import {CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
 import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
 import {BadAction, WritingCheckAction} from "./mocks/BadComponents.sol";
-import {CapSplitter, FixedSplitter, SurplusSplitter} from "./mocks/MockSplitter.sol";
+import {CapSplitter, FixedSplitter} from "./mocks/MockSplitter.sol";
 import {IncomeAction, IncomeSource} from "./mocks/MockIncome.sol";
 
 contract CapitalPipelinePluginTest is Fixture {
@@ -557,36 +557,12 @@ contract CapitalPipelinePluginTest is Fixture {
         _plugin.trigger("", noData);
     }
 
-    function test_RevertWhen_ANodeTakesMoreThanItsInput() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Overspend), keep));
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InAmountExceedsInput.selector, 0, RATE + 1, RATE));
-        _plugin.trigger("", noData);
-    }
-
     function test_RevertWhen_ALeafLeavesOutputBehind() public {
         MockSwapAction _swap = new MockSwapAction(new MockExchange(2e18), tokenB, address(dao));
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_swap));
 
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputWithoutChildren.selector, 0, 2 * DAO_A));
         _plugin.trigger("", noData);
-    }
-
-    function test_RevertWhen_ANodeChangesTheInputToken() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.SwapInputToken), keep));
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InputTokenMismatch.selector, 0));
-        _plugin.trigger("", noData);
-    }
-
-    function test_RevertWhen_ANodeChangesTheBudgetsBeneficiary() public {
-        MerkleClaimBudget _merkle =
-            _deployMerkle(tokenA, keccak256(bytes.concat(keccak256(abi.encode(alice, 1 ether)))));
-        CapitalPipelinePlugin _plugin = _deployPlugin(_merkle, _chain(_bad(BadAction.Mode.Redirect), toBeneficiary));
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.BeneficiaryChanged.selector, 0));
-        vm.prank(alice);
-        _plugin.trigger(abi.encode(alice, 1 ether, new bytes32[](0), address(0)), noData);
     }
 
     // =========================================================================================
@@ -695,67 +671,55 @@ contract CapitalPipelinePluginTest is Fixture {
     // The parent's record
     // =========================================================================================
 
-    /// The splitter tells the 1,000 B demanded from the 50 B surplus
-    function test_ASurplusSplitterSendsTheSurplusToItsOwnChild() public {
-        Node[] memory _tree = _splitBy(_surplusSplitter());
-        _tree[0].action = action;
-        _tree[0].forwardSurplus = true;
-        MockFiller _filler = _overpayingFiller(_tree, 50 ether);
-
-        _filler.fillWithoutData();
-
-        assertEq(tokenB.balanceOf(alice), DEMAND, "the demand");
-        assertEq(tokenB.balanceOf(bob), 50 ether, "the surplus");
-    }
-
-    function test_ASplitterGetsTheNodesRecord() public {
+    /// A forwarding node's splitter shares everything that arrived: the 1,000 B demanded plus the 50 B surplus
+    function test_ASplitterGetsTheNodesOutput() public {
         ISplitter _splitter = _capSplitter(dao, 100 ether);
         Node[] memory _tree = _splitBy(_splitter);
         _tree[0].action = action;
         _tree[0].forwardSurplus = true;
         MockFiller _filler = _overpayingFiller(_tree, 50 ether);
-        Record memory _record = _swapRecord(DEMAND + 50 ether, DEMAND + 50 ether);
 
-        vm.expectCall(address(_splitter), abi.encodeCall(ISplitter.split, (address(_filler), _record, 2)));
+        vm.expectCall(
+            address(_splitter), abi.encodeCall(ISplitter.split, (address(_filler), Asset(tokenB, DEMAND + 50 ether), 2))
+        );
         _filler.fillWithoutData();
     }
 
-    function test_NodeExecutedEmitsTheRecord() public {
+    function test_NodeExecutedEmitsWhatTheChildrenGet() public {
         Node[] memory _tree = _chain(action, keep);
         _tree[0].forwardSurplus = true;
         MockFiller _filler = _overpayingFiller(_tree, 50 ether);
 
-        _expectRecord(address(_filler.plugin()), address(_filler), _swapRecord(DEMAND + 50 ether, DEMAND + 50 ether));
+        _expectNodeExecuted(
+            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND + 50 ether)
+        );
         _filler.fillWithoutData();
     }
 
-    /// Without forwardSurplus the children get the 1,000 B demanded, and the record still shows the 1,050 B
-    function test_ADeclaredNodeRecordsWhatArrived() public {
+    /// Without forwardSurplus the children get the 1,000 B demanded; the 50 B surplus stays in the DAO
+    function test_ADeclaredNodePassesOnTheDeclaredAmount() public {
         MockFiller _filler = _overpayingFiller(_chain(action, keep), 50 ether);
 
-        _expectRecord(address(_filler.plugin()), address(_filler), _swapRecord(DEMAND + 50 ether, DEMAND));
+        _expectNodeExecuted(address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND));
         _filler.fillWithoutData();
     }
 
-    /// With one token only the net change shows: paying 10 A and getting 20 A back records +10
-    function test_AOneTokenRecordHoldsTheNetChange() public {
+    /// With one token the input never left the DAO: paying 10 A and getting 20 A back passes on input + 10
+    function test_AOneTokenForwardingNodePassesOnItsInputPlusTheNetChange() public {
         Node[] memory _tree = _chain(_income(NO_TOKEN, 20 ether, 10 ether, 0), keep);
         _tree[0].forwardSurplus = true;
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
-        Record memory _record =
-            Record(Movement(tokenA, DAO_A, tokenA, DAO_A, address(0)), 0, 10 ether, DAO_A + 10 ether);
 
-        _expectRecord(address(_plugin), address(this), _record);
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A + 10 ether));
         _plugin.trigger("", noData);
     }
 
-    /// A branch without an action runs nothing: its splitter sees the input passed on, with nothing spent or received
-    function test_ABranchWithoutActionRecordsItsInput() public {
+    /// A branch without an action runs nothing: its splitter shares the input as it came
+    function test_ABranchWithoutActionPassesOnItsInput() public {
         ISplitter _splitter = _capSplitter(dao, 30 ether);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_splitter));
-        Record memory _record = Record(Movement(tokenA, DAO_A, tokenA, DAO_A, address(0)), 0, 0, DAO_A);
 
-        vm.expectCall(address(_splitter), abi.encodeCall(ISplitter.split, (address(this), _record, 2)));
+        vm.expectCall(address(_splitter), abi.encodeCall(ISplitter.split, (address(this), Asset(tokenA, DAO_A), 2)));
         _plugin.trigger("", noData);
     }
 
@@ -829,14 +793,6 @@ contract CapitalPipelinePluginTest is Fixture {
         return new BadAction(_mode, address(dao), tokenB);
     }
 
-    function _surplusSplitter() internal returns (ISplitter) {
-        return ISplitter(
-            ProxyLib.deployMinimalProxy(
-                address(new SurplusSplitter()), abi.encodeCall(SurplusSplitter.initialize, (dao))
-            )
-        );
-    }
-
     /// @dev A filler for a new plugin running `_tree` on the stream budget, paying `_extra` B above the demand
     function _overpayingFiller(Node[] memory _tree, uint256 _extra) internal returns (MockFiller _filler) {
         _filler = new MockFiller(_deployPlugin(budget, _tree));
@@ -844,16 +800,13 @@ contract CapitalPipelinePluginTest is Fixture {
         _filler.setFillDelta(int256(_extra));
     }
 
-    /// @dev The record of the OpenFill root after selling the 10 A on offer
-    function _swapRecord(uint256 _received, uint256 _forwarded) internal view returns (Record memory) {
-        return Record(Movement(tokenA, RATE, tokenB, DEMAND, address(0)), RATE, _received, _forwarded);
-    }
-
-    /// @dev The root (node 0) of `_plugin`'s first trigger emits exactly `_record`
-    function _expectRecord(address _plugin, address _caller, Record memory _record) internal {
-        bytes32 _executionId = keccak256(abi.encode(_plugin, uint256(0), uint256(0)));
+    /// @dev The root (node 0) of `_plugin`'s next trigger, in this block, emits exactly this input and output
+    function _expectNodeExecuted(address _plugin, address _caller, Asset memory _input, Asset memory _output)
+        internal
+    {
+        bytes32 _executionId = keccak256(abi.encode(_plugin, block.timestamp, uint256(0)));
         vm.expectEmit(_plugin);
-        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionId, _record);
+        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionId, _input, _output);
     }
 
     /// @dev An action that claims `_income` of `_outToken` (NO_TOKEN: its input token) and loses `_loss`

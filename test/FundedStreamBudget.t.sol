@@ -41,12 +41,10 @@ contract FundedStreamBudgetTest is Fixture {
         assertEq(_available(budget), DAO_A + RATE, "growth resumes from where it froze");
     }
 
-    function test_AvailableBelongsToNobodyInParticular() public {
+    function test_AvailableIgnoresTheCaller() public {
         vm.warp(block.timestamp + EPOCH);
 
-        (uint256 _amount, address _beneficiary) = budget.available(alice, "");
-        assertEq(_amount, RATE);
-        assertEq(_beneficiary, address(0), "nobody in particular");
+        assertEq(budget.available(alice, ""), RATE);
     }
 
     function test_CommitActionsWriteCheckpoint() public view {
