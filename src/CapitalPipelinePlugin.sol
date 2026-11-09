@@ -39,6 +39,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     Node[] internal _nodes;
 
+    /// @dev Stands in for a node index when the budget's commit actions run: in their execution ID
+    ///      and in `_execute`'s errors. No node has it.
+    uint256 internal constant COMMIT_INDEX = type(uint256).max;
+
     event FlowUpdated(IBudget budget, Node[] nodes);
     /// @param output What the children got: the declared output, or everything that arrived when the
     ///        node forwards its surplus
@@ -294,8 +298,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         Action[] memory _daoActions = budget.commitActions(msg.sender, _budgetData);
         if (_daoActions.length == 0) return;
 
-        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, type(uint256).max));
-        _execute(_nodes.length, _daoActions, _executionId);
+        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, COMMIT_INDEX));
+        _execute(COMMIT_INDEX, _daoActions, _executionId);
         emit BudgetCommitted(_executionId);
     }
 
