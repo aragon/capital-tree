@@ -14,18 +14,12 @@ import {IBudget} from "./interfaces/IBudget.sol";
 import {INodeAction} from "./interfaces/INodeAction.sol";
 import {ISplitter} from "./interfaces/ISplitter.sol";
 import {Input, Movement, Node, Record} from "./lib/types.sol";
-import {
-    TRIGGER_PERMISSION_ID,
-    CONFIGURE_PERMISSION_ID,
-    MANAGER_PERMISSION_ID,
-    RATIO_BASE,
-    MAX_NODES
-} from "./lib/constants.sol";
+import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, MAX_NODES} from "./lib/constants.sol";
 
 /// @title CapitalPipelinePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget is read once; the root
 ///         node takes up to what it allows; every node passes its output to its children (split by
-///         fixed weights or a splitter when there are several); leaves consume what they receive
+///         a splitter when there are several); leaves consume what they receive
 ///         (transfer, burn, keep). The budget commits once, after the whole tree ran.
 /// @dev Every node that receives something must succeed: a node fed by the budget (the root, or one
 ///      below branches without an action) takes a non-zero amount, every other node takes exactly
@@ -62,7 +56,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error MissingAction(uint256 nodeIndex);
     error InvalidChild(uint256 nodeIndex, uint256 childIndex);
     error UnreachableNode(uint256 nodeIndex);
-    error InvalidWeights(uint256 nodeIndex);
     error InvalidSplitter(uint256 nodeIndex);
     error BudgetMismatch(uint256 nodeIndex);
     error InvalidForwardSurplus(uint256 nodeIndex);
@@ -159,10 +152,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             return;
         }
 
-        ISplitter _splitter = _node.splitter;
-        uint256[] memory _amounts = address(_splitter) == address(0)
-            ? _weighted(_record.forwarded, _node.weights)
-            : _split(_index, _splitter, _record, _count);
+        uint256[] memory _amounts = _split(_index, _node.splitter, _record, _count);
         for (uint256 k; k < _count; ++k) {
             _runNode(_node.children[k], _childInput(_record, _amounts[k]), _data, _callNonce);
         }
@@ -316,21 +306,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         return Input(_record.expected.outToken, _amount, _record.expected.beneficiary);
     }
 
-    /// @dev Splits `_amount` by `_weights`; the rounding remainder goes to the largest weight
-    function _weighted(uint256 _amount, uint32[] storage _weights) internal view returns (uint256[] memory _amounts) {
-        uint256 _count = _weights.length;
-        _amounts = new uint256[](_count);
-
-        uint256 _assigned;
-        uint256 _largest;
-        for (uint256 k; k < _count; ++k) {
-            _amounts[k] = (_amount * _weights[k]) / RATIO_BASE;
-            _assigned += _amounts[k];
-            if (_weights[k] > _weights[_largest]) _largest = k;
-        }
-        _amounts[_largest] += _amount - _assigned;
-    }
-
     /// @dev The splitter's amounts, which must be one per child and add up to what the children share
     function _split(uint256 _index, ISplitter _splitter, Record memory _record, uint256 _count)
         internal
@@ -388,7 +363,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             Node storage _stored = _nodes.push();
             _stored.action = _newNodes[i].action;
             _stored.children = _newNodes[i].children;
-            _stored.weights = _newNodes[i].weights;
             _stored.splitter = _newNodes[i].splitter;
             _stored.skipWhenEmpty = _newNodes[i].skipWhenEmpty;
             _stored.forwardSurplus = _newNodes[i].forwardSurplus;
@@ -403,8 +377,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     }
 
     /// @dev Children come after their parent and have exactly one parent, so the nodes form a tree
-    ///      rooted at node 0 with no cycles. A branch splits by weights summing to RATIO_BASE, or by
-    ///      a splitter of this DAO with no weights.
+    ///      rooted at node 0 with no cycles. A branch (2+ children) splits by a splitter of this DAO;
+    ///      other nodes have none.
     ///      A bound action must be fed by the flow's budget (bit set in `_fed`). Returns `_fed` with
     ///      this node's children added when it's a branch without an action fed by the budget.
     function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent, uint256 _fed)
@@ -437,22 +411,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             if (_passesBudgetOn) _fed |= 1 << _child;
         }
 
-        if (address(_node.splitter) != address(0)) {
-            if (_count < 2 || _node.weights.length != 0) revert InvalidSplitter(_index);
-            _checkOwnDao(address(_node.splitter));
-            return _fed;
-        }
-        if (_count < 2) {
-            if (_node.weights.length != 0) revert InvalidWeights(_index);
-            return _fed;
-        }
-        if (_node.weights.length != _count) revert InvalidWeights(_index);
-        uint256 _sum;
-        for (uint256 k; k < _count; ++k) {
-            if (_node.weights[k] == 0) revert InvalidWeights(_index);
-            _sum += _node.weights[k];
-        }
-        if (_sum != RATIO_BASE) revert InvalidWeights(_index);
+        bool _hasSplitter = address(_node.splitter) != address(0);
+        if (_hasSplitter != (_count >= 2)) revert InvalidSplitter(_index);
+        if (_hasSplitter) _checkOwnDao(address(_node.splitter));
         return _fed;
     }
 

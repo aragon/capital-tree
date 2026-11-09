@@ -103,9 +103,9 @@ contract InstallationTest is Fixture {
 
     function test_EveryExampleConfigBuildsItsRecipe() public view {
         assertEq(installer.recipe(_example("buy-and-burn")).components.length, 3);
-        assertEq(installer.recipe(_example("buyback")).components.length, 4);
+        assertEq(installer.recipe(_example("buyback")).components.length, 5);
         assertEq(installer.recipe(_example("merkle-claim")).components.length, 3);
-        assertEq(installer.recipe(_example("payroll")).components.length, 3);
+        assertEq(installer.recipe(_example("payroll")).components.length, 4);
     }
 
     function test_RevertWhen_TheRecipeIsUnknown() public {

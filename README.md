@@ -3,8 +3,8 @@
 <img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/9534626e-b42e-4a96-975a-b205429d842f" />
 
 Aragon OSx plugin that runs one treasury flow per install: a **budget** feeding a **tree of
-actions**. Every node passes its output to its children, split by fixed weights or a splitter when
-there are several, and every branch ends in a leaf that consumes what it receives (transfer, burn, keep).
+actions**. Every node passes its output to its children, split by a splitter (fixed weights or
+custom shares) when there are several, and every branch ends in a leaf that consumes what it receives (transfer, burn, keep).
 Each node runs in its own `dao.execute`, followed by balance checks, so a node can only ever spend
 what the budget released or what its parent really produced.
 
@@ -31,11 +31,11 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 | Term | Meaning |
 |---|---|
 | **Budget** | How much of one token the flow may spend right now. Read once at the start of a trigger, committed once at the end. |
-| **Node** | One step of the tree: an action, its children, how its output is split among them (weights or a splitter), whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
+| **Node** | One step of the tree: an action, its children, the splitter that divides its output among them, whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
 | **Leaf** | A node without children. Its action consumes its whole input and outputs nothing. |
-| **Splitter** | A contract that divides a branch's output among its children when the flow runs, in place of fixed weights. It only returns amounts: the children stay nodes of the tree. |
+| **Splitter** | A contract that divides a branch's output among its children when the flow runs: fixed weights (`WeightSplitter`) or shares computed at run time. It only returns amounts: the children stay nodes of the tree. |
 
 Amounts move down the tree as three structs:
 
@@ -78,14 +78,14 @@ sequenceDiagram
         Action-->>Plugin: check actions
         Plugin->>DAO: execute(actions, then checks)
         Note over Plugin: DAO spent ≤ inAmount and received ≥ outAmount
-        Note over Plugin: split outAmount among the children (weights or splitter), or everything that arrived with forwardSurplus
+        Note over Plugin: split outAmount among the children (splitter), or everything that arrived with forwardSurplus
     end
     Plugin->>Budget: commitActions()
     Plugin->>DAO: execute(commit actions)
 ```
 
-Any failure reverts the whole trigger: a flow never runs halfway. When a node has several
-children, the rounding remainder of the split goes to the child with the largest weight. A node
+Any failure reverts the whole trigger: a flow never runs halfway. When a `WeightSplitter` divides
+a node's output, the rounding remainder goes to the child with the largest weight. A node
 that receives nothing reverts the trigger too, unless it's marked `skipWhenEmpty`: then neither it
 nor anything below it runs.
 
@@ -106,7 +106,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 
 1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
 2. A node without an action has at least 2 children.
-3. A node with 2+ children splits by weights (one per child, none zero, summing to 1,000,000) or by a splitter, never both. Other nodes have neither.
+3. A node with 2+ children has a splitter; other nodes have none. Whether the splitter returns one amount per child is only checked at trigger (`InvalidSplit`).
 4. An action bound to a budget (OpenFill, MerkleClaim) must be fed by that same budget: the root, or a node below branches without an action.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
@@ -253,8 +253,9 @@ rebasing tokens fail it by design.
 
 ### Splitters
 
-A branch can divide its output with a splitter instead of fixed weights, for shares that depend on
-the run: a cap for the first child, a top-up to a target balance, shares that change over time.
+Every branch divides its output with a splitter. `WeightSplitter` gives fixed weights; other
+splitters can compute shares that depend on the run: a cap for the first child, a top-up to a target
+balance, shares that change over time.
 
 ```solidity
 interface ISplitter {
@@ -273,10 +274,17 @@ interface ISplitter {
   then it and everything below it are skipped, as with a weight that rounds down.
 - **View only:** a split changes no state.
 - **Setters:** a splitter with its own setters gives its shares to whoever the recipe grants that
-  permission. With fixed weights, only the DAO can change the shares.
+  permission. A `WeightSplitter`'s `setWeights` needs `MANAGER_PERMISSION_ID`, which the recipes
+  grant to the manager.
 
-No splitter ships yet: one is a component like any other (a clone bound to the DAO, registered in
-the `ComponentRegistry`, referenced as `ref(i)` in a recipe).
+`WeightSplitter` takes one weight per child, in the node's child order, each non-zero, summing to
+1,000,000, and gives the rounding remainder to the largest weight (the first one on a tie). It
+doesn't know the node's child count until the flow runs: weights for another number of children
+revert the trigger with `InvalidSplit`, so the recipe must match them. `setWeights` keeps their
+number (`WeightCountChanged`): the children only change with `setFlow`.
+
+A splitter is a component like any other (a clone bound to the DAO, registered in the
+`ComponentRegistry`, referenced as `ref(i)` in a recipe).
 
 ## Example flows
 
@@ -391,7 +399,7 @@ Only the DAO itself can apply the installation.
 | ---------------------------- | -------------------------- | ------------------------------------------------------------- |
 | `TRIGGER_PERMISSION_ID`      | anyone                     | `trigger()`                                                   |
 | `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
-| `MANAGER_PERMISSION_ID`      | manager                    | parameter setters, Merkle `setRoot()`, `pause()`, `unpause()` |
+| `MANAGER_PERMISSION_ID`      | manager                    | parameter setters, Merkle `setRoot()`, weight splitter `setWeights()`, `pause()`, `unpause()` |
 | `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | restarting the stream budget                                  |
 | `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
 | `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
@@ -408,6 +416,7 @@ flowchart LR
     plugin["Plugin"]
     budget["FundedStreamBudget"]
     fill["OpenFillAction"]
+    splitter["WeightSplitter<br/>(buyback only)"]
 
     anyone -- "TRIGGER" --> plugin
     dao -- "CONFIGURE" --> plugin
@@ -417,6 +426,7 @@ flowchart LR
     manager -- "MANAGER" --> fill
     dao -- "CHECKPOINT" --> budget
     fill -- "CHECKPOINT" --> budget
+    manager -- "MANAGER" --> splitter
 ```
 
 ## Layout
@@ -434,6 +444,7 @@ flowchart LR
 | `src/actions/TransferToBeneficiaryAction.sol`  | Leaf: sends its input to the flow's beneficiary                                                            |
 | `src/actions/BurnAction.sol`                   | Leaf: burns its input                                                                                      |
 | `src/actions/KeepAction.sol`                   | Leaf: leaves its input in the DAO                                                                          |
+| `src/splitters/WeightSplitter.sol`             | Splits a branch's output by fixed weights                                                                  |
 | `src/registry/ComponentRegistry.sol`           | Write-once ids for the implementations recipes can clone                                                   |
 | `src/setup/CapitalPipelinePluginSetup.sol`     | Installs any flow from a recipe                                                                            |
 | `script/Recipes.sol`                           | Recipes for buy and burn, buyback, Merkle claim and payroll                                                |
