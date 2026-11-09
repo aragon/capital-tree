@@ -35,24 +35,20 @@ contract BurnAction is LeafAction {
     }
 
     /// @inheritdoc INodeAction
-    function postconditions(address, Movement calldata _movement)
+    /// @dev Snapshot: the DAO's balance before the burn
+    function preconditions(address, bytes calldata, Movement calldata _movement)
         external
         view
         override
-        returns (Action[] memory _checks)
+        returns (bytes memory)
     {
-        uint256 _maxBalance = _movement.inToken.balanceOf(address(dao())) - _movement.inAmount;
-
-        _checks = new Action[](1);
-        _checks[0] = Action({
-            to: address(this), value: 0, data: abi.encodeCall(this.assertBurned, (_movement.inToken, _maxBalance))
-        });
+        return abi.encode(_movement.inToken.balanceOf(address(dao())));
     }
 
-    /// @notice Reverts unless the DAO holds at most `_maxBalance` of `_token`
-    /// @dev Executed by the DAO right after the burn. View, so harmless to call from anywhere.
-    function assertBurned(IERC20 _token, uint256 _maxBalance) external view {
-        uint256 _balance = _token.balanceOf(address(dao()));
-        if (_balance > _maxBalance) revert NotBurned(_token, _maxBalance, _balance);
+    /// @inheritdoc INodeAction
+    function postconditions(address, Movement calldata _movement, bytes calldata _snapshot) external view override {
+        uint256 _maxBalance = abi.decode(_snapshot, (uint256)) - _movement.inAmount;
+        uint256 _balance = _movement.inToken.balanceOf(address(dao()));
+        if (_balance > _maxBalance) revert NotBurned(_movement.inToken, _maxBalance, _balance);
     }
 }

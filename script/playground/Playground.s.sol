@@ -30,9 +30,9 @@ contract Playground is Deploy {
     /// @dev The UI reads metadata from the local files, so the links only need to be non-empty
     string internal constant LINKS = '{"release":"ipfs://playground","build":"ipfs://playground","components":{'
         '"FundedStreamBudget":"ipfs://playground","BalanceBudget":"ipfs://playground",'
-        '"OpenFillAction":"ipfs://playground","MerkleClaimAction":"ipfs://playground",'
+        '"OpenFillAction":"ipfs://playground","MerkleClaimBudget":"ipfs://playground",'
         '"TransferAction":"ipfs://playground","TransferToBeneficiaryAction":"ipfs://playground",'
-        '"BurnAction":"ipfs://playground","KeepAction":"ipfs://playground"}}';
+        '"BurnAction":"ipfs://playground","KeepAction":"ipfs://playground","WeightSplitter":"ipfs://playground"}}';
 
     struct Deployment {
         address account;
@@ -80,7 +80,7 @@ contract Playground is Deploy {
 
     function _write(Deployment memory _d, uint256 _startBlock) internal {
         string memory _components = "components";
-        bytes32[8] memory _ids = [
+        bytes32[9] memory _ids = [
             Recipes.FUNDED_STREAM_BUDGET,
             Recipes.BALANCE_BUDGET,
             Recipes.OPEN_FILL,
@@ -88,7 +88,8 @@ contract Playground is Deploy {
             Recipes.TRANSFER,
             Recipes.TRANSFER_TO_BENEFICIARY,
             Recipes.BURN,
-            Recipes.KEEP
+            Recipes.KEEP,
+            Recipes.WEIGHT_SPLITTER
         ];
         string memory _componentsJson;
         for (uint256 i; i < _ids.length; ++i) {

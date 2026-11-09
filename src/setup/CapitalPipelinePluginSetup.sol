@@ -11,6 +11,7 @@ import {CapitalPipelinePlugin} from "../CapitalPipelinePlugin.sol";
 import {ComponentRegistry} from "../registry/ComponentRegistry.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
+import {ISplitter} from "../interfaces/ISplitter.sol";
 import {Node} from "../lib/types.sol";
 import {CONFIGURE_PERMISSION_ID} from "../lib/constants.sol";
 import {DAO_INDEX, PLUGIN_INDEX, isPlaceholder} from "../lib/placeholders.sol";
@@ -117,7 +118,14 @@ contract CapitalPipelinePluginSetup is PluginSetup {
         _resolved = new Node[](_nodes.length);
         for (uint256 i; i < _nodes.length; ++i) {
             address _action = _resolve(address(_nodes[i].action), _ctx);
-            _resolved[i] = Node(INodeAction(_action), _nodes[i].children, _nodes[i].weights);
+            address _splitter = _resolve(address(_nodes[i].splitter), _ctx);
+            _resolved[i] = Node(
+                INodeAction(_action),
+                _nodes[i].children,
+                ISplitter(_splitter),
+                _nodes[i].skipWhenEmpty,
+                _nodes[i].forwardSurplus
+            );
         }
     }
 

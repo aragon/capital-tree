@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.28;
 
-import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
@@ -22,10 +21,10 @@ abstract contract LeafAction is INodeAction, DaoAuthorizableUpgradeable {
     function budget() external pure returns (IBudget) {}
 
     /// @inheritdoc INodeAction
-    function preconditions(address, Input calldata) external view virtual {}
+    function preconditions(address, bytes calldata, Movement calldata) external view virtual returns (bytes memory) {}
 
     /// @inheritdoc INodeAction
-    function postconditions(address, Movement calldata) external view virtual returns (Action[] memory) {}
+    function postconditions(address, Movement calldata, bytes calldata) external view virtual {}
 
     /// @dev What every leaf does with its input: spends all of it and outputs nothing
     function _consume(Input calldata _input) internal pure returns (Movement memory) {

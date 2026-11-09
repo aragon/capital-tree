@@ -23,14 +23,10 @@ contract OpenFillActionTest is Fixture {
         action = _deployAction(budget);
     }
 
-    function test_MaxOfferedHoldsTheMinimumPrice() public view {
-        assertEq(action.maxOffered(), 20 ether); // 1000 B / 50 B-per-A
-    }
-
-    function test_BuildCapsTheOfferAtMaxOffered() public view {
+    function test_BuildOffersTheWholeInput() public view {
         (Movement memory _movement,) = action.build(filler, "", _input(50 ether));
 
-        assertEq(_movement.inAmount, 20 ether);
+        assertEq(_movement.inAmount, 50 ether, "no cap of its own");
         assertEq(address(_movement.outToken), address(tokenB));
         assertEq(_movement.outAmount, DEMAND);
         assertEq(_movement.beneficiary, alice, "carries the beneficiary on");
@@ -51,39 +47,27 @@ contract OpenFillActionTest is Fixture {
         assertEq(_actions[2].data, abi.encodeCall(IERC20.approve, (filler, 0)));
     }
 
-    function test_PostconditionsAssertTheDaoReceivedTheDemand() public view {
+    function test_PostconditionsCheckTheDaoReceivedTheDemand() public {
         (Movement memory _movement,) = action.build(filler, "", _input(10 ether));
-        Action[] memory _checks = action.postconditions(filler, _movement);
+        bytes memory _snapshot = action.preconditions(filler, "", _movement);
+        assertEq(_snapshot, abi.encode(DAO_B));
 
-        assertEq(_checks.length, 1);
-        assertEq(_checks[0].to, address(action));
-        assertEq(_checks[0].data, abi.encodeCall(action.assertReceived, (IERC20(tokenB), DAO_B + DEMAND)));
-    }
-
-    function test_RevertWhen_DemandNotReceived() public {
         vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B));
-        action.assertReceived(tokenB, DAO_B + DEMAND);
+        action.postconditions(filler, _movement, _snapshot);
+
+        tokenB.mint(address(dao), DEMAND);
+        action.postconditions(filler, _movement, _snapshot);
     }
 
     function test_SetDemandPerFillRestartsTheAuction() public {
         vm.warp(block.timestamp + EPOCH);
-        assertEq(budget.available(), RATE);
+        assertEq(_available(budget), RATE);
 
         vm.prank(manager);
         action.setDemandPerFill(500 ether);
 
         assertEq(action.demandPerFill(), 500 ether);
-        assertEq(budget.available(), 0);
-    }
-
-    function test_SetMinDemandedPerOfferedRestartsTheAuction() public {
-        vm.warp(block.timestamp + EPOCH);
-
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(25 ether);
-
-        assertEq(action.maxOffered(), 40 ether);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_RevertWhen_SetterUnauthorized() public {
@@ -98,31 +82,19 @@ contract OpenFillActionTest is Fixture {
     function test_RevertWhen_DemandedTokenIsOfferedToken() public {
         OpenFillAction _action = _clone();
         vm.expectRevert(OpenFillAction.SameToken.selector);
-        _action.initialize(dao, budget, tokenA, DEMAND, MIN_PRICE);
+        _action.initialize(dao, budget, tokenA, DEMAND);
     }
 
     function test_RevertWhen_DemandedTokenHasNoCode() public {
         OpenFillAction _action = _clone();
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
-        _action.initialize(dao, budget, IERC20(address(0xBEEF)), DEMAND, MIN_PRICE);
+        _action.initialize(dao, budget, IERC20(address(0xBEEF)), DEMAND);
     }
 
     function test_RevertWhen_ZeroDemand() public {
         vm.expectRevert(OpenFillAction.ZeroDemand.selector);
         vm.prank(manager);
         action.setDemandPerFill(0);
-    }
-
-    function test_RevertWhen_ZeroMinimumPrice() public {
-        vm.expectRevert(OpenFillAction.ZeroMinDemandedPerOffered.selector);
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(0);
-    }
-
-    function test_RevertWhen_MinimumPriceTooHigh() public {
-        vm.expectRevert(OpenFillAction.MinDemandedPerOfferedTooHigh.selector);
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(DEMAND * 1e18 + 1);
     }
 
     function _input(uint256 _available) internal view returns (Input memory) {

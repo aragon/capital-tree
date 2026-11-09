@@ -18,31 +18,39 @@ contract FundedStreamBudgetTest is Fixture {
     }
 
     function test_GrowsAtRatePerEpoch() public {
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
 
         vm.warp(block.timestamp + EPOCH);
-        assertEq(budget.available(), RATE);
+        assertEq(_available(budget), RATE);
 
         vm.warp(block.timestamp + EPOCH / 2);
-        assertEq(budget.available(), RATE + RATE / 2);
+        assertEq(_available(budget), RATE + RATE / 2);
     }
 
     function test_DepositDoesNotLiftTheCapUntilSync() public {
         vm.warp(block.timestamp + 20 * EPOCH); // 200 accrued, capped at the 100 seen
-        assertEq(budget.available(), DAO_A);
+        assertEq(_available(budget), DAO_A);
 
         tokenA.mint(address(dao), 50 ether);
-        assertEq(budget.available(), DAO_A, "deposit must not lift the cap");
+        assertEq(_available(budget), DAO_A, "deposit must not lift the cap");
 
         budget.sync();
-        assertEq(budget.available(), DAO_A, "sync must not jump");
+        assertEq(_available(budget), DAO_A, "sync must not jump");
 
         vm.warp(block.timestamp + EPOCH);
-        assertEq(budget.available(), DAO_A + RATE, "growth resumes from where it froze");
+        assertEq(_available(budget), DAO_A + RATE, "growth resumes from where it froze");
+    }
+
+    function test_AvailableBelongsToNobodyInParticular() public {
+        vm.warp(block.timestamp + EPOCH);
+
+        (uint256 _amount, address _beneficiary) = budget.available(alice, "");
+        assertEq(_amount, RATE);
+        assertEq(_beneficiary, address(0), "nobody in particular");
     }
 
     function test_CommitActionsWriteCheckpoint() public view {
-        Action[] memory _actions = budget.commitActions();
+        Action[] memory _actions = budget.commitActions(alice, "");
 
         assertEq(_actions.length, 1);
         assertEq(_actions[0].to, address(budget));
@@ -56,7 +64,7 @@ contract FundedStreamBudgetTest is Fixture {
         vm.prank(address(dao));
         budget.writeCheckpoint();
 
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_SetAmountPerEpochKeepsWhatAccrued() public {
@@ -64,10 +72,10 @@ contract FundedStreamBudgetTest is Fixture {
 
         vm.prank(manager);
         budget.setAmountPerEpoch(2 * RATE);
-        assertEq(budget.available(), RATE, "no change in the same block");
+        assertEq(_available(budget), RATE, "no change in the same block");
 
         vm.warp(block.timestamp + EPOCH);
-        assertEq(budget.available(), RATE + 2 * RATE, "new rate from now on");
+        assertEq(_available(budget), RATE + 2 * RATE, "new rate from now on");
     }
 
     function test_RaisingMaxBudgetDoesNotJump() public {
@@ -75,14 +83,14 @@ contract FundedStreamBudgetTest is Fixture {
         budget.setMaxBudget(5 ether);
 
         vm.warp(block.timestamp + 2 * EPOCH); // 20 accrued, capped at 5
-        assertEq(budget.available(), 5 ether);
+        assertEq(_available(budget), 5 ether);
 
         vm.prank(manager);
         budget.setMaxBudget(0);
-        assertEq(budget.available(), 5 ether, "hidden accrual must not be released");
+        assertEq(_available(budget), 5 ether, "hidden accrual must not be released");
 
         vm.warp(block.timestamp + EPOCH);
-        assertEq(budget.available(), 5 ether + RATE);
+        assertEq(_available(budget), 5 ether + RATE);
     }
 
     function test_SetEpochIntervalKeepsWhatAccrued() public {
@@ -90,10 +98,10 @@ contract FundedStreamBudgetTest is Fixture {
 
         vm.prank(manager);
         budget.setEpochInterval(2 * EPOCH);
-        assertEq(budget.available(), RATE);
+        assertEq(_available(budget), RATE);
 
         vm.warp(block.timestamp + 2 * EPOCH);
-        assertEq(budget.available(), 2 * RATE);
+        assertEq(_available(budget), 2 * RATE);
     }
 
     function test_RevertWhen_WriteCheckpointUnauthorized() public {

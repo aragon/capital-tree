@@ -78,6 +78,7 @@ export const numbers = (text) =>
 function arg(type, value, where) {
   try {
     if (type === "address") return target(value);
+    if (type === "uint32[]") return numbers(value);
     if (type.startsWith("uint")) return amount(value);
     if (type === "bytes32") {
       if (!/^0x[0-9a-fA-F]{64}$/.test(String(value).trim())) throw new Error(`"${value}" is not 32 bytes of hex`);
@@ -142,16 +143,13 @@ function uniqueErrors(abi) {
 // Recipes
 
 const component = (id, args) => ({ id, args: { dao: "DAO", ...args } });
-const stream = (token) =>
-  component("FundedStreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget: "0", epochInterval: "86400" });
+const stream = (token, maxBudget = "0") =>
+  component("FundedStreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
+// 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
 const openFill = (tokenB) =>
-  component("OpenFillAction@1", {
-    budget: "ref(0)",
-    demandedToken: tokenB,
-    demandPerFill: "1000e18",
-    minDemandedPerOffered: "50e18",
-  });
-const leaf = (action) => ({ action, children: "", weights: "" });
+  component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
+const weightSplitter = (weights) => component("WeightSplitter@1", { weights });
+const leaf = (action) => ({ action, children: "", splitter: null });
 const swapGrants = (manager) => [
   { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
   { where: "PLUGIN", who: manager, permission: "MANAGER" },
@@ -165,41 +163,52 @@ const swapGrants = (manager) => [
 export function templates({ tokenA, tokenB, account }) {
   return {
     "Buy and burn": {
-      components: [stream(tokenA), openFill(tokenB), component("BurnAction@1", {})],
+      components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {})],
       budget: 0,
-      nodes: [{ action: 1, children: "1", weights: "" }, leaf(2)],
+      nodes: [{ action: 1, children: "1", splitter: null }, leaf(2)],
       grants: swapGrants(account),
     },
     "Buyback with a fee": {
-      components: [stream(tokenA), openFill(tokenB), component("BurnAction@1", {}), component("TransferAction@1", { to: BOB })],
+      components: [
+        stream(tokenA, "20e18"),
+        openFill(tokenB),
+        component("BurnAction@1", {}),
+        component("TransferAction@1", { to: BOB }),
+        weightSplitter("950000, 50000"),
+      ],
       budget: 0,
-      nodes: [{ action: 1, children: "1, 2", weights: "950000, 50000" }, leaf(2), leaf(3)],
-      grants: swapGrants(account),
+      nodes: [{ action: 1, children: "1, 2", splitter: 4 }, leaf(2), leaf(3)],
+      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "MANAGER" }],
     },
     Payroll: {
-      components: [stream(tokenA), component("TransferAction@1", { to: ALICE }), component("TransferAction@1", { to: BOB })],
+      components: [
+        stream(tokenA),
+        component("TransferAction@1", { to: ALICE }),
+        component("TransferAction@1", { to: BOB }),
+        weightSplitter("700000, 300000"),
+      ],
       budget: 0,
-      nodes: [{ action: null, children: "1, 2", weights: "700000, 300000" }, leaf(1), leaf(2)],
+      nodes: [{ action: null, children: "1, 2", splitter: 3 }, leaf(1), leaf(2)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "MANAGER" },
         { where: "ref(0)", who: account, permission: "MANAGER" },
         { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
+        { where: "ref(3)", who: account, permission: "MANAGER" },
       ],
     },
     "Merkle claim": {
       components: [
-        component("BalanceBudget@1", { token: tokenA }),
-        component("MerkleClaimAction@1", { budget: "ref(0)", root: merkleLeaf(account, 100n * 10n ** 18n) }),
+        component("MerkleClaimBudget@1", { token: tokenA, root: merkleLeaf(account, 100n * 10n ** 18n) }),
         component("TransferToBeneficiaryAction@1", {}),
       ],
       budget: 0,
-      nodes: [{ action: 1, children: "1", weights: "" }, leaf(2)],
+      nodes: [leaf(1)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "MANAGER" },
-        { where: "ref(1)", who: account, permission: "MANAGER" },
-        { where: "ref(1)", who: "DAO", permission: "RECORD_CLAIM" },
+        { where: "ref(0)", who: account, permission: "MANAGER" },
+        { where: "ref(0)", who: "DAO", permission: "RECORD_CLAIM" },
       ],
     },
   };
@@ -223,7 +232,9 @@ export function encodeRecipe(ctx, recipe) {
     nodes: recipe.nodes.map((n, i) => ({
       action: n.action === null ? zeroAddress : ref(n.action),
       children: wrap(`node ${i} children`, () => numbers(n.children)),
-      weights: wrap(`node ${i} weights`, () => numbers(n.weights)),
+      splitter: n.splitter === null ? zeroAddress : ref(n.splitter),
+      skipWhenEmpty: false,
+      forwardSurplus: false,
     })),
     grants: recipe.grants.map((g, i) => ({
       where: wrap(`grant ${i} where`, () => target(g.where)),
@@ -371,15 +382,18 @@ export async function describeComponent(ctx, address) {
   if (name === "FundedStreamBudget" || name === "BalanceBudget") {
     const token = await get("token");
     const sym = await symbol(ctx, token);
-    details.push(`available ${units(await get("available"))} ${sym}`);
+    const [amount] = await read(ctx, address, abi, "available", [zeroAddress, "0x"]);
+    details.push(`available ${units(amount)} ${sym}`);
     if (name === "FundedStreamBudget") {
       details.push(`${units(await get("amountPerEpoch"))} ${sym} per ${await get("epochInterval")}s`);
+      const cap = await get("maxBudget");
+      if (cap > 0n) details.push(`capped at ${units(cap)} ${sym}`);
     }
   } else if (name === "OpenFillAction") {
     const demanded = await symbol(ctx, await get("demandedToken"));
     details.push(`demands ${units(await get("demandPerFill"))} ${demanded} per fill`);
-    details.push(`offers at most ${units(await get("maxOffered"))}`);
-  } else if (name === "MerkleClaimAction") {
+    details.push("offers its whole input");
+  } else if (name === "MerkleClaimBudget") {
     details.push(`root ${(await get("root")).slice(0, 10)}…`);
   } else if (name === "TransferAction") {
     details.push(`to ${await get("recipient")}`);
@@ -410,31 +424,37 @@ export async function readFlow(ctx, plugin) {
     describeComponent(ctx, budget),
     ...nodes.map((n) => describeComponent(ctx, n.action)),
   ]);
+  const weights = await Promise.all(nodes.map((n) => splitterWeights(ctx, n.splitter)));
   return {
     plugin,
     paused,
     budget: budgetInfo,
-    nodes: nodes.map((n, i) => ({ ...actions[i], children: n.children.map(Number), weights: n.weights.map(Number) })),
+    nodes: nodes.map((n, i) => ({ ...actions[i], children: n.children.map(Number), weights: weights[i] })),
   };
+}
+
+/** A branch's weights, read from its WeightSplitter (the only splitter registered here) */
+async function splitterWeights(ctx, splitter) {
+  if (splitter === zeroAddress) return [];
+  return (await read(ctx, splitter, ctx.abis.WeightSplitter, "weights")).map(Number);
 }
 
 // Running flows
 
-/** The playground filler takes the root OpenFill offer, paying from its own balance */
+/** The playground filler takes the flow's OpenFill offer, paying from its own balance */
 export const fill = (ctx, plugin) =>
   write(ctx, { address: ctx.deployment.filler, abi: ctx.abis.filler, functionName: "fill", args: [plugin] });
 
 export const trigger = (ctx, plugin) =>
-  write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: [[]] });
+  write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: ["0x", []] });
 
 /** Claims `cumulative` for the playground account from a one-leaf Merkle tree (empty proof) */
-export async function claim(ctx, plugin, nodeCount, cumulative) {
-  const data = Array(nodeCount).fill("0x");
-  data[0] = encodeAbiParameters(
+export async function claim(ctx, plugin, cumulative) {
+  const data = encodeAbiParameters(
     [{ type: "address" }, { type: "uint256" }, { type: "bytes32[]" }, { type: "address" }],
     [ctx.deployment.account, cumulative, [], zeroAddress],
   );
-  return write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: [data] });
+  return write(ctx, { address: plugin, abi: ctx.abis.plugin, functionName: "trigger", args: [data, []] });
 }
 
 export async function advance(ctx, seconds) {

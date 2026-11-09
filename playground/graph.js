@@ -4,24 +4,25 @@
 // into a `df-demandPerFill` input under `demandperfill`.
 
 export const BRANCH = "branch";
+const WEIGHT_SPLITTER = "WeightSplitter@1";
 const KINDS = {
   FundedStreamBudget: "budget",
   BalanceBudget: "budget",
-  OpenFillAction: "root",
-  MerkleClaimAction: "root",
+  MerkleClaimBudget: "budget",
+  OpenFillAction: "action",
   TransferAction: "leaf",
   TransferToBeneficiaryAction: "leaf",
   BurnAction: "leaf",
   KeepAction: "leaf",
 };
-const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimAction"]);
+const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimBudget", "WeightSplitter"]);
 const HIDDEN = new Set(["dao", "budget"]); // always DAO_REF, and the flow's budget
 
 const nameOf = (id) => id.split("@")[0];
 const key = (inputName) => inputName.toLowerCase();
 const lowerKeys = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [key(k), v]));
 export const kindOf = (id) => (id === BRANCH ? "branch" : (KINDS[nameOf(id)] ?? "leaf"));
-export const ports = (id) => ({ budget: [0, 1], root: [1, 1], branch: [1, 1], leaf: [1, 0] })[kindOf(id)];
+export const ports = (id) => ({ budget: [0, 1], action: [1, 1], branch: [1, 1], leaf: [1, 0] })[kindOf(id)];
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -40,10 +41,10 @@ export function nodeHtml(id, meta) {
 /** Default settings for a new box */
 export function defaultData(id, { tokenA, tokenB }) {
   const defaults = {
-    FundedStreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "0", epochInterval: "86400" },
+    FundedStreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "20e18", epochInterval: "86400" },
     BalanceBudget: { token: tokenA },
-    OpenFillAction: { demandedToken: tokenB, demandPerFill: "1000e18", minDemandedPerOffered: "50e18" },
-    MerkleClaimAction: { root: "0x" + "00".repeat(32) },
+    OpenFillAction: { demandedToken: tokenB, demandPerFill: "1000e18" },
+    MerkleClaimBudget: { token: tokenA, root: "0x" + "00".repeat(32) },
     TransferAction: { to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" },
   };
   return { ...lowerKeys(defaults[nameOf(id)] ?? {}), ...(kindOf(id) === "budget" ? {} : { share: "500000" }) };
@@ -74,7 +75,7 @@ const connect = (boxes, from, to) => {
 export function recipeToGraph(recipe, meta) {
   const args = (c) => lowerKeys(Object.fromEntries(Object.entries(c.args).filter(([k]) => !HIDDEN.has(k))));
   const children = recipe.nodes.map((n) => numbers(n.children));
-  const weights = recipe.nodes.map((n) => numbers(n.weights));
+  const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(recipe.components[n.splitter].args.weights)));
 
   // Leaves take consecutive rows; a parent sits level with the middle of its children
   const row = [];
@@ -152,17 +153,19 @@ export function graphToRecipe(graph, account, meta) {
   const nodes = order.map((b) => {
     const list = kids(b);
     if (b.name === BRANCH && list.length < 2) throw new Error(`${label(b)} needs at least 2 children`);
-    let weights = "";
+    // 2+ children split by their shares, through a WeightSplitter component listed after the actions
+    let splitter = null;
     if (list.length >= 2) {
       const shares = list.map((k) => String(k.data.share ?? "").trim());
       const sum = shares.reduce((s, x) => s + (/^\d+$/.test(x) ? Number(x) : NaN), 0);
       if (sum !== 1_000_000) throw new Error(`The shares under ${label(b)} add up to ${shares.join(" + ")}, not 1,000,000`);
-      weights = shares.join(", ");
+      splitter = components.length;
+      components.push({ id: WEIGHT_SPLITTER, args: { dao: "DAO", weights: shares.join(", ") } });
     }
     return {
       action: b.name === BRANCH ? null : refs.get(b.id),
       children: list.map((k) => position.get(k.id)).join(", "),
-      weights,
+      splitter,
     };
   });
 
@@ -186,7 +189,7 @@ export function suggestGrants(components, manager) {
         if (nameOf(other.id) === "OpenFillAction") grants.push({ where: `ref(${i})`, who: `ref(${j})`, permission: "CHECKPOINT" });
       });
     }
-    if (name === "MerkleClaimAction") grants.push({ where: `ref(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
+    if (name === "MerkleClaimBudget") grants.push({ where: `ref(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
   });
   return grants;
 }

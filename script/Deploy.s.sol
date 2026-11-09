@@ -9,12 +9,13 @@ import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {Recipes} from "./Recipes.sol";
 
 /// @notice Deploys every component implementation, a registry naming them and the plugin setup,
@@ -49,13 +50,13 @@ contract Deploy is Script {
         public
         returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup)
     {
-        ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](8);
+        ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](9);
         _components[0] =
             _registration(Recipes.FUNDED_STREAM_BUDGET, "FundedStreamBudget", address(new FundedStreamBudget()), _uris);
         _components[1] = _registration(Recipes.BALANCE_BUDGET, "BalanceBudget", address(new BalanceBudget()), _uris);
         _components[2] = _registration(Recipes.OPEN_FILL, "OpenFillAction", address(new OpenFillAction()), _uris);
         _components[3] =
-            _registration(Recipes.MERKLE_CLAIM, "MerkleClaimAction", address(new MerkleClaimAction()), _uris);
+            _registration(Recipes.MERKLE_CLAIM, "MerkleClaimBudget", address(new MerkleClaimBudget()), _uris);
         _components[4] = _registration(Recipes.TRANSFER, "TransferAction", address(new TransferAction()), _uris);
         _components[5] = _registration(
             Recipes.TRANSFER_TO_BENEFICIARY,
@@ -65,6 +66,7 @@ contract Deploy is Script {
         );
         _components[6] = _registration(Recipes.BURN, "BurnAction", address(new BurnAction()), _uris);
         _components[7] = _registration(Recipes.KEEP, "KeepAction", address(new KeepAction()), _uris);
+        _components[8] = _registration(Recipes.WEIGHT_SPLITTER, "WeightSplitter", address(new WeightSplitter()), _uris);
 
         registry = new ComponentRegistry(_managingDao, _components);
         setup = new CapitalPipelinePluginSetup(registry);

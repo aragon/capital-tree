@@ -10,8 +10,7 @@ import {
 import {IBudget} from "../interfaces/IBudget.sol";
 
 /// @title BalanceBudget
-/// @notice The DAO's whole balance of a token, with nothing to commit. Used where something else
-///         decides the amount, such as a Merkle claim, and the budget only caps it at what the DAO holds.
+/// @notice The DAO's whole balance of a token, with nothing to commit. The root receives all of it.
 contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
     /// @inheritdoc IBudget
     IERC20 public token;
@@ -32,10 +31,11 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc IBudget
-    function available() external view returns (uint256) {
-        return token.balanceOf(address(dao()));
+    /// @dev The DAO's balance of the token, for nobody in particular
+    function available(address, bytes calldata) external view returns (uint256, address) {
+        return (token.balanceOf(address(dao())), address(0));
     }
 
     /// @inheritdoc IBudget
-    function commitActions() external pure returns (Action[] memory) {}
+    function commitActions(address, bytes calldata) external pure returns (Action[] memory) {}
 }

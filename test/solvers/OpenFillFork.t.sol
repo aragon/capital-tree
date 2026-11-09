@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {DAO} from "@aragon/osx/core/dao/DAO.sol";
+import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {OpenFillQuotes} from "../../script/open-fill/Quotes.s.sol";
@@ -120,8 +120,9 @@ contract GenericOpenFillForkTest is Test {
         bytes memory data = _uniswapData(CALLER);
         uint256 callerBefore = USDC.balanceOf(CALLER);
         bytes[] memory perNode = quotes.forNode(d.plugin.nodes().length, 0, data);
+        uint256 demand = d.action.demandPerFill();
         vm.prank(CALLER, CALLER);
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, demand, 0));
         d.solver.trigger(perNode);
         assertEq(WETH.balanceOf(address(d.dao)), AMOUNT);
         assertEq(USDC.balanceOf(address(d.dao)), 0);
@@ -150,7 +151,8 @@ contract GenericOpenFillForkTest is Test {
         assertEq(WETH.balanceOf(address(d.solver)), 0);
         assertEq(USDC.balanceOf(address(d.solver)), 0);
         assertEq(WETH.allowance(address(d.dao), address(d.solver)), 0);
-        assertEq(d.budget.available(), 0);
+        (uint256 _available,) = d.budget.available(address(0), "");
+        assertEq(_available, 0);
         assertEq(d.budget.baseTimestamp(), block.timestamp);
     }
 

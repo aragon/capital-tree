@@ -9,7 +9,7 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
-import {ICheckpointedBudget} from "../interfaces/IBudget.sol";
+import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title FundedStreamBudget
@@ -45,7 +45,7 @@ import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.
 ///
 ///      **Residual case.** If funds leave the DAO by another path and come back before any sync,
 ///      `lastSeenBalance` is stale and the growth accrued meanwhile is released, bounded by that
-///      stale balance and, in an auction, the action's `maxOffered()`. Proposals that spend the
+///      stale balance and, in an auction, the stream's `maxBudget`. Proposals that spend the
 ///      token should include a `sync()` action.
 ///
 ///      One flow per instance.
@@ -131,14 +131,15 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
 
     // IBudget
 
-    /// @notice Returns the amount available right now
-    /// @return min(baseAmount + rate x (now - baseTimestamp), lastSeenBalance, daoBalance, maxBudget)
-    function available() public view virtual returns (uint256) {
-        return _available(_daoBalance());
+    /// @inheritdoc IBudget
+    /// @dev min(baseAmount + rate x (now - baseTimestamp), lastSeenBalance, daoBalance, maxBudget), for
+    ///      nobody in particular
+    function available(address, bytes calldata) external view virtual returns (uint256, address) {
+        return (_available(_daoBalance()), address(0));
     }
 
     /// @notice Restarts the stream after the spend: the plugin executes this once, after the whole flow
-    function commitActions() external view virtual returns (Action[] memory _actions) {
+    function commitActions(address, bytes calldata) external view virtual returns (Action[] memory _actions) {
         _actions = new Action[](1);
         _actions[0] = Action({to: address(this), value: 0, data: abi.encodeCall(this.writeCheckpoint, ())});
     }
@@ -155,7 +156,7 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     /// @notice Restarts the amount from zero and records the DAO balance
     /// @dev Executed by the DAO after the whole flow ran, so the recorded balance is what is left
     ///      after the tokens have been handed over. Also called by a bound action to restart its
-    ///      auction when its price terms change.
+    ///      auction when its demand changes.
     function writeCheckpoint() external virtual auth(CHECKPOINT_PERMISSION_ID) {
         _writeCheckpoint();
     }

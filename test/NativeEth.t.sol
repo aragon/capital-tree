@@ -40,22 +40,18 @@ contract NativeEthTest is Fixture {
         FundedStreamBudget _budget = _deployBudget(RATE, 0);
         OpenFillAction _action = OpenFillAction(ProxyLib.deployMinimalProxy(address(new OpenFillAction()), ""));
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
-        _action.initialize(dao, _budget, NATIVE, DEMAND, MIN_PRICE);
+        _action.initialize(dao, _budget, NATIVE, DEMAND);
     }
 
     function test_RevertWhen_NodeOutputsNative() public {
         NativeAction _action = new NativeAction(address(dao), NativeAction.Mode.Output);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidOutToken.selector, 0));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_NodeSendsEthWithoutSelector() public {
         _assertValueRejected(NativeAction.Mode.Work);
-    }
-
-    function test_RevertWhen_PostconditionSendsEthWithoutSelector() public {
-        _assertValueRejected(NativeAction.Mode.Check);
     }
 
     function _assertValueRejected(NativeAction.Mode _mode) internal {
@@ -63,7 +59,7 @@ contract NativeEthTest is Fixture {
         NativeAction _action = new NativeAction(address(dao), _mode);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 0, 0));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
     }
@@ -73,7 +69,7 @@ contract NativeEthTest is Fixture {
         NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
         CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 1, 0));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
         assertEq(tokenA.balanceOf(alice), 0, "earlier node transfer rolled back");
@@ -87,17 +83,13 @@ contract NativeEthTest is Fixture {
         _action.setCall(address(_target), new bytes(_length));
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
         vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 0, 0));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(address(_target).balance, 0);
     }
 
     function test_NodeCallsPayableFunctionWithDaoEth() public {
         _assertPayableCall(NativeAction.Mode.Work, false);
-    }
-
-    function test_PostconditionCallsPayableFunctionWithDaoEth() public {
-        _assertPayableCall(NativeAction.Mode.Check, false);
     }
 
     function test_PayableCallbackCannotReenterTrigger() public {
@@ -111,7 +103,7 @@ contract NativeEthTest is Fixture {
         _action.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
         if (_reenter) _target.setPlugin(_plugin);
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(address(_target).balance, 1 ether);
         assertEq(_target.sender(), address(dao));
@@ -129,7 +121,7 @@ contract NativeEthTest is Fixture {
         NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
         _budget.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
         CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(address(_target).balance, 1 ether);
         assertEq(_target.sender(), address(dao));
@@ -139,7 +131,7 @@ contract NativeEthTest is Fixture {
     function test_Erc20FlowLeavesNativeBalanceUntouched() public {
         vm.deal(address(dao), 1 ether);
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_deployTransfer(alice)));
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
         assertEq(tokenA.balanceOf(alice), DAO_A);
         assertEq(address(dao).balance, 1 ether);
     }
@@ -148,7 +140,6 @@ contract NativeEthTest is Fixture {
 contract NativeAction is INodeAction {
     enum Mode {
         Work,
-        Check,
         Output
     }
 
@@ -168,7 +159,7 @@ contract NativeAction is INodeAction {
     }
 
     function budget() external pure returns (IBudget) {}
-    function preconditions(address, Input calldata) external pure {}
+    function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
 
     function build(address, bytes calldata, Input calldata _input)
         external
@@ -180,9 +171,7 @@ contract NativeAction is INodeAction {
         if (mode == Mode.Work) _actions = _sendEth();
     }
 
-    function postconditions(address, Movement calldata) external view returns (Action[] memory _checks) {
-        if (mode == Mode.Check) _checks = _sendEth();
-    }
+    function postconditions(address, Movement calldata, bytes calldata) external pure {}
 
     function _sendEth() internal view returns (Action[] memory _actions) {
         _actions = new Action[](1);
@@ -206,11 +195,11 @@ contract NativeCommitBudget is IBudget {
         token = _token;
     }
 
-    function available() external view returns (uint256) {
-        return token.balanceOf(dao);
+    function available(address, bytes calldata) external view returns (uint256, address) {
+        return (token.balanceOf(dao), address(0));
     }
 
-    function commitActions() external view returns (Action[] memory _actions) {
+    function commitActions(address, bytes calldata) external view returns (Action[] memory _actions) {
         _actions = new Action[](1);
         _actions[0] = Action(target, 1 ether, callData);
     }
@@ -228,7 +217,7 @@ contract PayableTarget {
     function pay() external payable {
         sender = msg.sender;
         if (address(plugin) != address(0)) {
-            try plugin.trigger(new bytes[](0)) {}
+            try plugin.trigger("", new bytes[](0)) {}
             catch (bytes memory _reason) {
                 reentryError = _reason;
             }

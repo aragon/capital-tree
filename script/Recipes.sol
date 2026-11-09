@@ -6,13 +6,15 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {IBudget, ICheckpointedBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
+import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {Node} from "../src/lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
@@ -30,13 +32,17 @@ library Recipes {
     bytes32 internal constant FUNDED_STREAM_BUDGET = "FundedStreamBudget@1";
     bytes32 internal constant BALANCE_BUDGET = "BalanceBudget@1";
     bytes32 internal constant OPEN_FILL = "OpenFillAction@1";
-    bytes32 internal constant MERKLE_CLAIM = "MerkleClaimAction@1";
+    bytes32 internal constant MERKLE_CLAIM = "MerkleClaimBudget@1";
     bytes32 internal constant TRANSFER = "TransferAction@1";
     bytes32 internal constant TRANSFER_TO_BENEFICIARY = "TransferToBeneficiaryAction@1";
     bytes32 internal constant BURN = "BurnAction@1";
     bytes32 internal constant KEEP = "KeepAction@1";
+    bytes32 internal constant WEIGHT_SPLITTER = "WeightSplitter@1";
 
     address internal constant ANY_ADDR = address(type(uint160).max);
+
+    /// @notice Thrown when an OpenFill recipe's stream has no cap, so its auction has no worst price
+    error UncappedStream();
 
     struct Stream {
         IERC20 token;
@@ -48,18 +54,17 @@ library Recipes {
     struct Swap {
         IERC20 demandedToken;
         uint256 demandPerFill;
-        uint256 minDemandedPerOffered;
     }
 
-    /// @notice Stream → OpenFill → burn all the proceeds.
-    ///         Components: 0 budget, 1 OpenFill, 2 Burn.
+    /// @notice Stream → OpenFill → burn all the proceeds. The stream's `maxBudget` sets the worst
+    ///         price: `demandPerFill / maxBudget`. Components: 0 budget, 1 OpenFill, 2 Burn.
     function buyAndBurn(address _manager, Stream memory _stream, Swap memory _swap)
         internal
         pure
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
         _params.components = new CapitalPipelinePluginSetup.Component[](3);
-        _params.components[0] = _streamBudget(_stream);
+        _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] = _burn();
 
@@ -68,90 +73,93 @@ library Recipes {
         _params.nodes[0] = _then(1, 1);
         _params.nodes[1] = _leaf(2);
 
-        _params.grants = _swapGrants(_manager);
+        _params.grants = _swapGrants(_manager, 0);
     }
 
     /// @notice Stream → OpenFill → burn the proceeds, except `_feeWeight` (of RATIO_BASE) to `_fee`.
-    ///         Components: 0 budget, 1 OpenFill, 2 Burn, 3 Transfer.
+    ///         The stream's `maxBudget` sets the worst price: `demandPerFill / maxBudget`.
+    ///         Components: 0 budget, 1 OpenFill, 2 Burn, 3 Transfer, 4 WeightSplitter.
     function buyback(address _manager, Stream memory _stream, Swap memory _swap, address _fee, uint32 _feeWeight)
         internal
         pure
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
-        _params.components = new CapitalPipelinePluginSetup.Component[](4);
-        _params.components[0] = _streamBudget(_stream);
+        uint32[] memory _weights = new uint32[](2);
+        (_weights[0], _weights[1]) = (uint32(RATIO_BASE) - _feeWeight, _feeWeight);
+
+        _params.components = new CapitalPipelinePluginSetup.Component[](5);
+        _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] = _burn();
         _params.components[3] = _transfer(_fee);
+        _params.components[4] = _weightSplitter(_weights);
 
         _params.budget = IBudget(ref(0));
         _params.nodes = new Node[](3);
         _params.nodes[0].action = INodeAction(ref(1));
         _params.nodes[0].children = new uint32[](2);
         (_params.nodes[0].children[0], _params.nodes[0].children[1]) = (1, 2);
-        _params.nodes[0].weights = new uint32[](2);
-        (_params.nodes[0].weights[0], _params.nodes[0].weights[1]) = (uint32(RATIO_BASE) - _feeWeight, _feeWeight);
+        _params.nodes[0].splitter = ISplitter(ref(4));
         _params.nodes[1] = _leaf(2);
         _params.nodes[2] = _leaf(3);
 
-        _params.grants = _swapGrants(_manager);
+        _params.grants = _swapGrants(_manager, 1);
+        _params.grants[6] = _grant(ref(4), _manager, MANAGER_PERMISSION_ID);
     }
 
-    /// @notice The DAO's balance of `_token` → Merkle claim → pay the beneficiary.
-    ///         Components: 0 budget, 1 MerkleClaim, 2 TransferToBeneficiary.
+    /// @notice Merkle claim of `_token` → pay the beneficiary.
+    ///         Components: 0 MerkleClaimBudget, 1 TransferToBeneficiary.
     function merkleClaim(address _manager, IERC20 _token, bytes32 _root)
         internal
         pure
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
-        _params.components = new CapitalPipelinePluginSetup.Component[](3);
+        _params.components = new CapitalPipelinePluginSetup.Component[](2);
         _params.components[0] =
-            _component(BALANCE_BUDGET, abi.encodeCall(BalanceBudget.initialize, (IDAO(DAO_REF), _token)));
+            _component(MERKLE_CLAIM, abi.encodeCall(MerkleClaimBudget.initialize, (IDAO(DAO_REF), _token, _root)));
         _params.components[1] = _component(
-            MERKLE_CLAIM, abi.encodeCall(MerkleClaimAction.initialize, (IDAO(DAO_REF), IBudget(ref(0)), _root))
-        );
-        _params.components[2] = _component(
             TRANSFER_TO_BENEFICIARY, abi.encodeCall(TransferToBeneficiaryAction.initialize, (IDAO(DAO_REF)))
         );
 
         _params.budget = IBudget(ref(0));
-        _params.nodes = new Node[](2);
-        _params.nodes[0] = _then(1, 1);
-        _params.nodes[1] = _leaf(2);
+        _params.nodes = new Node[](1);
+        _params.nodes[0] = _leaf(1);
 
         _params.grants = new CapitalPipelinePluginSetup.Grant[](4);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
-        _params.grants[2] = _grant(ref(1), _manager, MANAGER_PERMISSION_ID);
-        _params.grants[3] = _grant(ref(1), DAO_REF, RECORD_CLAIM_PERMISSION_ID);
+        _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
+        _params.grants[3] = _grant(ref(0), DAO_REF, RECORD_CLAIM_PERMISSION_ID);
     }
 
     /// @notice Stream → a branch paying each recipient its weight (of RATIO_BASE). Two or more
-    ///         recipients. Components: 0 budget, then one Transfer per recipient.
+    ///         recipients. Components: 0 budget, then one Transfer per recipient, then the WeightSplitter.
     function payroll(address _manager, Stream memory _stream, address[] memory _recipients, uint32[] memory _weights)
         internal
         pure
         returns (CapitalPipelinePluginSetup.InstallParams memory _params)
     {
         uint256 _count = _recipients.length;
-        _params.components = new CapitalPipelinePluginSetup.Component[](1 + _count);
+        _params.components = new CapitalPipelinePluginSetup.Component[](2 + _count);
         _params.components[0] = _streamBudget(_stream);
+        _params.components[1 + _count] = _weightSplitter(_weights);
 
         _params.budget = IBudget(ref(0));
         _params.nodes = new Node[](1 + _count);
         _params.nodes[0].children = new uint32[](_count); // no action: the root only splits
-        _params.nodes[0].weights = _weights;
+        _params.nodes[0].splitter = ISplitter(ref(1 + _count));
         for (uint256 i; i < _count; ++i) {
             _params.components[1 + i] = _transfer(_recipients[i]);
             _params.nodes[0].children[i] = uint32(1 + i);
             _params.nodes[1 + i] = _leaf(1 + i);
         }
 
-        _params.grants = new CapitalPipelinePluginSetup.Grant[](4);
+        _params.grants = new CapitalPipelinePluginSetup.Grant[](5);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
         _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
         _params.grants[3] = _grant(ref(0), DAO_REF, CHECKPOINT_PERMISSION_ID);
+        _params.grants[4] = _grant(ref(1 + _count), _manager, MANAGER_PERMISSION_ID);
     }
 
     // Components
@@ -166,19 +174,23 @@ library Recipes {
         );
     }
 
+    /// @dev OpenFill offers its whole input, so the stream's cap is the auction's only limit
+    function _cappedStreamBudget(Stream memory _stream)
+        private
+        pure
+        returns (CapitalPipelinePluginSetup.Component memory)
+    {
+        if (_stream.maxBudget == 0) revert UncappedStream();
+        return _streamBudget(_stream);
+    }
+
     /// @dev Bound to component 0, the budget
     function _openFill(Swap memory _swap) private pure returns (CapitalPipelinePluginSetup.Component memory) {
         return _component(
             OPEN_FILL,
             abi.encodeCall(
                 OpenFillAction.initialize,
-                (
-                    IDAO(DAO_REF),
-                    ICheckpointedBudget(ref(0)),
-                    _swap.demandedToken,
-                    _swap.demandPerFill,
-                    _swap.minDemandedPerOffered
-                )
+                (IDAO(DAO_REF), ICheckpointedBudget(ref(0)), _swap.demandedToken, _swap.demandPerFill)
             )
         );
     }
@@ -189,6 +201,14 @@ library Recipes {
 
     function _transfer(address _to) private pure returns (CapitalPipelinePluginSetup.Component memory) {
         return _component(TRANSFER, abi.encodeCall(TransferAction.initialize, (IDAO(DAO_REF), _to)));
+    }
+
+    function _weightSplitter(uint32[] memory _weights)
+        private
+        pure
+        returns (CapitalPipelinePluginSetup.Component memory)
+    {
+        return _component(WEIGHT_SPLITTER, abi.encodeCall(WeightSplitter.initialize, (IDAO(DAO_REF), _weights)));
     }
 
     function _component(bytes32 _id, bytes memory _initData)
@@ -211,9 +231,14 @@ library Recipes {
         _node.children[0] = _child;
     }
 
-    /// @dev For flows of a stream budget (component 0) and an OpenFill (component 1) at the root
-    function _swapGrants(address _manager) private pure returns (CapitalPipelinePluginSetup.Grant[] memory _grants) {
-        _grants = new CapitalPipelinePluginSetup.Grant[](6);
+    /// @dev For flows of a stream budget (component 0) and an OpenFill (component 1) at the root.
+    ///      Leaves `_extra` empty slots at the end for the recipe's own grants.
+    function _swapGrants(address _manager, uint256 _extra)
+        private
+        pure
+        returns (CapitalPipelinePluginSetup.Grant[] memory _grants)
+    {
+        _grants = new CapitalPipelinePluginSetup.Grant[](6 + _extra);
         _grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
         _grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);

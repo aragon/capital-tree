@@ -6,28 +6,38 @@ import {IBudget} from "./IBudget.sol";
 import {Input, Movement} from "../lib/types.sol";
 
 /// @title INodeAction
-/// @notice What a node of a flow tree does with its input. The plugin calls all three hooks, in
-///         order, on every node that has an action, so an action's safety checks can't be left out.
+/// @notice What a node of a flow tree does with its input. The plugin calls `build`,
+///         `preconditions` and `postconditions`, in that order, on every node that has an action,
+///         so an action's safety checks can't be left out. All three are views, so the plugin
+///         calls them read-only (staticcall).
 /// @dev Actions are clones initialized for one DAO and expose it as `dao()`
 ///      (`DaoAuthorizableUpgradeable`). The plugin rejects actions bound to another DAO or to none.
 interface INodeAction {
     /// @notice The budget this action is bound to, or address(0) if it works with any input.
-    ///         A bound action must be fed by that budget: the root of the flow, or a node below
-    ///         branches without an action.
+    ///         A bound action must be bound to the flow's budget.
     function budget() external view returns (IBudget);
 
-    /// @notice Reverts if the action must not run on `input`
-    function preconditions(address caller, Input calldata input) external view;
-
-    /// @notice What the node spends from `input` (`inAmount`: a node fed by the budget may take less
-    ///         than its input, every other node all of it), what it produces (`outToken`/`outAmount`,
-    ///         zero for a leaf) and optionally a `beneficiary`, plus the actions that do the work.
-    /// @dev `outAmount` must be known here: it is divided among the children before they run
+    /// @notice What the node spends from `input` (`inAmount`, which must be all of it), what it
+    ///         produces (`outToken`/`outAmount`, zero for a leaf) and optionally a `beneficiary`,
+    ///         plus the actions that do the work.
+    /// @dev `outAmount` is the least the node produces, checked after it runs. The children get
+    ///      `outAmount`, or everything that arrived when the node is marked `forwardSurplus`.
     function build(address caller, bytes calldata data, Input calldata input)
         external
         view
         returns (Movement memory movement, Action[] memory actions);
 
-    /// @notice The checks that make the work safe, executed by the DAO right after it
-    function postconditions(address caller, Movement calldata movement) external view returns (Action[] memory);
+    /// @notice Reverts if the action must not run. Called after `build`, on the movement the plugin
+    ///         checked, right before the node's `dao.execute`.
+    /// @param data The node's trigger data, as passed to `build`
+    /// @return snapshot What `postconditions` compares against, read before the work runs (a
+    ///         balance, and anything the check needs to find it again, such as a lock id)
+    function preconditions(address caller, bytes calldata data, Movement calldata movement)
+        external
+        view
+        returns (bytes memory snapshot);
+
+    /// @notice Reverts unless the work went right. Called right after the node's `dao.execute`.
+    /// @param snapshot What `preconditions` returned
+    function postconditions(address caller, Movement calldata movement, bytes calldata snapshot) external view;
 }
