@@ -4,8 +4,8 @@ pragma solidity ^0.8.28;
 import {Movement} from "../lib/types.sol";
 
 /// @title ISplitter
-/// @notice Divides a branch's output among its children when the flow runs, in place of fixed
-///         weights. The children stay explicit nodes: a splitter only decides how much each gets.
+/// @notice Divides a branch's output among its children when the flow runs (`WeightSplitter` for
+///         fixed weights). The children stay explicit nodes: a splitter only decides how much each gets.
 /// @dev Splitters are clones initialized for one DAO and expose it as `dao()`
 ///      (`DaoAuthorizableUpgradeable`). The plugin rejects splitters bound to another DAO or to none.
 interface ISplitter {

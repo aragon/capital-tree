@@ -53,15 +53,10 @@
                   "description": "Indexes of the child nodes, each greater than this node's."
                 },
                 {
-                  "name": "weights",
-                  "type": "uint32[]",
-                  "description": "One per child when there are 2+, summing to 1,000,000. Empty when a splitter divides the output."
-                },
-                {
                   "name": "splitter",
                   "type": "address",
                   "internalType": "contract ISplitter",
-                  "description": "ref(i) of a splitter component that divides the output among 2+ children when the flow runs, or address(0) for fixed weights."
+                  "description": "ref(i) of a splitter component that divides the output among the children when there are 2+ (a WeightSplitter for fixed weights), or address(0) otherwise."
                 },
                 {
                   "name": "skipWhenEmpty",

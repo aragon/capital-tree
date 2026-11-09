@@ -100,7 +100,8 @@ function updatePreview() {
   try {
     recipe = graph.graphToRecipe(editor.export(), ctx.deployment.account, ctx.meta);
     const name = (i) => `ref(${i}) ${recipe.components[i].id.split("@")[0]}`;
-    const nodes = recipe.nodes.map((n) => ({ ...n, children: lib.numbers(n.children), weights: lib.numbers(n.weights) }));
+    const weights = (n) => (n.splitter === null ? [] : lib.numbers(recipe.components[n.splitter].args.weights));
+    const nodes = recipe.nodes.map((n) => ({ ...n, children: lib.numbers(n.children), weights: weights(n) }));
     const tree = lib.describeTree(nodes, (n) => (n.action === null ? "branch (no action)" : name(n.action)));
     const who = (w) => w.replace(/ref\((\d+)\)/, (_, i) => name(Number(i))).replace(ctx.deployment.account, "you");
     const grants = recipe.grants.map((g) => `  ${g.permission} on ${who(g.where)} → ${who(g.who)}`).join("\n");
