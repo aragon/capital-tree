@@ -18,11 +18,9 @@ struct Asset {
 ///        children): the node then passes its input to its children unchanged.
 /// @param children Indexes of the child nodes, each greater than this node's index. None makes
 ///        the node a leaf, whose action must output nothing.
-/// @param weights One per child when there are 2+ children, summing to RATIO_BASE. Empty otherwise,
-///        or when a splitter divides the output.
-/// @param splitter Divides the output among 2+ children when the flow runs, in place of weights.
-///        address(0) for fixed weights.
-/// @param skipWhenEmpty When the node receives 0 (a weight that rounds down, a splitter's 0, a
+/// @param splitter Divides the output among the children when there are 2+ (a `WeightSplitter` for
+///        fixed weights). address(0) otherwise.
+/// @param skipWhenEmpty When the node receives 0 (a splitter's 0, a weight that rounds down, a
 ///        parent that produced nothing), skip it and everything below it instead of reverting.
 ///        Never on the root.
 /// @param forwardSurplus Give the children everything that arrived, not just `outAmount`. Off by
@@ -31,7 +29,6 @@ struct Asset {
 struct Node {
     INodeAction action;
     uint32[] children;
-    uint32[] weights;
     ISplitter splitter;
     bool skipWhenEmpty;
     bool forwardSurplus;

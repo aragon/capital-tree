@@ -12,7 +12,7 @@ import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetu
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
-import {ISplitter} from "../src/interfaces/ISplitter.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
@@ -104,22 +104,32 @@ contract CapitalPipelinePluginSetupTest is Fixture {
         assertEq(tokenA.balanceOf(bob), 0.5 ether);
     }
 
-    /// A payroll whose branch caps alice at 3 A with a splitter (a recipe component) instead of weights
+    /// The recipe lets the manager change the shares
+    function test_TheManagerChangesThePayrollWeights() public {
+        (CapitalPipelinePlugin _plugin, address[] memory _helpers) =
+            _install(Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights()));
+        WeightSplitter _splitter = WeightSplitter(_helpers[3]);
+        uint32[] memory _swapped = new uint32[](2);
+        (_swapped[0], _swapped[1]) = (300_000, 700_000);
+
+        vm.prank(manager);
+        _splitter.setWeights(_swapped);
+        vm.warp(block.timestamp + EPOCH);
+        _plugin.trigger("", noData);
+
+        assertEq(tokenA.balanceOf(alice), 3 ether);
+        assertEq(tokenA.balanceOf(bob), 7 ether);
+    }
+
+    /// A payroll whose branch caps alice at 3 A with a custom splitter in place of the weight splitter
     function test_InstallsASplitter() public {
         dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
         registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
         CapitalPipelinePluginSetup.InstallParams memory _params =
             Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights());
-        CapitalPipelinePluginSetup.Component[] memory _components = new CapitalPipelinePluginSetup.Component[](4);
-        for (uint256 i; i < 3; ++i) {
-            _components[i] = _params.components[i];
-        }
-        _components[3] = CapitalPipelinePluginSetup.Component(
+        _params.components[3] = CapitalPipelinePluginSetup.Component(
             "CapSplitter@1", abi.encodeCall(CapSplitter.initialize, (IDAO(DAO_REF), 3 ether))
         );
-        _params.components = _components;
-        _params.nodes[0].weights = new uint32[](0);
-        _params.nodes[0].splitter = ISplitter(ref(3));
         _params.nodes[2].skipWhenEmpty = true;
 
         (CapitalPipelinePlugin _plugin, address[] memory _helpers) = _install(_params);

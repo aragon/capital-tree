@@ -105,9 +105,9 @@ contract InstallationTest is Fixture {
 
     function test_EveryExampleConfigBuildsItsRecipe() public view {
         assertEq(installer.recipe(_example("buy-and-burn")).components.length, 3);
-        assertEq(installer.recipe(_example("buyback")).components.length, 4);
+        assertEq(installer.recipe(_example("buyback")).components.length, 5);
         assertEq(installer.recipe(_example("merkle-claim")).components.length, 2);
-        assertEq(installer.recipe(_example("payroll")).components.length, 3);
+        assertEq(installer.recipe(_example("payroll")).components.length, 4);
     }
 
     /// OpenFill has no cap of its own: without the stream's, an auction has no worst price

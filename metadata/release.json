@@ -1,5 +1,5 @@
 {
   "name": "Capital Pipeline",
-  "description": "Treasury flows as a tree of actions: a budget (a stream, the DAO's balance or a Merkle claim) feeds a tree of actions such as a Dutch-auction swap, every node passes its output to its children by fixed weights or a splitter, and leaves transfer, burn or keep what they receive. Every node is checked against the DAO's balances.",
+  "description": "Treasury flows as a tree of actions: a budget (a stream, the DAO's balance or a Merkle claim) feeds a tree of actions such as a Dutch-auction swap, every node passes its output to its children through a splitter (fixed weights or custom), and leaves transfer, burn or keep what they receive. Every node is checked against the DAO's balances.",
   "images": {}
 }
