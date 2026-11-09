@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
-import {Input, Movement} from "../../src/lib/types.sol";
+import {Asset, Movement} from "../../src/lib/types.sol";
 
 /// @notice Pulls `amountIn` and pays `amountIn * rate / 1e18` of `tokenOut` from its own balance
 contract MockExchange {
@@ -35,7 +35,7 @@ contract MockSwapAction is INodeAction {
 
     function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
 
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         view
         returns (Movement memory _movement, Action[] memory _actions)

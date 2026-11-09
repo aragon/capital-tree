@@ -10,7 +10,7 @@ import {TransferBase} from "../src/actions/base/TransferBase.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
-import {Input, Movement} from "../src/lib/types.sol";
+import {Asset, Movement} from "../src/lib/types.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {FalseReturnToken, FallbackToken} from "./mocks/BadComponents.sol";
 

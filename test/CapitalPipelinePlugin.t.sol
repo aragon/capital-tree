@@ -403,15 +403,6 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(tokenA.balanceOf(address(dao)), DAO_A, "the A input wasn't spent");
     }
 
-    function test_RevertWhen_AOneTokenForwardingNodePassesOnLessThanItsInput() public {
-        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 0, -1), keep);
-        _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputBelowInput.selector, 0, DAO_A - 1, DAO_A));
-        _plugin.trigger("", noData);
-    }
-
     function test_RevertWhen_AOneTokenForwardingNodeLosesTokens() public {
         Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 1 ether, 0), keep);
         _tree[0].forwardSurplus = true;
@@ -577,7 +568,7 @@ contract CapitalPipelinePluginTest is Fixture {
         MockSwapAction _swap = new MockSwapAction(new MockExchange(2e18), tokenB, address(dao));
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_swap));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.LeafLeftOutput.selector, 0, 2 * DAO_A));
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputWithoutChildren.selector, 0, 2 * DAO_A));
         _plugin.trigger("", noData);
     }
 

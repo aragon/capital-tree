@@ -5,37 +5,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
 
-/// @notice What a node receives: the budget at the root, a share of its parent's output elsewhere
-/// @param beneficiary Who the amount belongs to, once the budget (a Merkle claim) or an action sets it.
-///        Carried down every branch; it can't be changed once set.
-struct Input {
+/// @notice An amount of a token. A node's input is the asset it receives (the budget at the root, a
+///         share of its parent's output elsewhere); its output is the asset it produces for its
+///         children: the least its action guarantees, checked by its postconditions, zero for a leaf.
+struct Asset {
     IERC20 token;
     uint256 amount;
-    address beneficiary;
-}
-
-/// @notice What a node spends from its input and what it produces for its children
-/// @param beneficiary The input's beneficiary, or the one the node sets when there was none
-struct Movement {
-    IERC20 inToken;
-    uint256 inAmount;
-    IERC20 outToken;
-    uint256 outAmount;
-    address beneficiary;
-}
-
-/// @notice What a node expected and what really happened, measured on the DAO's balances after it
-///         ran. Passed to the node's splitter and emitted in `NodeExecuted`.
-/// @param expected The movement the node's action declared (a pass-through for a branch without one)
-/// @param spent Input token that left the DAO during the node. With one token, the net loss.
-/// @param received Output token that came into the DAO during the node. With one token, the net gain.
-/// @param forwarded What the children share: `expected.outAmount`, or everything that arrived when
-///        the node is marked `forwardSurplus`
-struct Record {
-    Movement expected;
-    uint256 spent;
-    uint256 received;
-    uint256 forwarded;
 }
 
 /// @notice One node of a flow tree. Node 0 is the root and receives the budget.

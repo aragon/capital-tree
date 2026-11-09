@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IBudget} from "./IBudget.sol";
-import {Input, Movement} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 
 /// @title INodeAction
 /// @notice What a node of a flow tree does with its input. The plugin calls `build`,
@@ -22,22 +22,25 @@ interface INodeAction {
     ///         plus the actions that do the work.
     /// @dev `outAmount` is the least the node produces, checked after it runs. The children get
     ///      `outAmount`, or everything that arrived when the node is marked `forwardSurplus`.
-    function build(address caller, bytes calldata data, Input calldata input)
+    function build(address caller, bytes calldata data, Asset calldata input)
         external
         view
-        returns (Movement memory movement, Action[] memory actions);
+        returns (Asset memory output, Action[] memory actions);
 
-    /// @notice Reverts if the action must not run. Called after `build`, on the movement the plugin
+    /// @notice Reverts if the action must not run. Called after `build`, on the output the plugin
     ///         checked, right before the node's `dao.execute`.
     /// @param data The node's trigger data, as passed to `build`
     /// @return snapshot What `postconditions` compares against, read before the work runs (a
     ///         balance, and anything the check needs to find it again, such as a lock id)
-    function preconditions(address caller, bytes calldata data, Movement calldata movement)
+    function preconditions(address caller, bytes calldata data, Asset calldata input, Asset calldata output)
         external
         view
         returns (bytes memory snapshot);
 
-    /// @notice Reverts unless the work went right. Called right after the node's `dao.execute`.
+    /// @notice Reverts unless the work went right: the input spent, the output received. Called
+    ///         right after the node's `dao.execute`.
     /// @param snapshot What `preconditions` returned
-    function postconditions(address caller, Movement calldata movement, bytes calldata snapshot) external view;
+    function postconditions(address caller, Asset calldata input, Asset calldata output, bytes calldata snapshot)
+        external
+        view;
 }

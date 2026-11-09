@@ -6,7 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
-import {Input, Movement} from "../../src/lib/types.sol";
+import {Asset, Movement} from "../../src/lib/types.sol";
 
 /// @notice A node action that misbehaves in one chosen way. Otherwise it passes its input through.
 contract BadAction is INodeAction {
@@ -43,7 +43,7 @@ contract BadAction is INodeAction {
         return "";
     }
 
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         view
         returns (Movement memory _movement, Action[] memory _actions)
@@ -84,7 +84,7 @@ contract WritingCheckAction {
 
     function budget() external pure returns (IBudget) {}
 
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         pure
         returns (Movement memory, Action[] memory)

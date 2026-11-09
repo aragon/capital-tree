@@ -19,7 +19,8 @@ contract TransferAction is TransferBase {
         recipient = _to;
     }
 
-    function _recipient(address) internal view override returns (address) {
+    /// @dev Ignores the node's data: the recipient is fixed
+    function _recipient(bytes calldata) internal view override returns (address) {
         return recipient;
     }
 }

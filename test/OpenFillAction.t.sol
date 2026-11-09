@@ -8,7 +8,7 @@ import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/Proxy
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IFiller} from "../src/interfaces/IFiller.sol";
-import {Input, Movement} from "../src/lib/types.sol";
+import {Asset, Movement} from "../src/lib/types.sol";
 import {MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
@@ -97,8 +97,8 @@ contract OpenFillActionTest is Fixture {
         action.setDemandPerFill(0);
     }
 
-    function _input(uint256 _available) internal view returns (Input memory) {
-        return Input({token: tokenA, amount: _available, beneficiary: alice});
+    function _input(uint256 _available) internal view returns (Asset memory) {
+        return Asset({token: tokenA, amount: _available, beneficiary: alice});
     }
 
     function _clone() internal returns (OpenFillAction) {

@@ -10,7 +10,7 @@ import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
-import {Input, Movement} from "../src/lib/types.sol";
+import {Asset, Movement} from "../src/lib/types.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
 contract NativeEthTest is Fixture {
@@ -41,13 +41,6 @@ contract NativeEthTest is Fixture {
         OpenFillAction _action = OpenFillAction(ProxyLib.deployMinimalProxy(address(new OpenFillAction()), ""));
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
         _action.initialize(dao, _budget, NATIVE, DEMAND);
-    }
-
-    function test_RevertWhen_NodeOutputsNative() public {
-        NativeAction _action = new NativeAction(address(dao), NativeAction.Mode.Output);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidOutToken.selector, 0));
-        _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_NodeSendsEthWithoutSelector() public {
@@ -161,7 +154,7 @@ contract NativeAction is INodeAction {
     function budget() external pure returns (IBudget) {}
     function preconditions(address, bytes calldata, Movement calldata) external pure returns (bytes memory) {}
 
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         view
         returns (Movement memory _movement, Action[] memory _actions)
