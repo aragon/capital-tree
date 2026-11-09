@@ -9,6 +9,7 @@
     "TransferAction": "",
     "TransferToBeneficiaryAction": "",
     "BurnAction": "",
-    "KeepAction": ""
+    "KeepAction": "",
+    "WeightSplitter": ""
   }
 }

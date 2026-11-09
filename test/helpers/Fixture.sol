@@ -14,6 +14,7 @@ import {TransferAction} from "../../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../../src/actions/BurnAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
+import {WeightSplitter} from "../../src/splitters/WeightSplitter.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
@@ -32,7 +33,7 @@ string constant METADATA_URIS = '{"release":"ipfs://release","build":"ipfs://bui
     '"FundedStreamBudget":"ipfs://FundedStreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
     '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimBudget":"ipfs://MerkleClaimBudget",'
     '"TransferAction":"ipfs://TransferAction","TransferToBeneficiaryAction":"ipfs://TransferToBeneficiaryAction",'
-    '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction"}}';
+    '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction","WeightSplitter":"ipfs://WeightSplitter"}}';
 
 /// @notice A DAO holding the offered token A and some pre-existing demanded token B.
 ///         The test contract is the DAO's ROOT, so it can grant permissions directly.
@@ -162,6 +163,14 @@ abstract contract Fixture is Test {
         );
     }
 
+    function _deployWeightSplitter(uint32[] memory _weights) internal returns (WeightSplitter) {
+        return WeightSplitter(
+            ProxyLib.deployMinimalProxy(
+                address(new WeightSplitter()), abi.encodeCall(WeightSplitter.initialize, (dao, _weights))
+            )
+        );
+    }
+
     /// @dev A keep leaf bound to `_dao` (another DAO's component when `_dao` isn't the test DAO)
     function _deployKeep(IDAO _dao) internal returns (KeepAction) {
         return KeepAction(
@@ -199,17 +208,17 @@ abstract contract Fixture is Test {
         _node.children[0] = _child;
     }
 
-    /// @dev A node with two children, split by weights (fractions of RATIO_BASE)
+    /// @dev A node with two children, split by a weight splitter (fractions of RATIO_BASE)
     function _branch(INodeAction _action, uint32 _childA, uint32 _weightA, uint32 _childB, uint32 _weightB)
         internal
-        pure
         returns (Node memory _node)
     {
         _node.action = _action;
         _node.children = new uint32[](2);
         (_node.children[0], _node.children[1]) = (_childA, _childB);
-        _node.weights = new uint32[](2);
-        (_node.weights[0], _node.weights[1]) = (_weightA, _weightB);
+        uint32[] memory _weights = new uint32[](2);
+        (_weights[0], _weights[1]) = (_weightA, _weightB);
+        _node.splitter = _deployWeightSplitter(_weights);
     }
 
     /// @dev A one-node tree
@@ -238,7 +247,6 @@ abstract contract Fixture is Test {
     /// @dev `_root` split by weight between two leaves
     function _fork(INodeAction _root, uint32 _weightA, INodeAction _a, uint32 _weightB, INodeAction _b)
         internal
-        pure
         returns (Node[] memory _tree)
     {
         _tree = new Node[](3);

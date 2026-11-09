@@ -19,6 +19,7 @@ CONTRACTS = {
     "TransferToBeneficiaryAction": "TransferToBeneficiaryAction.sol/TransferToBeneficiaryAction.json",
     "BurnAction": "BurnAction.sol/BurnAction.json",
     "KeepAction": "KeepAction.sol/KeepAction.json",
+    "WeightSplitter": "WeightSplitter.sol/WeightSplitter.json",
 }
 
 abis = {name: json.loads((ROOT / "out" / path).read_text())["abi"] for name, path in CONTRACTS.items()}
