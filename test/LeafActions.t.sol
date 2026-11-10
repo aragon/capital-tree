@@ -40,7 +40,7 @@ contract LeafActionsTest is Fixture {
         uint256 _before = tokenA.balanceOf(alice);
 
         bytes memory _snapshot = _transfer.preconditions(address(0), "", _in, _out);
-        assertEq(_snapshot, abi.encode(alice, DAO_A, _before));
+        assertEq(_snapshot, abi.encode(alice, _before));
 
         vm.expectRevert(
             abi.encodeWithSelector(

@@ -16,9 +16,6 @@ abstract contract TransferBase is LeafAction {
     /// @notice Thrown when a recipient holds less than it should after the transfer
     error ReceiptShortfall(IERC20 token, address recipient, uint256 expected, uint256 actual);
 
-    /// @notice Thrown when the DAO gave away more than the amount
-    error Overspent(IERC20 token, uint256 minBalance, uint256 balance);
-
     /// @inheritdoc INodeAction
     function build(address, bytes calldata _data, Asset calldata _input)
         external
@@ -32,8 +29,8 @@ abstract contract TransferBase is LeafAction {
     }
 
     /// @inheritdoc INodeAction
-    /// @dev Snapshot: the recipient, and the DAO's and the recipient's balances before the transfer.
-    ///      The recipient goes in the snapshot because `postconditions` doesn't get the node's data.
+    /// @dev Snapshot: the recipient and its balance before the transfer. The recipient goes in the
+    ///      snapshot because `postconditions` doesn't get the node's data.
     function preconditions(address, bytes calldata _data, Asset calldata _input, Asset calldata)
         external
         view
@@ -42,24 +39,19 @@ abstract contract TransferBase is LeafAction {
         returns (bytes memory)
     {
         address _to = _recipient(_data);
-        return abi.encode(_to, _input.token.balanceOf(address(dao())), _input.token.balanceOf(_to));
+        return abi.encode(_to, _input.token.balanceOf(_to));
     }
 
     /// @inheritdoc INodeAction
-    /// @dev The DAO gave at most the amount, and the recipient got at least it
+    /// @dev The recipient got at least the amount. That the DAO gave at most the amount is the
+    ///      plugin's own balance check, right after this.
     function postconditions(address, Asset calldata _input, Asset calldata, bytes calldata _snapshot)
         external
         view
         virtual
         override
     {
-        (address _to, uint256 _daoBefore, uint256 _toBefore) = abi.decode(_snapshot, (address, uint256, uint256));
-
-        uint256 _daoBalance = _input.token.balanceOf(address(dao()));
-        if (_daoBalance + _input.amount < _daoBefore) {
-            // Safe: the condition implies `_daoBefore > _input.amount`
-            revert Overspent(_input.token, _daoBefore - _input.amount, _daoBalance);
-        }
+        (address _to, uint256 _toBefore) = abi.decode(_snapshot, (address, uint256));
 
         uint256 _expected = _toBefore + _input.amount;
         uint256 _balance = _input.token.balanceOf(_to);
