@@ -25,7 +25,7 @@ contract VaultDonateAction is LeafAction {
         external
         view
         override
-        returns (bytes memory)
+        returns (bytes memory snapshot)
     {
         if (address(_input.token) != vault.asset()) revert WrongAsset();
         return abi.encode(vault.totalAssets());

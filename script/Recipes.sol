@@ -114,7 +114,7 @@ library Recipes {
         _params.grants[6] = _grant(ref(4), _manager, MANAGER_PERMISSION_ID);
     }
 
-    /// @notice Stream -> OpenFill -> KAT fee, then donate all remaining proceeds.
+    /// @notice Stream -> OpenFill -> fee, then donate all remaining proceeds.
     ///         The stream cap sets the worst price. Surplus output is also split and donated.
     ///         Components: 0 budget, 1 OpenFill, 2 Donate, 3 fee Transfer, 4 WeightSplitter.
     function buybackAndDonate(
@@ -128,25 +128,32 @@ library Recipes {
         if (_feeBps == 0 || _feeBps >= 10_000) revert InvalidFeeBps();
         if (_feeRecipient == address(0)) revert InvalidFeeRecipient();
 
-        uint32 _feeWeight = uint32(_feeBps * RATIO_BASE / 10_000);
-        uint32[] memory _weights = new uint32[](2);
-        (_weights[0], _weights[1]) = (_feeWeight, uint32(RATIO_BASE) - _feeWeight);
-
         _params.budget = IBudget(ref(0));
         _params.components = new CapitalPipelinePluginSetup.Component[](5);
+
+        // stream budget -> open fill -> donate and collect fees
         _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] =
             _component(VAULT_DONATE, abi.encodeCall(VaultDonateAction.initialize, (IDAO(DAO_REF), _vault)));
         _params.components[3] = _transfer(_feeRecipient);
+
+        // weights (split fee and rest)
+        uint32 _feeWeight = uint32(_feeBps * RATIO_BASE / 10_000);
+        uint32[] memory _weights = new uint32[](2);
+        (_weights[0], _weights[1]) = (_feeWeight, uint32(RATIO_BASE) - _feeWeight);
         _params.components[4] = _weightSplitter(_weights);
 
+        // nodes
         _params.nodes = new Node[](3);
         _params.nodes[0].action = INodeAction(ref(1));
+        _params.nodes[0].forwardSurplus = true;
+
+        // openFill splits to 2 children based on weights above
+        _params.nodes[0].splitter = ISplitter(ref(4));
         _params.nodes[0].children = new uint32[](2);
         (_params.nodes[0].children[0], _params.nodes[0].children[1]) = (1, 2);
-        _params.nodes[0].splitter = ISplitter(ref(4));
-        _params.nodes[0].forwardSurplus = true;
+
         _params.nodes[1] = _leaf(3); // A failed donation also rolls back the fee.
         _params.nodes[2] = _leaf(2);
 
