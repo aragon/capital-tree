@@ -339,7 +339,7 @@ contract CapitalPipelinePluginTest is Fixture {
 
         vm.expectEmit(address(_plugin));
         // The first trigger counts the nonce up to 1; fund actions run at execution index 0
-        emit CapitalPipelinePlugin.BudgetFunded(keccak256(abi.encode(address(_plugin), 1, 0)));
+        emit CapitalPipelinePlugin.BudgetFunded(_executionIdOf(address(_plugin), 1, 0));
         _plugin.trigger("", noData);
 
         assertEq(_held.balanceOf(alice), 10 ether);
@@ -897,9 +897,13 @@ contract CapitalPipelinePluginTest is Fixture {
     function _expectNodeExecuted(address _plugin, address _caller, Asset memory _input, Asset memory _output)
         internal
     {
-        bytes32 _executionId = keccak256(abi.encode(_plugin, uint256(1), uint256(1)));
         vm.expectEmit(_plugin);
-        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionId, _input, _output);
+        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 1), _input, _output);
+    }
+
+    /// @dev The plugin's address, the trigger's nonce and the execution index, packed in 32 bytes
+    function _executionIdOf(address _plugin, uint64 _nonce, uint32 _executionIndex) internal pure returns (bytes32) {
+        return bytes32(abi.encodePacked(_plugin, _nonce, _executionIndex));
     }
 
     /// @dev An action that claims `_income` of `_outToken` (NO_TOKEN: its input token) and loses `_loss`

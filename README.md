@@ -96,6 +96,11 @@ even in the same block. Within a trigger, each `dao.execute` has its own index: 
 fund actions, i + 1 for node i, `nodes.length + 1` for the commit. The errors about a DAO action
 (`MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`) report that same index.
 
+An execution ID isn't a hash: it packs the plugin's address (20 bytes) and the trigger's nonce (8),
+which identify the run, then the execution index (4). Trigger 5's node 1, for example, is
+`0x<plugin>` `0000000000000005` `00000002`. Which action is which is its position in the DAO's
+`Executed` event.
+
 ### What the plugin enforces
 
 The plugin only enforces limits that hold for any action. Whether a result is acceptable (a few wei

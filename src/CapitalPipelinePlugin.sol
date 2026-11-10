@@ -36,7 +36,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
     ///      it can't change during one (`nonReentrant`), so the nodes read it from storage. Shares
     ///      `budget`'s slot, which every trigger reads anyway: keep the two declarations together.
-    uint96 internal _nonce;
+    ///      64 bits, so it fits in an execution ID next to the plugin's address and the execution index.
+    uint64 internal _nonce;
 
     Node[] internal _nodes;
 
@@ -219,9 +220,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     
     /// @dev Runs `_daoActions` in one `dao.execute`. The execution ID and the errors share
     ///      `_executionIndex`: 0 for the budget's fund actions, i + 1 for node i, nodes.length + 1
-    ///      for its commit.
+    ///      for its commit. The ID packs the plugin's address (20 bytes) and the nonce (8), the same
+    ///      for the whole trigger, then that index (4). An action's index is its position in the
+    ///      DAO's `Executed` event.
     function _execute(uint256 _executionIndex, Action[] memory _daoActions) internal returns (bytes32 _executionId) {
-        _executionId = keccak256(abi.encode(address(this), _nonce, _executionIndex));
+        _executionId = bytes32((uint256(uint160(address(this))) << 96) | (uint256(_nonce) << 32) | _executionIndex);
         if (_daoActions.length == 0) return _executionId;
 
         address _dao = address(dao());

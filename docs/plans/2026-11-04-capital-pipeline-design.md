@@ -151,7 +151,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights n
 
 ### `CapitalPipelinePlugin` (PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable)
 
-- Storage: `IBudget budget`, a `uint96` trigger nonce packed in the same slot (execution IDs), `Node[] nodes`.
+- Storage: `IBudget budget`, a `uint64` trigger nonce packed in the same slot (execution IDs: plugin address, nonce, execution index), `Node[] nodes`.
 - `trigger(bytes budgetData, bytes[] nodeData)`: `auth(TRIGGER_PERMISSION_ID)` (granted to `ANY_ADDR`), `nonReentrant`, `whenNotPaused`.
 - `setFlow(budget, nodes)`: `auth(CONFIGURE_PERMISSION_ID)`, DAO only, `nonReentrant`. Validates the tree.
 - `pause()`, `unpause()`: `auth(MANAGER_PERMISSION_ID)`.
