@@ -41,6 +41,18 @@ contract StreamBudgetTest is Fixture {
         assertEq(_available(budget), DAO_A + RATE, "growth resumes from where it froze");
     }
 
+    /// A sync every block must not freeze a stream slower than one unit per block
+    function test_SyncEveryBlockKeepsTheCurve() public {
+        StreamBudget _slow = _deployBudget(7000, 0); // 0.97 units per 12 s block
+
+        for (uint256 i; i < 300; ++i) {
+            vm.warp(block.timestamp + 12);
+            _slow.sync();
+        }
+
+        assertEq(_available(_slow), (7000 * 3600) / EPOCH, "an hour of growth");
+    }
+
     function test_AvailableIgnoresTheCaller() public {
         vm.warp(block.timestamp + EPOCH);
 
