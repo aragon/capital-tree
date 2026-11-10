@@ -9,26 +9,20 @@ import {LeafAction} from "./base/LeafAction.sol";
 import {Input, Movement} from "../lib/types.sol";
 
 /// @notice Compounds the entire input for existing vault holders without minting shares.
-/// @dev Pair with a weighted KeepAction sibling to retain part of a buyback in the DAO.
-///      The configured vault is trusted; only vaults accounting donations immediately are supported.
+/// @dev The configured vault is trusted; only vaults accounting donations immediately are supported.
 contract VaultDonateAction is LeafAction {
     IDonationVault public vault;
 
-    error InvalidVault();
     error WrongAsset();
-    error EmptyVault();
     error AssetsNotIncreased(uint256 expected, uint256 actual);
-    error ShareSupplyChanged(uint256 expected, uint256 actual);
 
     function initialize(IDAO _dao, IDonationVault _vault) external initializer {
-        if (address(_vault).code.length == 0 || _vault.asset().code.length == 0) revert InvalidVault();
         __DaoAuthorizableUpgradeable_init(_dao);
         vault = _vault;
     }
 
     function preconditions(address, Input calldata _input) external view override {
         if (address(_input.token) != vault.asset()) revert WrongAsset();
-        if (vault.totalSupply() == 0) revert EmptyVault();
     }
 
     function build(address, bytes calldata, Input calldata _input)
@@ -50,18 +44,13 @@ contract VaultDonateAction is LeafAction {
         returns (Action[] memory _checks)
     {
         _checks = new Action[](1);
-        _checks[0] = Action(
-            address(this),
-            0,
-            abi.encodeCall(this.assertDonated, (vault.totalAssets() + _movement.inAmount, vault.totalSupply()))
-        );
+        _checks[0] =
+            Action(address(this), 0, abi.encodeCall(this.assertDonated, (vault.totalAssets() + _movement.inAmount)));
     }
 
     /// @notice Checks the donation's economic effect immediately after the vault call.
-    function assertDonated(uint256 _minAssets, uint256 _supplyBefore) external view {
+    function assertDonated(uint256 _minAssets) external view {
         uint256 _assets = vault.totalAssets();
         if (_assets < _minAssets) revert AssetsNotIncreased(_minAssets, _assets);
-        uint256 _supply = vault.totalSupply();
-        if (_supply != _supplyBefore) revert ShareSupplyChanged(_supplyBefore, _supply);
     }
 }

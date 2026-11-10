@@ -1,7 +1,7 @@
 {
   "name": "VaultDonateAction",
   "version": 1,
-  "description": "Donates its input to an asset-backed vault, increasing total assets without minting shares. Pair with KeepAction to retain part of a buyback.",
+  "description": "Donates its input to an asset-backed vault, increasing total assets without minting shares.",
   "initialize": {
     "inputs": [
       { "name": "dao", "type": "address", "internalType": "contract IDAO", "description": "The installing DAO. In a recipe: DAO_REF." },

@@ -105,12 +105,12 @@ contract InstallationTest is Fixture {
         assertEq(installer.recipe(_example("buy-and-burn")).components.length, 3);
         assertEq(installer.recipe(_example("buyback")).components.length, 4);
         CapitalPipelinePluginSetup.InstallParams memory _donate = installer.recipe(_example("buyback-and-donate"));
-        assertEq(_donate.components.length, 5);
+        assertEq(_donate.components.length, 4);
         assertEq(_donate.components[2].id, Recipes.VAULT_DONATE);
         assertEq(_donate.nodes[0].weights[0], 1_000);
         assertEq(_donate.nodes[0].weights[1], 999_000);
-        assertEq(_donate.nodes[2].weights[0], 800_000);
-        assertEq(_donate.nodes[2].weights[1], 200_000);
+        assertEq(_donate.nodes.length, 3);
+        assertEq(_donate.components[3].id, Recipes.TRANSFER);
         assertEq(installer.recipe(_example("merkle-claim")).components.length, 3);
         assertEq(installer.recipe(_example("payroll")).components.length, 3);
     }

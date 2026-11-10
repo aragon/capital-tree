@@ -1,11 +1,9 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+
 /// @notice An asset-backed vault with donations that increase backing without minting shares.
-/// @dev Implemented by Katana's AvKATVault. `donate` is not part of standard ERC4626.
-interface IDonationVault {
-    function asset() external view returns (address);
-    function totalAssets() external view returns (uint256);
-    function totalSupply() external view returns (uint256);
+interface IDonationVault is IERC4626 {
     function donate(uint256 assets) external;
 }

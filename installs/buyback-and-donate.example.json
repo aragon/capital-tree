@@ -14,7 +14,6 @@
     "minDemandedPerOffered": "290000000000000000000000000000000"
   },
   "vault": "0x7231dbaCdFc968E07656D12389AB20De82FbfCeB",
-  "donateWeight": "800000",
   "fee": {
     "recipient": "0x0000000000000000000000000000000000000003",
     "bps": "10"

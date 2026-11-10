@@ -82,7 +82,6 @@ contract Install is Script {
                 _stream(_config),
                 _swap(_config),
                 IDonationVault(_config.readAddress(".vault")),
-                _config.readUint(".donateWeight"),
                 _config.readAddress(".fee.recipient"),
                 _config.readUint(".fee.bps")
             );
