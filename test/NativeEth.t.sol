@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
@@ -23,21 +23,21 @@ contract NativeEthTest is Fixture {
     }
 
     function test_RevertWhen_StreamUsesNative() public {
-        FundedStreamBudget _budget =
-            FundedStreamBudget(ProxyLib.deployMinimalProxy(address(new FundedStreamBudget()), ""));
-        vm.expectRevert(FundedStreamBudget.InvalidToken.selector);
+        StreamBudget _budget =
+            StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, NATIVE, RATE, 0, EPOCH);
     }
 
     function test_RevertWhen_TokenIsUnset() public {
-        FundedStreamBudget _budget =
-            FundedStreamBudget(ProxyLib.deployMinimalProxy(address(new FundedStreamBudget()), ""));
-        vm.expectRevert(FundedStreamBudget.InvalidToken.selector);
+        StreamBudget _budget =
+            StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, IERC20(address(0)), RATE, 0, EPOCH);
     }
 
     function test_RevertWhen_OpenFillDemandsNative() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, 0);
+        StreamBudget _budget = _deployBudget(RATE, 0);
         OpenFillAction _action = OpenFillAction(ProxyLib.deployMinimalProxy(address(new OpenFillAction()), ""));
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
         _action.initialize(dao, _budget, NATIVE, DEMAND);

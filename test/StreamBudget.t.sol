@@ -5,12 +5,12 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
-contract FundedStreamBudgetTest is Fixture {
-    FundedStreamBudget internal budget;
+contract StreamBudgetTest is Fixture {
+    StreamBudget internal budget;
 
     function setUp() public override {
         super.setUp();
@@ -121,10 +121,10 @@ contract FundedStreamBudgetTest is Fixture {
     }
 
     function test_RevertWhen_TokenHasNoCode() public {
-        FundedStreamBudget _budget =
-            FundedStreamBudget(ProxyLib.deployMinimalProxy(address(new FundedStreamBudget()), ""));
+        StreamBudget _budget =
+            StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
 
-        vm.expectRevert(FundedStreamBudget.InvalidToken.selector);
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, IERC20(address(0xBEEF)), RATE, 0, EPOCH);
     }
 }

@@ -12,7 +12,7 @@ import {
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
-/// @title FundedStreamBudget
+/// @title StreamBudget
 /// @notice A streaming pot whose available amount only grows while the DAO can fund it. Built
 ///         for Dutch auctions (`OpenFillAction`), where the offered amount must rise continuously
 ///         and never jump.
@@ -49,7 +49,7 @@ import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.
 ///      token should include a `sync()` action.
 ///
 ///      One flow per instance.
-contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
+contract StreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     /// @notice The token streamed
     IERC20 public token;
 

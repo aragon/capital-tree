@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
@@ -20,7 +20,7 @@ import {METADATA_URIS} from "./helpers/Fixture.sol";
 /// @notice The metadata files describe the code they're registered with
 contract MetadataTest is Test {
     function test_EachFileMatchesItsInitializer() public view {
-        _assertMatches("FundedStreamBudget", FundedStreamBudget.initialize.selector);
+        _assertMatches("StreamBudget", StreamBudget.initialize.selector);
         _assertMatches("BalanceBudget", BalanceBudget.initialize.selector);
         _assertMatches("MerkleClaimBudget", MerkleClaimBudget.initialize.selector);
         _assertMatches("OpenFillAction", OpenFillAction.initialize.selector);

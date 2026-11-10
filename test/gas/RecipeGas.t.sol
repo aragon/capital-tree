@@ -10,7 +10,7 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
 import {TransferAction} from "../../src/actions/TransferAction.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
@@ -47,7 +47,7 @@ function _transfer(IERC20 _token, address _to, uint256 _amount) pure returns (Ac
 ///         demanded token it started with, so the filler paid for the burn and the fee.
 contract MinimalSwap is ITrigger {
     IDAO public dao;
-    FundedStreamBudget public budget;
+    StreamBudget public budget;
     IERC20 public demanded;
     uint256 public demandPerFill;
     address public fee;
@@ -57,7 +57,7 @@ contract MinimalSwap is ITrigger {
 
     constructor(
         IDAO _dao,
-        FundedStreamBudget _budget,
+        StreamBudget _budget,
         IERC20 _demanded,
         uint256 _demandPerFill,
         address _fee,
@@ -80,7 +80,7 @@ contract MinimalSwap is ITrigger {
             Action(msg.sender, 0, abi.encodeCall(IFiller.fillOffer, (_offered, _amount, demanded, _demand, bytes(""))));
         _actions[2] = Action(address(_offered), 0, abi.encodeCall(IERC20.approve, (msg.sender, 0)));
         _actions[3] = Action(address(demanded), 0, abi.encodeCall(ERC20Burnable.burn, (_demand - _fee)));
-        _actions[4] = Action(address(budget), 0, abi.encodeCall(FundedStreamBudget.writeCheckpoint, ()));
+        _actions[4] = Action(address(budget), 0, abi.encodeCall(StreamBudget.writeCheckpoint, ()));
         if (_fee != 0) _actions[5] = _transfer(demanded, fee, _fee);
         IExecutor(address(dao)).execute(bytes32(0), _actions, 0);
 
@@ -112,11 +112,11 @@ contract MinimalClaim is ITrigger {
 /// @notice Stream → pay each recipient its weight
 contract MinimalPayroll is ITrigger {
     IDAO public dao;
-    FundedStreamBudget public budget;
+    StreamBudget public budget;
     address[] public recipients;
     uint32[] public weights;
 
-    constructor(IDAO _dao, FundedStreamBudget _budget, address[] memory _recipients, uint32[] memory _weights) {
+    constructor(IDAO _dao, StreamBudget _budget, address[] memory _recipients, uint32[] memory _weights) {
         (dao, budget, recipients, weights) = (_dao, _budget, _recipients, _weights);
     }
 
@@ -132,7 +132,7 @@ contract MinimalPayroll is ITrigger {
             _assigned += _share;
             _actions[i] = _transfer(_token, recipients[i], _share);
         }
-        _actions[_count] = Action(address(budget), 0, abi.encodeCall(FundedStreamBudget.writeCheckpoint, ()));
+        _actions[_count] = Action(address(budget), 0, abi.encodeCall(StreamBudget.writeCheckpoint, ()));
         IExecutor(address(dao)).execute(bytes32(0), _actions, 0);
     }
 }
@@ -239,7 +239,7 @@ contract RecipeGasTest is Fixture {
     // Buy and burn: stream → OpenFill → burn
 
     function test_Gas_BuyAndBurn_Pipeline() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
+        StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         _measureFill(
             "buyAndBurn", "pipeline", ITrigger(address(_deployPlugin(_budget, _chain(_deployAction(_budget), burn))))
         );
@@ -256,7 +256,7 @@ contract RecipeGasTest is Fixture {
     // Buyback: stream → OpenFill → 95% burn, 5% fee
 
     function test_Gas_Buyback_Pipeline() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
+        StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         Node[] memory _tree = _fork(_deployAction(_budget), 950_000, burn, 50_000, _deployTransfer(fee));
         _measureFill("buyback", "pipeline", ITrigger(address(_deployPlugin(_budget, _tree))));
     }
@@ -298,7 +298,7 @@ contract RecipeGasTest is Fixture {
         for (uint256 s; s < _sizes.length; ++s) {
             uint256 _state = vm.snapshotState();
             (address[] memory _to, uint32[] memory _weights) = _recipients(_sizes[s]);
-            FundedStreamBudget _budget = _deployBudget(RATE, 0);
+            StreamBudget _budget = _deployBudget(RATE, 0);
             _measurePayroll(
                 _sizes[s], "pipeline", ITrigger(address(_deployPlugin(_budget, _payrollTree(_to, _weights))))
             );
@@ -392,7 +392,7 @@ contract RecipeGasTest is Fixture {
     // Setup helpers
 
     function _minimalSwap(uint32 _feeWeight) internal returns (MinimalSwap _minimal) {
-        FundedStreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
+        StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         _minimal = new MinimalSwap(dao, _budget, tokenB, DEMAND, fee, _feeWeight);
         dao.grant(address(dao), address(_minimal), dao.EXECUTE_PERMISSION_ID());
     }

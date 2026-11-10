@@ -10,7 +10,7 @@ what the budget released or what its parent really produced.
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     fill["OpenFillAction<br/>sells A for B"]
     burn["BurnAction"]
     fee["TransferAction<br/>to feeAddr"]
@@ -160,11 +160,11 @@ tree spends what never arrived. The budgets below pay from the DAO's own balance
 
 | Budget               | `available()`                                                              | Commit             |
 | -------------------- | -------------------------------------------------------------------------- | ------------------ |
-| `FundedStreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
+| `StreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
 | `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
 | `MerkleClaimBudget`  | What the caller is owed                                                    | Records the claim  |
 
-#### FundedStreamBudget
+#### StreamBudget
 
 A stream that never jumps, built for Dutch auctions where a jump in the offer would be taken by
 a filler in the same block.
@@ -345,7 +345,7 @@ A splitter is a component like any other (a clone bound to the DAO, registered i
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     fill["OpenFillAction<br/>sells A for B"]
     burn["BurnAction"]
 
@@ -370,7 +370,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     split{"branch<br/>(no action)"}
     one["TransferAction<br/>recipient 1"]
     two["TransferAction<br/>recipient 2"]
@@ -390,7 +390,7 @@ since the last fill (it stays in the DAO).
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     split{"branch<br/>(no action)"}
     grants["TransferAction<br/>to grantsSafe"]
     fill["OpenFillAction<br/>sells A for B"]
@@ -465,7 +465,7 @@ flowchart LR
     manager(("manager"))
     dao["DAO"]
     plugin["Plugin"]
-    budget["FundedStreamBudget"]
+    budget["StreamBudget"]
     fill["OpenFillAction"]
     splitter["WeightSplitter<br/>(buyback only)"]
 
@@ -485,7 +485,7 @@ flowchart LR
 | Path                                           | What                                                                                                       |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
-| `src/budgets/FundedStreamBudget.sol`           | Streaming pot that never jumps                                                                             |
+| `src/budgets/StreamBudget.sol`                 | Streaming pot that never jumps                                                                             |
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
 | `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims; the account picks the payout address                                             |
 | `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |

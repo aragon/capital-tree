@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
@@ -30,7 +30,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
 /// @dev Metadata links for the deploy script, one per component (see metadata/uris.json)
 string constant METADATA_URIS = '{"release":"ipfs://release","build":"ipfs://build","components":{'
-    '"FundedStreamBudget":"ipfs://FundedStreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
+    '"StreamBudget":"ipfs://StreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
     '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimBudget":"ipfs://MerkleClaimBudget",'
     '"TransferAction":"ipfs://TransferAction","TransferToBeneficiaryAction":"ipfs://TransferToBeneficiaryAction",'
     '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction","WeightSplitter":"ipfs://WeightSplitter"}}';
@@ -94,19 +94,19 @@ abstract contract Fixture is Test {
     // Budgets
 
     /// @dev A stream of token A. Deploy after funding the DAO: the budget records the balance it sees at init.
-    function _deployBudget(uint256 _rate, uint256 _maxBudget) internal returns (FundedStreamBudget) {
+    function _deployBudget(uint256 _rate, uint256 _maxBudget) internal returns (StreamBudget) {
         return _deployStream(tokenA, _rate, _maxBudget);
     }
 
     /// @dev A stream of any ERC20 token
     function _deployStream(IERC20 _token, uint256 _rate, uint256 _maxBudget)
         internal
-        returns (FundedStreamBudget _budget)
+        returns (StreamBudget _budget)
     {
-        _budget = FundedStreamBudget(
+        _budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
-                address(new FundedStreamBudget()),
-                abi.encodeCall(FundedStreamBudget.initialize, (dao, _token, _rate, _maxBudget, EPOCH))
+                address(new StreamBudget()),
+                abi.encodeCall(StreamBudget.initialize, (dao, _token, _rate, _maxBudget, EPOCH))
             )
         );
         dao.grant(address(_budget), manager, MANAGER_PERMISSION_ID);
@@ -129,12 +129,12 @@ abstract contract Fixture is Test {
     // Actions
 
     /// @dev Demands token B. Bound to `_budget`, which it restarts when its demand changes.
-    function _deployAction(FundedStreamBudget _budget) internal returns (OpenFillAction) {
+    function _deployAction(StreamBudget _budget) internal returns (OpenFillAction) {
         return _deployOpenFill(_budget, tokenB);
     }
 
     /// @dev Demands any ERC20 token
-    function _deployOpenFill(FundedStreamBudget _budget, IERC20 _demanded) internal returns (OpenFillAction _action) {
+    function _deployOpenFill(StreamBudget _budget, IERC20 _demanded) internal returns (OpenFillAction _action) {
         _action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
                 address(new OpenFillAction()),

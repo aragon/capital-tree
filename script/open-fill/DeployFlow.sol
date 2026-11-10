@@ -6,7 +6,7 @@ import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
 import {GenericFillSolver} from "../../src/solvers/GenericFillSolver.sol";
@@ -18,7 +18,7 @@ import {
     CHECKPOINT_PERMISSION_ID
 } from "../../src/lib/constants.sol";
 
-/// @dev Shared in-memory fixture: funded stream -> OpenFill -> Keep. No broadcast.
+/// @dev Shared in-memory fixture: stream -> OpenFill -> Keep. No broadcast.
 abstract contract DeployFlow is Script {
     address internal constant ADMIN = address(0xA11CE);
     uint256 public constant EPOCH = 1 hours;
@@ -26,7 +26,7 @@ abstract contract DeployFlow is Script {
     struct Deployment {
         DAO dao;
         CapitalPipelinePlugin plugin;
-        FundedStreamBudget budget;
+        StreamBudget budget;
         OpenFillAction action;
         GenericFillSolver solver;
         IERC20 sell;
@@ -46,10 +46,10 @@ abstract contract DeployFlow is Script {
         );
         d.sell = sell;
         d.buy = buy;
-        d.budget = FundedStreamBudget(
+        d.budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
-                address(new FundedStreamBudget()),
-                abi.encodeCall(FundedStreamBudget.initialize, (d.dao, sell, amount, amount, EPOCH))
+                address(new StreamBudget()),
+                abi.encodeCall(StreamBudget.initialize, (d.dao, sell, amount, amount, EPOCH))
             )
         );
         d.action = OpenFillAction(

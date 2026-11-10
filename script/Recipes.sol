@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
@@ -29,7 +29,7 @@ import {DAO_REF, PLUGIN_REF, ref} from "../src/lib/placeholders.sol";
 /// @notice Registry ids and install recipes for the common flows. A recipe is
 ///         `abi.encode(CapitalPipelinePluginSetup.InstallParams)`.
 library Recipes {
-    bytes32 internal constant FUNDED_STREAM_BUDGET = "FundedStreamBudget@1";
+    bytes32 internal constant STREAM_BUDGET = "StreamBudget@1";
     bytes32 internal constant BALANCE_BUDGET = "BalanceBudget@1";
     bytes32 internal constant OPEN_FILL = "OpenFillAction@1";
     bytes32 internal constant MERKLE_CLAIM = "MerkleClaimBudget@1";
@@ -166,9 +166,9 @@ library Recipes {
 
     function _streamBudget(Stream memory _stream) private pure returns (CapitalPipelinePluginSetup.Component memory) {
         return _component(
-            FUNDED_STREAM_BUDGET,
+            STREAM_BUDGET,
             abi.encodeCall(
-                FundedStreamBudget.initialize,
+                StreamBudget.initialize,
                 (IDAO(DAO_REF), _stream.token, _stream.amountPerEpoch, _stream.maxBudget, _stream.epochInterval)
             )
         );

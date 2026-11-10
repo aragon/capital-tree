@@ -7,7 +7,7 @@ import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginRepoFactory} from "@aragon/osx/framework/plugin/repo/PluginRepoFactory.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
@@ -52,7 +52,7 @@ contract Deploy is Script {
     {
         ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](9);
         _components[0] =
-            _registration(Recipes.FUNDED_STREAM_BUDGET, "FundedStreamBudget", address(new FundedStreamBudget()), _uris);
+            _registration(Recipes.STREAM_BUDGET, "StreamBudget", address(new StreamBudget()), _uris);
         _components[1] = _registration(Recipes.BALANCE_BUDGET, "BalanceBudget", address(new BalanceBudget()), _uris);
         _components[2] = _registration(Recipes.OPEN_FILL, "OpenFillAction", address(new OpenFillAction()), _uris);
         _components[3] =

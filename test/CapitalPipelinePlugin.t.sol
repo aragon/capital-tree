@@ -8,7 +8,7 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
@@ -31,7 +31,7 @@ import {MockHolderBudget} from "./mocks/MockHolderBudget.sol";
 contract CapitalPipelinePluginTest is Fixture {
     IERC20 internal constant NO_TOKEN = IERC20(address(0));
 
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
     CapitalPipelinePlugin internal plugin;
     MockFiller internal filler;
@@ -278,7 +278,7 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_BudgetCommitsOnceAfterTheWholeTree() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, 0);
+        StreamBudget _budget = _deployBudget(RATE, 0);
         CapitalPipelinePlugin _plugin =
             _deployPlugin(_budget, _fork(NO_ACTION, 500_000, _deployTransfer(alice), 500_000, _deployTransfer(bob)));
         vm.warp(block.timestamp + EPOCH);
@@ -304,7 +304,7 @@ contract CapitalPipelinePluginTest is Fixture {
 
     /// The stream's cap, not the action, limits the offer
     function test_TheStreamCapLimitsTheOffer() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
+        StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         MockFiller _filler = new MockFiller(_deployPlugin(_budget, _chain(_deployAction(_budget), keep)));
         tokenB.mint(address(_filler), DEMAND);
         vm.warp(block.timestamp + 5 * EPOCH); // 50 A streamed, capped at 20

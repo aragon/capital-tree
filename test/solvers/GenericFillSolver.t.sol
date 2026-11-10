@@ -6,7 +6,7 @@ import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {GenericFillSolver} from "../../src/solvers/GenericFillSolver.sol";
 import {Node} from "../../src/lib/types.sol";
@@ -15,7 +15,7 @@ import {Fixture} from "../helpers/Fixture.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
 contract GenericFillSolverTest is Fixture {
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
     CapitalPipelinePlugin internal plugin;
     GenericFillSolver internal solver;

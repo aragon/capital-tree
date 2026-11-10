@@ -59,7 +59,7 @@ async function refresh() {
 // Graph editor
 
 const GROUPS = [
-  ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1", "MerkleClaimBudget@1"]],
+  ["Budgets", ["StreamBudget@1", "BalanceBudget@1", "MerkleClaimBudget@1"]],
   ["Actions", ["OpenFillAction@1"]],
   ["Splits", [graph.BRANCH]],
   ["Leaves", ["TransferAction@1", "TransferToBeneficiaryAction@1", "BurnAction@1", "KeepAction@1"]],

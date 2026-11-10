@@ -40,7 +40,7 @@ The shares under a box become a WeightSplitter component for it.
 
 | Box | Ports | Components |
 |---|---|---|
-| Budget | output | FundedStreamBudget, BalanceBudget, MerkleClaimBudget |
+| Budget | output | StreamBudget, BalanceBudget, MerkleClaimBudget |
 | Action | input, output | OpenFillAction (anywhere; the stream's cap limits its offer) |
 | Branch | input, output | No action: splits its input by the children's shares |
 | Leaf | input | TransferAction, TransferToBeneficiaryAction, BurnAction, KeepAction |

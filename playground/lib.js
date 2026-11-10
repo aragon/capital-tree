@@ -144,7 +144,7 @@ function uniqueErrors(abi) {
 
 const component = (id, args) => ({ id, args: { dao: "DAO", ...args } });
 const stream = (token, maxBudget = "0") =>
-  component("FundedStreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
+  component("StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
 // 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
 const openFill = (tokenB) =>
   component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
@@ -379,12 +379,12 @@ export async function describeComponent(ctx, address) {
   const abi = ctx.abis[name];
   const get = (fn) => read(ctx, address, abi, fn);
   const details = [];
-  if (name === "FundedStreamBudget" || name === "BalanceBudget") {
+  if (name === "StreamBudget" || name === "BalanceBudget") {
     const token = await get("token");
     const sym = await symbol(ctx, token);
     const [amount] = await read(ctx, address, abi, "available", [zeroAddress, "0x"]);
     details.push(`available ${units(amount)} ${sym}`);
-    if (name === "FundedStreamBudget") {
+    if (name === "StreamBudget") {
       details.push(`${units(await get("amountPerEpoch"))} ${sym} per ${await get("epochInterval")}s`);
       const cap = await get("maxBudget");
       if (cap > 0n) details.push(`capped at ${units(cap)} ${sym}`);
