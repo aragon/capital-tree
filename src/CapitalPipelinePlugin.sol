@@ -103,7 +103,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
         uint256 _before = _token.balanceOf(address(dao()));
         Action[] memory _fundActions = budget.fundActions(msg.sender, _budgetData);
-        if (_fundActions.length != 0) emit BudgetFunded(_execute(0, _fundActions));
+        if (_fundActions.length != 0) {
+            bytes32 _executionId = _execute(0, _fundActions);
+            emit BudgetFunded(_executionId);
+        }
         _runNode(0, Asset(_token, _available), _nodeData);
         // A budget that brings its own tokens may cost the DAO none of its own
         _checkBudgetSpend(_token, _fundActions.length == 0 ? _available : 0, _before);
