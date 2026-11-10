@@ -8,7 +8,7 @@ import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
+import {GenericFillSolver} from "../../src/solvers/GenericFillSolver.sol";
 import {Node} from "../../src/lib/types.sol";
 import {TRIGGER_PERMISSION_ID} from "../../src/lib/constants.sol";
 import {Fixture} from "../helpers/Fixture.sol";
