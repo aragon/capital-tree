@@ -121,8 +121,7 @@ contract StreamBudgetTest is Fixture {
     }
 
     function test_RevertWhen_TokenHasNoCode() public {
-        StreamBudget _budget =
-            StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
 
         vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, IERC20(address(0xBEEF)), RATE, 0, EPOCH);

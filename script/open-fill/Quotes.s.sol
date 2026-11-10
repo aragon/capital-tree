@@ -6,7 +6,7 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // Quote/build only: no deployment, fork, broadcast or live execution.
-// Returns callback bytes (abi.encode(Action[])) to place in a pipeline node's payload.
+// Returns callback bytes (abi.encode(Action[])) to place in a tree node's payload.
 // These quote adapters support ERC20 pairs and zero-value router calls only.
 contract OpenFillQuotes is Script {
     // Reject the native sentinel used by quote providers; flows accept ERC20 pairs only.

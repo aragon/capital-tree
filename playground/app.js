@@ -12,7 +12,7 @@ const load = (path) =>
     return r.json();
   });
 
-const SAVED = "capital-pipeline-graphs";
+const SAVED = "capital-tree-graphs";
 let ctx;
 let editor;
 let recipe = null; // the recipe the graph describes, or null while it isn't valid

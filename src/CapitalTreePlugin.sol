@@ -16,7 +16,7 @@ import {ISplitter} from "./interfaces/ISplitter.sol";
 import {Asset, Node} from "./lib/types.sol";
 import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} from "./lib/constants.sol";
 
-/// @title CapitalPipelinePlugin
+/// @title CapitalTreePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
 ///         once, first bringing it into the DAO when it sits elsewhere; every node passes its
 ///         output to its children (split by a splitter when there are several); leaves consume
@@ -30,7 +30,7 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} f
 ///      balance checks: the DAO spent no more than the node's input and received at least its
 ///      declared output. The children get that declared output, or
 ///      everything that arrived when the node is marked `forwardSurplus`.
-contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
+contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice What the flow may spend; read and funded at the start, committed at the end
     IBudget public budget;
     /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;

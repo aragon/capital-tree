@@ -3,11 +3,11 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IFiller} from "../../src/interfaces/IFiller.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 
 /// @notice Triggers the plugin and fills the offer, delivering `demandedAmount + fillDelta`
 contract MockFiller is IFiller {
-    CapitalPipelinePlugin public immutable plugin;
+    CapitalTreePlugin public immutable plugin;
 
     /// @notice Added to the demanded amount when delivering (negative = under-deliver)
     int256 public fillDelta;
@@ -21,7 +21,7 @@ contract MockFiller is IFiller {
     /// @notice Total demanded token delivered to the DAO
     uint256 public totalDelivered;
 
-    constructor(CapitalPipelinePlugin _plugin) {
+    constructor(CapitalTreePlugin _plugin) {
         plugin = _plugin;
     }
 

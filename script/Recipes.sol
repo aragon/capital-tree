@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
@@ -27,7 +27,7 @@ import {DAO_REF, PLUGIN_REF, ref} from "../src/lib/placeholders.sol";
 
 /// @title Recipes
 /// @notice Registry ids and install recipes for the common flows. A recipe is
-///         `abi.encode(CapitalPipelinePluginSetup.InstallParams)`.
+///         `abi.encode(CapitalTreePluginSetup.InstallParams)`.
 library Recipes {
     bytes32 internal constant STREAM_BUDGET = "StreamBudget@1";
     bytes32 internal constant BALANCE_BUDGET = "BalanceBudget@1";
@@ -61,9 +61,9 @@ library Recipes {
     function buyAndBurn(address _manager, Stream memory _stream, Swap memory _swap)
         internal
         pure
-        returns (CapitalPipelinePluginSetup.InstallParams memory _params)
+        returns (CapitalTreePluginSetup.InstallParams memory _params)
     {
-        _params.components = new CapitalPipelinePluginSetup.Component[](3);
+        _params.components = new CapitalTreePluginSetup.Component[](3);
         _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] = _burn();
@@ -82,12 +82,12 @@ library Recipes {
     function buyback(address _manager, Stream memory _stream, Swap memory _swap, address _fee, uint32 _feeWeight)
         internal
         pure
-        returns (CapitalPipelinePluginSetup.InstallParams memory _params)
+        returns (CapitalTreePluginSetup.InstallParams memory _params)
     {
         uint32[] memory _weights = new uint32[](2);
         (_weights[0], _weights[1]) = (uint32(RATIO_BASE) - _feeWeight, _feeWeight);
 
-        _params.components = new CapitalPipelinePluginSetup.Component[](5);
+        _params.components = new CapitalTreePluginSetup.Component[](5);
         _params.components[0] = _cappedStreamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] = _burn();
@@ -112,9 +112,9 @@ library Recipes {
     function merkleClaim(address _manager, IERC20 _token, bytes32 _root)
         internal
         pure
-        returns (CapitalPipelinePluginSetup.InstallParams memory _params)
+        returns (CapitalTreePluginSetup.InstallParams memory _params)
     {
-        _params.components = new CapitalPipelinePluginSetup.Component[](2);
+        _params.components = new CapitalTreePluginSetup.Component[](2);
         _params.components[0] =
             _component(MERKLE_CLAIM, abi.encodeCall(MerkleClaimBudget.initialize, (IDAO(DAO_REF), _token, _root)));
         _params.components[1] = _component(
@@ -125,7 +125,7 @@ library Recipes {
         _params.nodes = new Node[](1);
         _params.nodes[0] = _leaf(1);
 
-        _params.grants = new CapitalPipelinePluginSetup.Grant[](4);
+        _params.grants = new CapitalTreePluginSetup.Grant[](4);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
         _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
@@ -137,10 +137,10 @@ library Recipes {
     function payroll(address _manager, Stream memory _stream, address[] memory _recipients, uint32[] memory _weights)
         internal
         pure
-        returns (CapitalPipelinePluginSetup.InstallParams memory _params)
+        returns (CapitalTreePluginSetup.InstallParams memory _params)
     {
         uint256 _count = _recipients.length;
-        _params.components = new CapitalPipelinePluginSetup.Component[](2 + _count);
+        _params.components = new CapitalTreePluginSetup.Component[](2 + _count);
         _params.components[0] = _streamBudget(_stream);
         _params.components[1 + _count] = _weightSplitter(_weights);
 
@@ -154,7 +154,7 @@ library Recipes {
             _params.nodes[1 + i] = _leaf(1 + i);
         }
 
-        _params.grants = new CapitalPipelinePluginSetup.Grant[](5);
+        _params.grants = new CapitalTreePluginSetup.Grant[](5);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
         _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
@@ -164,7 +164,7 @@ library Recipes {
 
     // Components
 
-    function _streamBudget(Stream memory _stream) private pure returns (CapitalPipelinePluginSetup.Component memory) {
+    function _streamBudget(Stream memory _stream) private pure returns (CapitalTreePluginSetup.Component memory) {
         return _component(
             STREAM_BUDGET,
             abi.encodeCall(
@@ -175,17 +175,13 @@ library Recipes {
     }
 
     /// @dev OpenFill offers its whole input, so the stream's cap is the auction's only limit
-    function _cappedStreamBudget(Stream memory _stream)
-        private
-        pure
-        returns (CapitalPipelinePluginSetup.Component memory)
-    {
+    function _cappedStreamBudget(Stream memory _stream) private pure returns (CapitalTreePluginSetup.Component memory) {
         if (_stream.maxBudget == 0) revert UncappedStream();
         return _streamBudget(_stream);
     }
 
     /// @dev Bound to component 0, the budget
-    function _openFill(Swap memory _swap) private pure returns (CapitalPipelinePluginSetup.Component memory) {
+    function _openFill(Swap memory _swap) private pure returns (CapitalTreePluginSetup.Component memory) {
         return _component(
             OPEN_FILL,
             abi.encodeCall(
@@ -195,28 +191,24 @@ library Recipes {
         );
     }
 
-    function _burn() private pure returns (CapitalPipelinePluginSetup.Component memory) {
+    function _burn() private pure returns (CapitalTreePluginSetup.Component memory) {
         return _component(BURN, abi.encodeCall(BurnAction.initialize, (IDAO(DAO_REF))));
     }
 
-    function _transfer(address _to) private pure returns (CapitalPipelinePluginSetup.Component memory) {
+    function _transfer(address _to) private pure returns (CapitalTreePluginSetup.Component memory) {
         return _component(TRANSFER, abi.encodeCall(TransferAction.initialize, (IDAO(DAO_REF), _to)));
     }
 
-    function _weightSplitter(uint32[] memory _weights)
-        private
-        pure
-        returns (CapitalPipelinePluginSetup.Component memory)
-    {
+    function _weightSplitter(uint32[] memory _weights) private pure returns (CapitalTreePluginSetup.Component memory) {
         return _component(WEIGHT_SPLITTER, abi.encodeCall(WeightSplitter.initialize, (IDAO(DAO_REF), _weights)));
     }
 
     function _component(bytes32 _id, bytes memory _initData)
         private
         pure
-        returns (CapitalPipelinePluginSetup.Component memory)
+        returns (CapitalTreePluginSetup.Component memory)
     {
-        return CapitalPipelinePluginSetup.Component(_id, _initData);
+        return CapitalTreePluginSetup.Component(_id, _initData);
     }
 
     // Tree
@@ -236,9 +228,9 @@ library Recipes {
     function _swapGrants(address _manager, uint256 _extra)
         private
         pure
-        returns (CapitalPipelinePluginSetup.Grant[] memory _grants)
+        returns (CapitalTreePluginSetup.Grant[] memory _grants)
     {
-        _grants = new CapitalPipelinePluginSetup.Grant[](6 + _extra);
+        _grants = new CapitalTreePluginSetup.Grant[](6 + _extra);
         _grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
         _grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
         _grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
@@ -250,8 +242,8 @@ library Recipes {
     function _grant(address _where, address _who, bytes32 _id)
         private
         pure
-        returns (CapitalPipelinePluginSetup.Grant memory)
+        returns (CapitalTreePluginSetup.Grant memory)
     {
-        return CapitalPipelinePluginSetup.Grant(_where, _who, _id);
+        return CapitalTreePluginSetup.Grant(_where, _who, _id);
     }
 }

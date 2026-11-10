@@ -31,7 +31,7 @@ const ALICE = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const BOB = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
 // Placeholders, as in src/lib/placeholders.sol
-const TAG = BigInt(keccak256(toHex("capital-pipeline.placeholder"))) & ((1n << 160n) - 1n) & ~0xffffn;
+const TAG = BigInt(keccak256(toHex("capital-tree.placeholder"))) & ((1n << 160n) - 1n) & ~0xffffn;
 const placeholder = (index) => getAddress(pad(toHex(TAG | BigInt(index)), { size: 20 }));
 export const DAO_REF = placeholder(0xffff);
 export const PLUGIN_REF = placeholder(0xfffe);

@@ -4,8 +4,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = {
-    "plugin": "CapitalPipelinePlugin.sol/CapitalPipelinePlugin.json",
-    "setup": "CapitalPipelinePluginSetup.sol/CapitalPipelinePluginSetup.json",
+    "plugin": "CapitalTreePlugin.sol/CapitalTreePlugin.json",
+    "setup": "CapitalTreePluginSetup.sol/CapitalTreePluginSetup.json",
     "registry": "ComponentRegistry.sol/ComponentRegistry.json",
     "psp": "PluginSetupProcessor.sol/PluginSetupProcessor.json",
     "dao": "DAO.sol/DAO.json",

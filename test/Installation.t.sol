@@ -10,8 +10,8 @@ import {PluginRepoFactory} from "@aragon/osx/framework/plugin/repo/PluginRepoFac
 import {PluginRepoRegistry} from "@aragon/osx/framework/plugin/repo/PluginRepoRegistry.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {ENSSubdomainRegistrar} from "@aragon/osx/framework/utils/ens/ENSSubdomainRegistrar.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Install} from "../script/Install.s.sol";
 import {Recipes} from "../script/Recipes.sol";
@@ -22,7 +22,7 @@ import {MockFiller} from "./mocks/MockFiller.sol";
 ///         without ENS (the plugin repo is published with an empty subdomain)
 contract InstallationTest is Fixture {
     PluginSetupProcessor internal psp;
-    CapitalPipelinePluginSetup internal setup;
+    CapitalTreePluginSetup internal setup;
     PluginRepo internal repo;
     Install internal installer;
 
@@ -63,7 +63,7 @@ contract InstallationTest is Fixture {
         dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID()); // stands in for a passed proposal
         dao.execute(bytes32(0), _actions, 0);
 
-        MockFiller _filler = new MockFiller(CapitalPipelinePlugin(_plugin));
+        MockFiller _filler = new MockFiller(CapitalTreePlugin(_plugin));
         tokenB.mint(address(_filler), DEMAND);
         uint256 _supply = tokenB.totalSupply();
         vm.warp(block.timestamp + EPOCH);

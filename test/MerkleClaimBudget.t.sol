@@ -6,7 +6,7 @@ import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {Node} from "../src/lib/types.sol";
 import {MANAGER_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../src/lib/constants.sol";
@@ -20,7 +20,7 @@ contract MerkleClaimBudgetTest is Fixture {
     uint256 internal bobAmount;
 
     MerkleClaimBudget internal merkle;
-    CapitalPipelinePlugin internal plugin;
+    CapitalTreePlugin internal plugin;
 
     function setUp() public override {
         super.setUp();
@@ -128,7 +128,7 @@ contract MerkleClaimBudgetTest is Fixture {
 
     /// Claim → swap A to B at 2 → pay the beneficiary (redirected to carol)
     function test_ClaimThenSwap() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(merkle, _chain(_swap(), toBeneficiary));
+        CapitalTreePlugin _plugin = _deployPlugin(merkle, _chain(_swap(), toBeneficiary));
 
         vm.prank(alice);
         _plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 2));
@@ -145,7 +145,7 @@ contract MerkleClaimBudgetTest is Fixture {
         _tree[1] = _leaf(_deployTransfer(fee));
         _tree[2] = _then(_swap(), 3);
         _tree[3] = _leaf(toBeneficiary);
-        CapitalPipelinePlugin _plugin = _deployPlugin(merkle, _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(merkle, _tree);
 
         vm.prank(alice);
         _plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 4));
@@ -156,11 +156,11 @@ contract MerkleClaimBudgetTest is Fixture {
 
     /// If a node can't run, the whole claim reverts and stays claimable
     function test_ClaimStaysOpenWhenANodeCannotRun() public {
-        CapitalPipelinePlugin _plugin =
+        CapitalTreePlugin _plugin =
             _deployPlugin(merkle, _chain(new BadAction(BadAction.Mode.Skip, address(dao), tokenB), toBeneficiary));
 
         // The root outputs nothing, so its child receives nothing
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 1));
         vm.prank(alice);
         _plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 2));
 

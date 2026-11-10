@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
@@ -23,15 +23,13 @@ contract NativeEthTest is Fixture {
     }
 
     function test_RevertWhen_StreamUsesNative() public {
-        StreamBudget _budget =
-            StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
         vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, NATIVE, RATE, 0, EPOCH);
     }
 
     function test_RevertWhen_TokenIsUnset() public {
-        StreamBudget _budget =
-            StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
         vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, IERC20(address(0)), RATE, 0, EPOCH);
     }
@@ -50,8 +48,8 @@ contract NativeEthTest is Fixture {
     function _assertValueRejected(NativeAction.Mode _mode) internal {
         vm.deal(address(dao), 1 ether);
         NativeAction _action = new NativeAction(address(dao), _mode);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 1, 0));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 1, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
@@ -60,9 +58,9 @@ contract NativeEthTest is Fixture {
     function test_RevertWhen_BudgetCommitHasNoSelectorRollsBackTree() public {
         vm.deal(address(dao), 1 ether);
         NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
         // The commit of a 1-node flow runs at execution index 2
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 2, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 2, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
@@ -75,8 +73,8 @@ contract NativeEthTest is Fixture {
         PayableTarget _target = new PayableTarget();
         NativeAction _action = new NativeAction(address(dao), NativeAction.Mode.Work);
         _action.setCall(address(_target), new bytes(_length));
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.MissingFunctionSelector.selector, 1, 0));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 1, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(address(_target).balance, 0);
@@ -95,7 +93,7 @@ contract NativeEthTest is Fixture {
         PayableTarget _target = new PayableTarget();
         NativeAction _action = new NativeAction(address(dao), _mode);
         _action.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
         if (_reenter) _target.setPlugin(_plugin);
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
@@ -114,7 +112,7 @@ contract NativeEthTest is Fixture {
         PayableTarget _target = new PayableTarget();
         NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
         _budget.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(address(_target).balance, 1 ether);
@@ -124,7 +122,7 @@ contract NativeEthTest is Fixture {
 
     function test_Erc20FlowLeavesNativeBalanceUntouched() public {
         vm.deal(address(dao), 1 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_deployTransfer(alice)));
         _plugin.trigger("", noData);
         assertEq(tokenA.balanceOf(alice), DAO_A);
         assertEq(address(dao).balance, 1 ether);
@@ -207,10 +205,10 @@ contract NativeCommitBudget is IBudget {
 
 contract PayableTarget {
     address public sender;
-    CapitalPipelinePlugin public plugin;
+    CapitalTreePlugin public plugin;
     bytes public reentryError;
 
-    function setPlugin(CapitalPipelinePlugin _plugin) external {
+    function setPlugin(CapitalTreePlugin _plugin) external {
         plugin = _plugin;
     }
 

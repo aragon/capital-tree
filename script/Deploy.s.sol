@@ -6,7 +6,7 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginRepoFactory} from "@aragon/osx/framework/plugin/repo/PluginRepoFactory.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
@@ -25,17 +25,17 @@ import {Recipes} from "./Recipes.sol";
 /// @dev Run: `forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast` with
 ///      - `MANAGEMENT_DAO_ADDRESS`: maintains the registry and, by default, the plugin repo
 ///      - `PLUGIN_REPO_FACTORY_ADDRESS`: Aragon's factory on that network
-///      - `PLUGIN_REPO_SUBDOMAIN` (optional): defaults to `capital-pipeline`
+///      - `PLUGIN_REPO_SUBDOMAIN` (optional): defaults to `capital-tree`
 ///      - `DEPLOYER_KEY`: signing key for the deployment
 contract Deploy is Script {
     /// @notice Thrown when a metadata link is empty. Registry entries and plugin repo versions
     ///         can't be changed later, so nothing is published without one.
     error MissingMetadata(string key);
 
-    function run() external returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup, PluginRepo repo) {
+    function run() external returns (ComponentRegistry registry, CapitalTreePluginSetup setup, PluginRepo repo) {
         IDAO _managingDao = IDAO(vm.envAddress("MANAGEMENT_DAO_ADDRESS"));
         PluginRepoFactory _factory = PluginRepoFactory(vm.envAddress("PLUGIN_REPO_FACTORY_ADDRESS"));
-        string memory _subdomain = vm.envOr("PLUGIN_REPO_SUBDOMAIN", string("capital-pipeline"));
+        string memory _subdomain = vm.envOr("PLUGIN_REPO_SUBDOMAIN", string("capital-tree"));
         address _maintainer = vm.envOr("PLUGIN_REPO_MAINTAINER", address(_managingDao));
         string memory _uris = vm.readFile("metadata/uris.json");
 
@@ -48,11 +48,10 @@ contract Deploy is Script {
     /// @param _uris The contents of `metadata/uris.json`
     function deploy(IDAO _managingDao, string memory _uris)
         public
-        returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup)
+        returns (ComponentRegistry registry, CapitalTreePluginSetup setup)
     {
         ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](9);
-        _components[0] =
-            _registration(Recipes.STREAM_BUDGET, "StreamBudget", address(new StreamBudget()), _uris);
+        _components[0] = _registration(Recipes.STREAM_BUDGET, "StreamBudget", address(new StreamBudget()), _uris);
         _components[1] = _registration(Recipes.BALANCE_BUDGET, "BalanceBudget", address(new BalanceBudget()), _uris);
         _components[2] = _registration(Recipes.OPEN_FILL, "OpenFillAction", address(new OpenFillAction()), _uris);
         _components[3] =
@@ -69,7 +68,7 @@ contract Deploy is Script {
         _components[8] = _registration(Recipes.WEIGHT_SPLITTER, "WeightSplitter", address(new WeightSplitter()), _uris);
 
         registry = new ComponentRegistry(_managingDao, _components);
-        setup = new CapitalPipelinePluginSetup(registry);
+        setup = new CapitalTreePluginSetup(registry);
     }
 
     /// @notice Publishes `_setup` as version 1.1 of a new plugin repo, which DAOs install from
@@ -77,7 +76,7 @@ contract Deploy is Script {
     /// @param _uris The contents of `metadata/uris.json`
     function publish(
         PluginRepoFactory _factory,
-        CapitalPipelinePluginSetup _setup,
+        CapitalTreePluginSetup _setup,
         string memory _subdomain,
         address _maintainer,
         string memory _uris

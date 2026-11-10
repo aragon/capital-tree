@@ -15,7 +15,7 @@ import {TransferToBeneficiaryAction} from "../../src/actions/TransferToBeneficia
 import {BurnAction} from "../../src/actions/BurnAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
 import {WeightSplitter} from "../../src/splitters/WeightSplitter.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
 import {Node} from "../../src/lib/types.sol";
@@ -99,10 +99,7 @@ abstract contract Fixture is Test {
     }
 
     /// @dev A stream of any ERC20 token
-    function _deployStream(IERC20 _token, uint256 _rate, uint256 _maxBudget)
-        internal
-        returns (StreamBudget _budget)
-    {
+    function _deployStream(IERC20 _token, uint256 _rate, uint256 _maxBudget) internal returns (StreamBudget _budget) {
         _budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
                 address(new StreamBudget()),
@@ -180,12 +177,11 @@ abstract contract Fixture is Test {
 
     // Plugin
 
-    /// @dev Same grants as CapitalPipelinePluginSetup: anyone triggers, the DAO configures, the manager pauses
-    function _deployPlugin(IBudget _budget, Node[] memory _tree) internal returns (CapitalPipelinePlugin _plugin) {
-        _plugin = CapitalPipelinePlugin(
+    /// @dev Same grants as CapitalTreePluginSetup: anyone triggers, the DAO configures, the manager pauses
+    function _deployPlugin(IBudget _budget, Node[] memory _tree) internal returns (CapitalTreePlugin _plugin) {
+        _plugin = CapitalTreePlugin(
             ProxyLib.deployMinimalProxy(
-                address(new CapitalPipelinePlugin()),
-                abi.encodeCall(CapitalPipelinePlugin.initialize, (dao, _budget, _tree))
+                address(new CapitalTreePlugin()), abi.encodeCall(CapitalTreePlugin.initialize, (dao, _budget, _tree))
             )
         );
         dao.grant(address(dao), address(_plugin), dao.EXECUTE_PERMISSION_ID());

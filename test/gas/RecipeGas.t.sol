@@ -9,7 +9,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
 import {TransferAction} from "../../src/actions/TransferAction.sol";
@@ -215,7 +215,7 @@ contract RawPayroll is ITrigger {
     }
 }
 
-/// @notice Gas of each recipe run through the pipeline, next to a hand-written plugin with the same
+/// @notice Gas of each recipe run through CapitalTreePlugin, next to a hand-written plugin with the same
 ///         budget (Minimal) and the bare token work (Raw).
 /// @dev Run with `forge test --match-path test/gas/RecipeGas.t.sol --isolate -vv`: every call is then
 ///      its own transaction (cold storage, 21k intrinsic and calldata included). Steady state: every
@@ -238,10 +238,10 @@ contract RecipeGasTest is Fixture {
 
     // Buy and burn: stream → OpenFill → burn
 
-    function test_Gas_BuyAndBurn_Pipeline() public {
+    function test_Gas_BuyAndBurn_Tree() public {
         StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         _measureFill(
-            "buyAndBurn", "pipeline", ITrigger(address(_deployPlugin(_budget, _chain(_deployAction(_budget), burn))))
+            "buyAndBurn", "tree", ITrigger(address(_deployPlugin(_budget, _chain(_deployAction(_budget), burn))))
         );
     }
 
@@ -255,10 +255,10 @@ contract RecipeGasTest is Fixture {
 
     // Buyback: stream → OpenFill → 95% burn, 5% fee
 
-    function test_Gas_Buyback_Pipeline() public {
+    function test_Gas_Buyback_Tree() public {
         StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         Node[] memory _tree = _fork(_deployAction(_budget), 950_000, burn, 50_000, _deployTransfer(fee));
-        _measureFill("buyback", "pipeline", ITrigger(address(_deployPlugin(_budget, _tree))));
+        _measureFill("buyback", "tree", ITrigger(address(_deployPlugin(_budget, _tree))));
     }
 
     function test_Gas_Buyback_Minimal() public {
@@ -271,10 +271,10 @@ contract RecipeGasTest is Fixture {
 
     // Merkle claim → pay the beneficiary
 
-    function test_Gas_MerkleClaim_Pipeline() public {
+    function test_Gas_MerkleClaim_Tree() public {
         (bytes32 _root, bytes memory _alice, bytes memory _bob) = _claims();
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployMerkle(tokenA, _root), _one(toBeneficiary));
-        _measureClaim("pipeline", ITrigger(address(_plugin)), _alice, _bob);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployMerkle(tokenA, _root), _one(toBeneficiary));
+        _measureClaim("tree", ITrigger(address(_plugin)), _alice, _bob);
     }
 
     function test_Gas_MerkleClaim_Minimal() public {
@@ -293,15 +293,13 @@ contract RecipeGasTest is Fixture {
 
     // Payroll: stream → one transfer per recipient
 
-    function test_Gas_Payroll_Pipeline() public {
+    function test_Gas_Payroll_Tree() public {
         uint256[3] memory _sizes = [uint256(2), 5, 15];
         for (uint256 s; s < _sizes.length; ++s) {
             uint256 _state = vm.snapshotState();
             (address[] memory _to, uint32[] memory _weights) = _recipients(_sizes[s]);
             StreamBudget _budget = _deployBudget(RATE, 0);
-            _measurePayroll(
-                _sizes[s], "pipeline", ITrigger(address(_deployPlugin(_budget, _payrollTree(_to, _weights))))
-            );
+            _measurePayroll(_sizes[s], "tree", ITrigger(address(_deployPlugin(_budget, _payrollTree(_to, _weights)))));
             vm.revertToState(_state);
         }
     }

@@ -61,7 +61,7 @@ and each action receive their own data and the caller's address.
 sequenceDiagram
     autonumber
     actor Caller
-    participant Plugin as CapitalPipelinePlugin
+    participant Plugin as CapitalTreePlugin
     participant Budget
     participant Action as Node action
     participant DAO
@@ -257,7 +257,7 @@ finds the trade worth it first calls `trigger()` and fills it.
 sequenceDiagram
     autonumber
     actor Filler
-    participant Plugin as CapitalPipelinePlugin
+    participant Plugin as CapitalTreePlugin
     participant DAO
     participant TokenA as Token A
     participant Fill as OpenFillAction
@@ -412,7 +412,7 @@ and `ref(i)` for the recipe's component `i`. The setup replaces them wherever th
 sequenceDiagram
     autonumber
     participant PSP as PluginSetupProcessor
-    participant Setup as CapitalPipelinePluginSetup
+    participant Setup as CapitalTreePluginSetup
     participant Registry as ComponentRegistry
     participant Clones as Component clones
     participant Plugin as Plugin clone
@@ -484,7 +484,7 @@ flowchart LR
 
 | Path                                           | What                                                                                                       |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
+| `src/CapitalTreePlugin.sol`                    | Runs the tree, checks balances after every node                                                            |
 | `src/budgets/StreamBudget.sol`                 | Streaming pot that never jumps                                                                             |
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
 | `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims; the account picks the payout address                                             |
@@ -497,7 +497,7 @@ flowchart LR
 | `src/actions/KeepAction.sol`                   | Leaf: leaves its input in the DAO                                                                          |
 | `src/splitters/WeightSplitter.sol`             | Splits a branch's output by fixed weights                                                                  |
 | `src/registry/ComponentRegistry.sol`           | Write-once ids for the implementations recipes can clone                                                   |
-| `src/setup/CapitalPipelinePluginSetup.sol`     | Installs any flow from a recipe                                                                            |
+| `src/setup/CapitalTreePluginSetup.sol`         | Installs any flow from a recipe                                                                            |
 | `script/Recipes.sol`                           | Recipes for buy and burn, buyback, Merkle claim and payroll                                                |
 | `script/Deploy.s.sol`                          | Deploys every implementation, the registry and the setup, and publishes the setup to an Aragon plugin repo |
 | `script/Install.s.sol`                         | Prepares an installation from a config and prints the proposal's actions                                   |
@@ -566,7 +566,7 @@ the unit tests, broadcasts the deployment, verifies contracts and writes a log u
 | ---------------------------- | --------------------------------------------------------------------- |
 | `MANAGEMENT_DAO_ADDRESS`      | Maintains the component registry; supplied by the selected network     |
 | `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon's factory; supplied by the selected network                      |
-| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-pipeline` by default |
+| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-tree` by default     |
 | `PLUGIN_REPO_MAINTAINER`      | Optional: who can publish later versions, the managing DAO by default   |
 | `DEPLOYER_KEY`               | Required signing key for both deployment and installation preparation  |
 

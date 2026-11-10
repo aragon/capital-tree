@@ -11,7 +11,7 @@ import {PermissionManager} from "@aragon/osx/core/permission/PermissionManager.s
 import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {PluginSetupRef, hashHelpers} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessorHelpers.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {Recipes} from "./Recipes.sol";
 
 /// @notice Prepares the installation of a flow described by a config file, and prints the three
@@ -69,7 +69,7 @@ contract Install is Script {
     }
 
     /// @notice The recipe a config describes: `.recipe` names it, the other keys are its parameters
-    function recipe(string memory _config) public pure returns (CapitalPipelinePluginSetup.InstallParams memory) {
+    function recipe(string memory _config) public pure returns (CapitalTreePluginSetup.InstallParams memory) {
         string memory _name = _config.readString(".recipe");
         address _manager = _config.readAddress(".manager");
         bytes32 _hash = keccak256(bytes(_name));

@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 import {Node} from "../../src/lib/types.sol";
 import {Fixture} from "../helpers/Fixture.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
@@ -70,7 +70,7 @@ contract Handler is Test {
     }
 }
 
-contract PipelineInvariantTest is Fixture {
+contract TreeInvariantTest is Fixture {
     MockFiller internal filler;
 
     function setUp() public override {
@@ -80,7 +80,7 @@ contract PipelineInvariantTest is Fixture {
         // Forwarding the surplus, so whatever the filler overpays is split too
         Node[] memory _tree = _splitToBurnAndFee(_action);
         _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _tree);
 
         filler = new MockFiller(_plugin);
         tokenB.mint(address(filler), type(uint128).max);

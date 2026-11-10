@@ -7,7 +7,7 @@ import {PermissionLib} from "@aragon/osx-commons-contracts/src/permission/Permis
 import {IPluginSetup} from "@aragon/osx-commons-contracts/src/plugin/setup/IPluginSetup.sol";
 import {PluginSetup} from "@aragon/osx-commons-contracts/src/plugin/setup/PluginSetup.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../CapitalTreePlugin.sol";
 import {ComponentRegistry} from "../registry/ComponentRegistry.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
@@ -16,7 +16,7 @@ import {Node} from "../lib/types.sol";
 import {CONFIGURE_PERMISSION_ID} from "../lib/constants.sol";
 import {DAO_INDEX, PLUGIN_INDEX, isPlaceholder} from "../lib/placeholders.sol";
 
-/// @title CapitalPipelinePluginSetup
+/// @title CapitalTreePluginSetup
 /// @notice Installs any flow from a recipe: the components to clone (by registry id), the tree and
 ///         the permissions. Recipes name contracts that don't exist yet with placeholders
 ///         (`DAO_REF`, `PLUGIN_REF`, `ref(i)` for component i), which the setup replaces.
@@ -24,7 +24,7 @@ import {DAO_INDEX, PLUGIN_INDEX, isPlaceholder} from "../lib/placeholders.sol";
 ///      and initialized in recipe order, so list a component after the ones its initializer
 ///      checks. The setup always grants EXECUTE (the plugin on the DAO) and CONFIGURE (the DAO on
 ///      the plugin); recipe grants may only target the plugin or its components, and never CONFIGURE.
-contract CapitalPipelinePluginSetup is PluginSetup {
+contract CapitalTreePluginSetup is PluginSetup {
     struct Component {
         bytes32 id;
         bytes initData;
@@ -64,7 +64,7 @@ contract CapitalPipelinePluginSetup is PluginSetup {
     error ReservedPermission(bytes32 permissionId);
     error GrantsMismatch();
 
-    constructor(ComponentRegistry _registry) PluginSetup(address(new CapitalPipelinePlugin())) {
+    constructor(ComponentRegistry _registry) PluginSetup(address(new CapitalTreePlugin())) {
         registry = _registry;
     }
 
@@ -81,7 +81,7 @@ contract CapitalPipelinePluginSetup is PluginSetup {
         for (uint256 i; i < _params.components.length; ++i) {
             Address.functionCall(_ctx.components[i], _resolveCall(_params.components[i].initData, _ctx));
         }
-        CapitalPipelinePlugin(plugin)
+        CapitalTreePlugin(plugin)
             .initialize(
                 IDAO(_dao), IBudget(_resolve(address(_params.budget), _ctx)), _resolveNodes(_params.nodes, _ctx)
             );

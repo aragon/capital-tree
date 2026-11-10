@@ -5,7 +5,7 @@ pragma solidity ^0.8.28;
 ///      recipe's own components. The setup replaces them wherever they appear (init data, budget,
 ///      node actions and splitters, grants). The upper bits are a fixed tag, the lower 16 bits say what it
 ///      stands for.
-uint160 constant PLACEHOLDER_TAG = uint160(uint256(keccak256("capital-pipeline.placeholder"))) & ~uint160(0xFFFF);
+uint160 constant PLACEHOLDER_TAG = uint160(uint256(keccak256("capital-tree.placeholder"))) & ~uint160(0xFFFF);
 uint256 constant DAO_INDEX = 0xFFFF;
 uint256 constant PLUGIN_INDEX = 0xFFFE;
 
