@@ -12,6 +12,7 @@ import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {PluginSetupRef, hashHelpers} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessorHelpers.sol";
 import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {IDonationVault} from "../src/interfaces/IDonationVault.sol";
 import {Recipes} from "./Recipes.sol";
 
 /// @notice Prepares the installation of a flow described by a config file, and prints the three
@@ -75,6 +76,16 @@ contract Install is Script {
         bytes32 _hash = keccak256(bytes(_name));
 
         if (_hash == keccak256("buyAndBurn")) return Recipes.buyAndBurn(_manager, _stream(_config), _swap(_config));
+        if (_hash == keccak256("buybackAndDonate")) {
+            return Recipes.buybackAndDonate(
+                _manager,
+                _stream(_config),
+                _swap(_config),
+                IDonationVault(_config.readAddress(".vault")),
+                _config.readAddress(".fee.recipient"),
+                _config.readUint(".fee.bps")
+            );
+        }
         if (_hash == keccak256("buyback")) {
             return Recipes.buyback(
                 _manager,

@@ -15,6 +15,7 @@ import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
+import {VaultDonateAction} from "../src/actions/VaultDonateAction.sol";
 import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {Recipes} from "./Recipes.sol";
 
@@ -50,7 +51,7 @@ contract Deploy is Script {
         public
         returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup)
     {
-        ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](9);
+        ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](10);
         _components[0] =
             _registration(Recipes.FUNDED_STREAM_BUDGET, "FundedStreamBudget", address(new FundedStreamBudget()), _uris);
         _components[1] = _registration(Recipes.BALANCE_BUDGET, "BalanceBudget", address(new BalanceBudget()), _uris);
@@ -67,6 +68,9 @@ contract Deploy is Script {
         _components[6] = _registration(Recipes.BURN, "BurnAction", address(new BurnAction()), _uris);
         _components[7] = _registration(Recipes.KEEP, "KeepAction", address(new KeepAction()), _uris);
         _components[8] = _registration(Recipes.WEIGHT_SPLITTER, "WeightSplitter", address(new WeightSplitter()), _uris);
+
+        _components[9] =
+            _registration(Recipes.VAULT_DONATE, "VaultDonateAction", address(new VaultDonateAction()), _uris);
 
         registry = new ComponentRegistry(_managingDao, _components);
         setup = new CapitalPipelinePluginSetup(registry);
