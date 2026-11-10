@@ -22,9 +22,19 @@ abstract contract BuybackDonateFixture is Fixture {
         IDonationVault _vault,
         uint256 _weight
     ) internal {
+        _installDonation(_stream, _swap, _vault, _weight, 0);
+    }
+
+    function _installDonation(
+        Recipes.Stream memory _stream,
+        Recipes.Swap memory _swap,
+        IDonationVault _vault,
+        uint256 _weight,
+        uint256 _feeBps
+    ) internal {
         (, CapitalPipelinePluginSetup _setup) = new Deploy().deploy(dao, METADATA_URIS);
         (address _plugin, IPluginSetup.PreparedSetupData memory _prepared) = _setup.prepareInstallation(
-            address(dao), abi.encode(Recipes.buybackAndDonate(manager, _stream, _swap, _vault, _weight))
+            address(dao), abi.encode(Recipes.buybackAndDonate(manager, _stream, _swap, _vault, _weight, fee, _feeBps))
         );
         dao.applyMultiTargetPermissions(_prepared.permissions);
         plugin = CapitalPipelinePlugin(_plugin);

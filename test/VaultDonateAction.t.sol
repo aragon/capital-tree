@@ -50,15 +50,95 @@ contract VaultDonateActionTest is BuybackDonateFixture {
     }
 
     function _install(uint256 _weight) internal {
+        _install(_weight, 0);
+    }
+
+    function _install(uint256 _weight, uint256 _feeBps) internal {
         _installDonation(
             Recipes.Stream(tokenA, RATE, 0, EPOCH),
             Recipes.Swap(tokenB, DEMAND, MIN_PRICE),
             IDonationVault(address(vault)),
-            _weight
+            _weight,
+            _feeBps
         );
         filler = new MockFiller(plugin);
         tokenB.mint(address(filler), DEMAND * 3);
         vm.warp(block.timestamp + EPOCH);
+    }
+
+    function test_OneBpKatFeeBeforeDonationSplit() public {
+        _install(800_000, 1);
+        filler.fill("");
+        assertEq(tokenB.balanceOf(fee), 0.1 ether);
+        _assertDonation(799.92 ether);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 199.98 ether);
+    }
+
+    function test_TenBpKatFeeBeforeDonationSplit() public {
+        _install(800_000, 10);
+        filler.fill("");
+        assertEq(tokenB.balanceOf(fee), 1 ether);
+        _assertDonation(799.2 ether);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 199.8 ether);
+    }
+
+    function test_FeeWithFullDonation() public {
+        _install(1_000_000, 10);
+        filler.fill("");
+        assertEq(tokenB.balanceOf(fee), 1 ether);
+        _assertDonation(999 ether);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B);
+    }
+
+    function test_FeeWithHoldOnly() public {
+        _install(0, 10);
+        filler.fill("");
+        assertEq(tokenB.balanceOf(fee), 1 ether);
+        _assertDonation(0);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 999 ether);
+    }
+
+    function test_DonationFailureAlsoRollsBackFee() public {
+        _install(800_000, 10);
+        vault.setMode(1);
+        _expectRollback(1);
+        assertEq(tokenB.balanceOf(fee), 0);
+    }
+
+    function test_FeeFailureRollsBackBuyback() public {
+        _install(800_000, 10);
+        vm.mockCall(address(tokenB), abi.encodeCall(IERC20.transfer, (fee, 1 ether)), abi.encode(false));
+        _expectRollback(1);
+        assertEq(tokenB.balanceOf(fee), 0);
+    }
+
+    function testFuzz_FeeSplitConservesProceeds(uint32 _weight, bool _tenBps) public {
+        _weight = uint32(bound(_weight, 0, 1_000_000));
+        uint256 _bps = _tenBps ? 10 : 1;
+        _install(_weight, _bps);
+        filler.fill("");
+        uint256 _fee = DEMAND * _bps / 10_000;
+        uint256 _donated = (DEMAND - _fee) * _weight / 1_000_000;
+        assertEq(tokenB.balanceOf(fee), _fee);
+        _assertDonation(_donated);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND - _fee - _donated);
+    }
+
+    function test_InvalidFeeReverts() public {
+        vm.expectRevert(Recipes.InvalidFeeBps.selector);
+        this.installInvalidFee(10_000);
+        vm.expectRevert(Recipes.InvalidFeeBps.selector);
+        this.installInvalidFee(uint256(type(uint32).max) + 1);
+    }
+
+    function test_ZeroFeeRecipientReverts() public {
+        fee = address(0);
+        vm.expectRevert(Recipes.InvalidFeeRecipient.selector);
+        this.installInvalidFee(10);
+    }
+
+    function installInvalidFee(uint256 _bps) external {
+        _install(800_000, _bps);
     }
 
     function test_BuybackDonatesAllWithoutMintingShares() public {

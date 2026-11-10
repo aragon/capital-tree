@@ -79,7 +79,8 @@ contract AvKatBuybackForkTest is BuybackDonateFixture {
             Recipes.Stream(USDC, USDC_IN, USDC_IN, EPOCH),
             Recipes.Swap(KAT, demanded, demanded * 1e18 / USDC_IN),
             VAULT,
-            800_000
+            800_000,
+            10
         );
         solver = new GenericFillSolver(address(this), plugin);
         // Fund AFTER budget initialization to exercise the revenue-arrival sync path.
@@ -94,21 +95,32 @@ contract AvKatBuybackForkTest is BuybackDonateFixture {
     }
 
     function test_Fork_SushiBuybackDonates80PercentAndHolds20Percent() public forkEnabled {
-        _fillAndAssert(800_000);
+        _fillAndAssert(800_000, 10);
     }
 
     function test_Fork_DaoReconfiguresToDonateAll() public forkEnabled {
         Node[] memory _old = plugin.nodes();
-        Node[] memory _all = new Node[](2);
-        _all[0] = _then(_old[0].action, 1);
-        _all[1] = _old[1];
+        Node[] memory _all = new Node[](3);
+        _all[0] = _old[0];
+        _all[1] = _old[1]; // retain the fee branch
+        _all[2] = _old[3]; // donate the entire post-fee amount
         vm.prank(address(dao));
         plugin.setFlow(budget, _all);
-        _fillAndAssert(1_000_000);
+        _fillAndAssert(1_000_000, 10);
+    }
+
+    function test_Fork_OneBpFeeInKat() public forkEnabled {
+        Node[] memory _nodes = plugin.nodes();
+        _nodes[0].weights[0] = 100;
+        _nodes[0].weights[1] = 999_900;
+        vm.prank(address(dao));
+        plugin.setFlow(budget, _nodes);
+        _fillAndAssert(800_000, 1);
     }
 
     function test_Fork_VaultRevertRollsBackRealSwap() public forkEnabled {
         uint256 _assets = VAULT.totalAssets();
+        uint256 _feeBefore = KAT.balanceOf(fee);
         uint256 _checkpoint = budget.baseTimestamp();
         uint256 _poolUsdc = USDC.balanceOf(0x10045367E619Caae6f60CC80046c43c6cD55f629);
         bytes[] memory _data = _swapData();
@@ -121,26 +133,31 @@ contract AvKatBuybackForkTest is BuybackDonateFixture {
         assertEq(USDC.balanceOf(address(dao)), USDC_IN);
         assertEq(KAT.balanceOf(address(dao)), 0);
         assertEq(VAULT.totalAssets(), _assets);
+        assertEq(KAT.balanceOf(fee), _feeBefore, "fee also rolled back");
         assertEq(USDC.balanceOf(0x10045367E619Caae6f60CC80046c43c6cD55f629), _poolUsdc);
         assertEq(budget.baseTimestamp(), _checkpoint);
         assertEq(budget.available(), USDC_IN);
         _assertAllowancesCleared();
     }
 
-    function _fillAndAssert(uint256 _weight) internal {
+    function _fillAndAssert(uint256 _weight, uint256 _feeBps) internal {
         uint256 _assets = VAULT.totalAssets();
         uint256 _supply = VAULT.totalSupply();
         uint256 _perShare = VAULT.convertToAssets(1 ether);
-        uint256 _donated = demanded * _weight / 1_000_000;
+        uint256 _feeBefore = KAT.balanceOf(fee);
+        uint256 _feeAmount = demanded * _feeBps / 10_000;
+        uint256 _net = demanded - _feeAmount;
+        uint256 _donated = _net * _weight / 1_000_000;
         if (_weight == 800_000) {
             // The router assigns integer division dust to the largest branch.
-            _donated = demanded - demanded * 200_000 / 1_000_000;
+            _donated = _net - _net * 200_000 / 1_000_000;
         }
         vm.expectCall(ROUTER, abi.encodePacked(ISushiV3Router.exactInputSingle.selector));
         vm.expectCall(address(VAULT), abi.encodeCall(IDonationVault.donate, (_donated)));
         solver.trigger(_swapData());
         assertEq(USDC.balanceOf(address(dao)), 0);
-        assertEq(KAT.balanceOf(address(dao)), demanded - _donated);
+        assertEq(KAT.balanceOf(address(dao)), _net - _donated);
+        assertEq(KAT.balanceOf(fee), _feeBefore + _feeAmount, "Aragon fee paid in KAT");
         assertEq(VAULT.totalAssets(), _assets + _donated);
         assertEq(VAULT.totalSupply(), _supply, "no new avKAT minted");
         assertEq(IERC20(address(VAULT)).balanceOf(address(dao)), 0);
@@ -151,7 +168,8 @@ contract AvKatBuybackForkTest is BuybackDonateFixture {
         console2.log("USDC spent (6 decimals)", USDC_IN);
         console2.log("KAT bought (18 decimals)", demanded);
         console2.log("KAT donated (18 decimals)", _donated);
-        console2.log("KAT held (18 decimals)", demanded - _donated);
+        console2.log("KAT fee (18 decimals)", _feeAmount);
+        console2.log("KAT held (18 decimals)", _net - _donated);
     }
 
     function _assertAllowancesCleared() internal view {

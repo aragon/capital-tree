@@ -41,6 +41,8 @@ library Recipes {
     bytes32 internal constant VAULT_DONATE = "VaultDonateAction@1";
 
     error InvalidDonateWeight();
+    error InvalidFeeBps();
+    error InvalidFeeRecipient();
 
     address internal constant ANY_ADDR = address(type(uint160).max);
 
@@ -103,25 +105,33 @@ library Recipes {
         _params.grants = _swapGrants(_manager);
     }
 
-    /// @notice Stream → OpenFill → donate `_donateWeight` of the proceeds, keep the rest.
-    ///         Weight is out of RATIO_BASE; 0 and 100% use a single child (no zero-weight nodes).
-    ///         Components: 0 budget, 1 OpenFill, 2 Donate, 3 Keep.
+    /// @notice Stream → OpenFill → KAT fee, then donate/keep the remaining proceeds.
+    ///         Fee is in basis points of the fill; donateWeight applies AFTER the fee.
+    ///         Donation weight is out of RATIO_BASE; 0 and 100% omit the unused Donate/Keep leaf.
+    ///         Components: 0 budget, 1 OpenFill, 2 Donate, 3 Keep, optionally 4 fee Transfer.
     function buybackAndDonate(
         address _manager,
         Stream memory _stream,
         Swap memory _swap,
         IDonationVault _vault,
-        uint256 _donateWeight
+        uint256 _donateWeight,
+        address _feeRecipient,
+        uint256 _feeBps
     ) internal pure returns (CapitalPipelinePluginSetup.InstallParams memory _params) {
         if (_donateWeight > RATIO_BASE) revert InvalidDonateWeight();
-        _params.components = new CapitalPipelinePluginSetup.Component[](4);
+        if (_feeBps >= 10_000) revert InvalidFeeBps();
+        if (_feeBps != 0 && _feeRecipient == address(0)) revert InvalidFeeRecipient();
+        _params.components = new CapitalPipelinePluginSetup.Component[](_feeBps == 0 ? 4 : 5);
         _params.components[0] = _streamBudget(_stream);
         _params.components[1] = _openFill(_swap);
         _params.components[2] =
             _component(VAULT_DONATE, abi.encodeCall(VaultDonateAction.initialize, (IDAO(DAO_REF), _vault)));
         _params.components[3] = _component(KEEP, abi.encodeCall(KeepAction.initialize, (IDAO(DAO_REF))));
         _params.budget = IBudget(ref(0));
-        if (_donateWeight == 0 || _donateWeight == RATIO_BASE) {
+        if (_feeBps != 0) {
+            _params.components[4] = _transfer(_feeRecipient);
+            _params.nodes = _donationFeeTree(_donateWeight, uint32(_feeBps * RATIO_BASE / 10_000));
+        } else if (_donateWeight == 0 || _donateWeight == RATIO_BASE) {
             _params.nodes = new Node[](2);
             _params.nodes[0] = _then(1, 1);
             _params.nodes[1] = _leaf(_donateWeight == 0 ? 3 : 2);
@@ -137,6 +147,28 @@ library Recipes {
             _params.nodes[2] = _leaf(3);
         }
         _params.grants = _swapGrants(_manager);
+    }
+
+    /// @dev Fee executes first, so any later donation failure also rolls back its transfer.
+    function _donationFeeTree(uint256 _donateWeight, uint32 _feeWeight) private pure returns (Node[] memory _nodes) {
+        bool _split = _donateWeight != 0 && _donateWeight != RATIO_BASE;
+        _nodes = new Node[](_split ? 5 : 3);
+        _nodes[0].action = INodeAction(ref(1));
+        _nodes[0].children = new uint32[](2);
+        (_nodes[0].children[0], _nodes[0].children[1]) = (1, 2);
+        _nodes[0].weights = new uint32[](2);
+        (_nodes[0].weights[0], _nodes[0].weights[1]) = (_feeWeight, uint32(RATIO_BASE) - _feeWeight);
+        _nodes[1] = _leaf(4);
+        if (_split) {
+            _nodes[2].children = new uint32[](2);
+            (_nodes[2].children[0], _nodes[2].children[1]) = (3, 4);
+            _nodes[2].weights = new uint32[](2);
+            (_nodes[2].weights[0], _nodes[2].weights[1]) = (uint32(_donateWeight), uint32(RATIO_BASE - _donateWeight));
+            _nodes[3] = _leaf(2);
+            _nodes[4] = _leaf(3);
+        } else {
+            _nodes[2] = _leaf(_donateWeight == 0 ? 3 : 2);
+        }
     }
 
     /// @notice The DAO's balance of `_token` → Merkle claim → pay the beneficiary.
