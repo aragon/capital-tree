@@ -74,6 +74,10 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc IBudget
+    /// @dev The DAO already holds what it distributes: nothing to bring in
+    function fundActions(address, bytes calldata) external pure virtual returns (Action[] memory) {}
+
+    /// @inheritdoc IBudget
     /// @dev Records the claim `available` paid out
     function commitActions(address, bytes calldata _data) external view virtual returns (Action[] memory _actions) {
         (address _account, uint256 _cumulative,) = _decode(_data);

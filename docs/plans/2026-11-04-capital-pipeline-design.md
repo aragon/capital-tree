@@ -49,6 +49,7 @@ struct Node { INodeAction action; uint32[] children; ISplitter splitter; bool sk
 interface IBudget {
     function token() external view returns (IERC20);
     function available(address caller, bytes calldata data) external view returns (uint256 amount);   // the root's input
+    function fundActions(address caller, bytes calldata data) external view returns (Action[] memory);  // brings it into the DAO, before the root
     function commitActions(address caller, bytes calldata data) external view returns (Action[] memory);  // once, at the end
 }
 
@@ -89,8 +90,9 @@ interface ISplitter {
 trigger(bytes budgetData, bytes[] nodeData)             nonReentrant, whenNotPaused, auth(TRIGGER)
   nonce += 1                                            makes this trigger's execution IDs unique
   amount = budget.available(caller, budgetData)
+  dao.execute(budget.fundActions(caller, budgetData))   when not empty
   run(node 0, input = { budget.token(), amount })
-  the DAO lost ≤ amount of the budget's token            else revert BudgetExceeded
+  the DAO lost ≤ amount of the budget's token, 0 with fund actions   else revert BudgetExceeded
   dao.execute(budget.commitActions(caller, budgetData)) once, after the whole tree
 
 run(node, input)                                        depth first
@@ -149,7 +151,7 @@ Rejected shapes: an action bound to another budget (`BudgetMismatch`), weights n
 
 ### `CapitalPipelinePlugin` (PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable)
 
-- Storage: `IBudget budget`, a `uint96` trigger nonce packed in the same slot (execution IDs), `Node[] nodes`.
+- Storage: `IBudget budget`, a `uint64` trigger nonce packed in the same slot (execution IDs: plugin address, nonce, execution index), `Node[] nodes`.
 - `trigger(bytes budgetData, bytes[] nodeData)`: `auth(TRIGGER_PERMISSION_ID)` (granted to `ANY_ADDR`), `nonReentrant`, `whenNotPaused`.
 - `setFlow(budget, nodes)`: `auth(CONFIGURE_PERMISSION_ID)`, DAO only, `nonReentrant`. Validates the tree.
 - `pause()`, `unpause()`: `auth(MANAGER_PERMISSION_ID)`.

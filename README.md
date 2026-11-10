@@ -30,7 +30,7 @@ Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-
 
 | Term | Meaning |
 |---|---|
-| **Budget** | How much of one token the flow spends in this trigger. Read once at the start of a trigger, committed once at the end. |
+| **Budget** | How much of one token the flow spends in this trigger. Read once at the start of a trigger (and brought into the DAO first when its tokens sit elsewhere), committed once at the end. |
 | **Node** | One step of the tree: an action, its children, the splitter that divides its output among them, whether it may be skipped when it receives nothing, and whether its children get everything that arrived instead of the declared output (`forwardSurplus`). Node 0 is the root and receives the budget. |
 | **Action** | A contract that plans what a node does. It never moves funds itself: it returns DAO actions, which the plugin executes through the DAO. |
 | **Branch** | A node without an action and with 2+ children. It splits its input among them unchanged. |
@@ -66,6 +66,10 @@ sequenceDiagram
 
     Caller->>Plugin: trigger(budgetData, data)
     Plugin->>Budget: token(), available(caller, budgetData)
+    Plugin->>Budget: fundActions(caller, budgetData)
+    opt the budget's tokens sit outside the DAO
+        Plugin->>DAO: execute(fund actions)
+    end
     Note over Plugin: root input = (token, amount)
     loop every node with an action, depth first
         Plugin->>Action: build(caller, data[i], input)
@@ -78,7 +82,7 @@ sequenceDiagram
         Note over Plugin: DAO spent ≤ input and received ≥ output
         Note over Plugin: split the output among the children (splitter), or everything that arrived with forwardSurplus
     end
-    Note over Plugin: the tree spent ≤ available of the budget's token
+    Note over Plugin: the DAO lost ≤ available of the budget's token (none with fund actions)
     Plugin->>Budget: commitActions(caller, budgetData)
     Plugin->>DAO: execute(commit actions)
 ```
@@ -87,7 +91,15 @@ Any failure reverts the whole trigger: a flow never runs halfway. When a `Weight
 a node's output, the rounding remainder goes to the child with the largest weight. A node
 that receives nothing reverts the trigger too, unless it's marked `skipWhenEmpty`: then neither it
 nor anything below it runs. Every trigger counts up a nonce, so its execution IDs (in the DAO's
-`Executed`, `NodeExecuted` and `BudgetCommitted`) differ from another trigger's, even in the same block.
+`Executed`, `NodeExecuted`, `BudgetFunded` and `BudgetCommitted`) differ from another trigger's,
+even in the same block. Within a trigger, each `dao.execute` has its own index: 0 for the budget's
+fund actions, i + 1 for node i, `nodes.length + 1` for the commit. The errors about a DAO action
+(`MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`) report that same index.
+
+An execution ID isn't a hash: it packs the plugin's address (20 bytes) and the trigger's nonce (8),
+which identify the run, then the execution index (4). Trigger 5's node 1, for example, is
+`0x<plugin>` `0000000000000005` `00000002`. Which action is which is its position in the DAO's
+`Executed` event.
 
 ### What the plugin enforces
 
@@ -104,7 +116,8 @@ When a node runs:
 6. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
 7. A node marked `forwardSurplus` gives its children everything that arrived: the output token's increase with two tokens, its input plus the net change with one.
 
-After the whole tree, the DAO lost at most `available` of the budget's token (`BudgetExceeded`).
+Over the whole trigger, the DAO lost at most `available` of the budget's token, or none of it when
+the budget has fund actions (`BudgetExceeded`).
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
@@ -120,8 +133,16 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 
 ### Budgets
 
-A budget implements `IBudget`: `token()`; `available(caller, data)`, the root's input; and
-`commitActions(caller, data)`, the DAO actions that record the spend after the whole tree ran.
+A budget implements `IBudget`: `token()`; `available(caller, data)`, the root's input;
+`fundActions(caller, data)`, the DAO actions that bring that amount into the DAO before the root
+runs; and `commitActions(caller, data)`, the DAO actions that record the spend after the whole tree
+ran.
+
+Fund actions are for budgets whose tokens sit outside the DAO: a vault, a holder, a claimable
+position. The plugin runs them in their own `dao.execute`, before the root. Such a budget may cost
+the DAO none of its own tokens: the trigger reverts (`BudgetExceeded`) if the DAO ends it with less
+of the token than it started with. A budget that brings less than it made available fails when the
+tree spends what never arrived. The budgets below pay from the DAO's own balance, so they have none.
 
 | Budget               | `available()`                                                              | Commit             |
 | -------------------- | -------------------------------------------------------------------------- | ------------------ |
