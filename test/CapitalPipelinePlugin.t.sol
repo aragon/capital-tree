@@ -18,7 +18,7 @@ import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
 import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {Asset, Node} from "../src/lib/types.sol";
-import {CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
+import {CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, RATIO_BASE} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
@@ -113,14 +113,26 @@ contract CapitalPipelinePluginTest is Fixture {
         );
     }
 
-    function test_RevertWhen_TooManyNodes() public {
-        Node[] memory _tree = new Node[](17);
-        for (uint32 i; i < 16; ++i) {
-            _tree[i] = _then(keep, i + 1);
+    /// No fixed node cap: a root splitting into 31 transfer leaves, twice the old 16 nodes
+    function test_RunsAFlowOf32Nodes() public {
+        uint32 _leafCount = 31;
+        INodeAction _toAlice = _deployTransfer(alice);
+        Node[] memory _tree = new Node[](_leafCount + 1);
+        _tree[0].children = new uint32[](_leafCount);
+        uint32[] memory _weights = new uint32[](_leafCount);
+        for (uint32 i; i < _leafCount; ++i) {
+            _tree[0].children[i] = i + 1;
+            _tree[i + 1] = _leaf(_toAlice);
+            _weights[i] = uint32(RATIO_BASE / _leafCount);
         }
-        _tree[16] = _leaf(keep);
+        _weights[0] += uint32(RATIO_BASE % _leafCount);
+        _tree[0].splitter = _deployWeightSplitter(_weights);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidNodeCount.selector, 17));
+        _plugin.trigger("", noData);
+
+        assertEq(_plugin.nodes().length, 32);
+        assertEq(tokenA.balanceOf(alice), DAO_A);
     }
 
     function test_RevertWhen_ALeafHasNoAction() public {
@@ -525,6 +537,37 @@ contract CapitalPipelinePluginTest is Fixture {
         plugin.trigger("", new bytes[](1));
     }
 
+    /// Each action gets its node's entry, the same bytes in `build` and `preconditions`
+    function test_EachActionGetsItsNodeData() public {
+        CapitalPipelinePlugin _plugin =
+            _deployPlugin(_deployBalanceBudget(tokenA), _fork(NO_ACTION, 500_000, keep, 500_000, toBeneficiary));
+        bytes[] memory _data = new bytes[](3);
+        _data[2] = abi.encode(alice);
+        Asset memory _half = Asset(tokenA, DAO_A / 2);
+
+        vm.expectCall(address(keep), abi.encodeCall(INodeAction.build, (address(this), "", _half)));
+        vm.expectCall(address(toBeneficiary), abi.encodeCall(INodeAction.build, (address(this), _data[2], _half)));
+        vm.expectCall(
+            address(toBeneficiary),
+            abi.encodeCall(INodeAction.preconditions, (address(this), _data[2], _half, Asset(tokenA, 0)))
+        );
+        _plugin.trigger("", _data);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A / 2);
+    }
+
+    /// No node data: every action gets empty bytes
+    function test_WithoutNodeDataActionsGetEmptyBytes() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+        Asset memory _input = Asset(tokenA, DAO_A);
+
+        vm.expectCall(address(keep), abi.encodeCall(INodeAction.build, (address(this), "", _input)));
+        vm.expectCall(
+            address(keep), abi.encodeCall(INodeAction.preconditions, (address(this), "", _input, Asset(tokenA, 0)))
+        );
+        _plugin.trigger("", noData);
+    }
+
     // =========================================================================================
     // Every node must succeed
     // =========================================================================================
@@ -751,7 +794,7 @@ contract CapitalPipelinePluginTest is Fixture {
         MockFiller _filler = _overpayingFiller(_tree, 50 ether);
 
         _expectNodeExecuted(
-            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND + 50 ether)
+            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND + 50 ether), 50 ether
         );
         _filler.fillWithoutData();
     }
@@ -760,7 +803,9 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_ADeclaredNodePassesOnTheDeclaredAmount() public {
         MockFiller _filler = _overpayingFiller(_chain(action, keep), 50 ether);
 
-        _expectNodeExecuted(address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND));
+        _expectNodeExecuted(
+            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND), 50 ether
+        );
         _filler.fillWithoutData();
     }
 
@@ -770,8 +815,61 @@ contract CapitalPipelinePluginTest is Fixture {
         _tree[0].forwardSurplus = true;
         CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
-        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A + 10 ether));
+        _expectNodeExecuted(
+            address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A + 10 ether), 10 ether
+        );
         _plugin.trigger("", noData);
+    }
+
+    /// With one token, a node that pays a 2 A cost and declares the 98 A left has no surplus
+    function test_AOneTokenNodeWithACostHasNoSurplus() public {
+        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 2 ether, -2 ether), keep);
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A - 2 ether), 0);
+        _plugin.trigger("", noData);
+    }
+
+    /// A keep leaf leaves its whole input in the DAO, but a leaf has no children: no surplus
+    function test_ALeafReportsNoSurplus() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, 0), 0);
+        _plugin.trigger("", noData);
+    }
+
+    /// Another token, none declared, no forwarding: the plugin doesn't read that token, so the 20 B
+    /// that came in aren't reported
+    function test_AnUnmeasuredOutputReportsNoSurplus() public {
+        Node[] memory _tree = _chain(_income(tokenB, 20 ether, 0, 0), keep);
+        _tree[1].skipWhenEmpty = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenB, 0), 0);
+        _plugin.trigger("", noData);
+
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 20 ether);
+    }
+
+    /// The last event of a run, after the budget's commit
+    function test_FlowExecutedFollowsTheBudgetCommit() public {
+        vm.expectEmit(address(plugin));
+        emit CapitalPipelinePlugin.BudgetCommitted(_executionIdOf(address(plugin), 1, 4));
+        vm.expectEmit(address(plugin));
+        emit CapitalPipelinePlugin.FlowExecuted(address(filler), 1, Asset(tokenA, RATE));
+        filler.fillWithoutData();
+    }
+
+    /// Without commit actions too, once per trigger, with that trigger's nonce
+    function test_FlowExecutedIsEmittedOncePerTrigger() public {
+        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+
+        for (uint64 _nonce = 1; _nonce <= 2; ++_nonce) {
+            vm.expectEmit(address(_plugin));
+            emit CapitalPipelinePlugin.FlowExecuted(address(this), _nonce, Asset(tokenA, DAO_A));
+            _plugin.trigger("", noData);
+        }
     }
 
     /// Two fillers, or a solver batching triggers, in the same block: indexers can still tell them apart
@@ -893,12 +991,16 @@ contract CapitalPipelinePluginTest is Fixture {
         revert("no NodeExecuted for the root");
     }
 
-    /// @dev The root (node 0) of `_plugin`'s first trigger emits exactly this input and output
-    function _expectNodeExecuted(address _plugin, address _caller, Asset memory _input, Asset memory _output)
-        internal
-    {
+    /// @dev The root (node 0) of `_plugin`'s first trigger emits exactly this input, output and surplus
+    function _expectNodeExecuted(
+        address _plugin,
+        address _caller,
+        Asset memory _input,
+        Asset memory _output,
+        uint256 _surplus
+    ) internal {
         vm.expectEmit(_plugin);
-        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 1), _input, _output);
+        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 1), _input, _output, _surplus);
     }
 
     /// @dev The plugin's address, the trigger's nonce and the execution index, packed in 32 bytes

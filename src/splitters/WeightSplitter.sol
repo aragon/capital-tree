@@ -49,7 +49,9 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc ISplitter
-    /// @dev Returns one amount per weight; the plugin reverts if that isn't one per child
+    /// @dev Returns one amount per weight and ignores the child count. A weight count that doesn't
+    ///      match the node's children reverts in the plugin: in `_checkNode` (`InvalidSplitter`) when
+    ///      the flow is set, and in `_split` (`InvalidSplit`) on a trigger.
     function split(address, Asset calldata _output, uint256) external view returns (uint256[] memory _amounts) {
         uint32[] memory _w = _weights;
         uint256 _count = _w.length;

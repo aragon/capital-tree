@@ -16,8 +16,5 @@ bytes32 constant CHECKPOINT_PERMISSION_ID = keccak256("CHECKPOINT_PERMISSION");
 /// @dev Records a Merkle claim; granted to the DAO, which executes it when the claim's budget commits
 bytes32 constant RECORD_CLAIM_PERMISSION_ID = keccak256("RECORD_CLAIM_PERMISSION");
 
-/// @dev The most nodes a flow tree may have, which bounds the gas of a trigger
-uint256 constant MAX_NODES = 16;
-
 /// @dev Ratios are fractions of 1_000_000
 uint256 constant RATIO_BASE = 1_000_000;

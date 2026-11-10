@@ -46,8 +46,10 @@ struct Asset { IERC20 token; uint256 amount; }
 A node's input is the asset it receives: the budget at the root, a share of its parent's output
 elsewhere. It spends all of it. Its output is the asset its action declares for its children: the
 least the action accepts, zero for a leaf. The children get that output, or everything that arrived
-on a node marked `forwardSurplus`. The node's splitter divides it, and `NodeExecuted` emits the input
-and what the children got.
+on a node marked `forwardSurplus`. The node's splitter divides it, and `NodeExecuted` emits the input,
+what the children got and the surplus: what arrived above the declared output, forwarded or not.
+A leaf reports no surplus, and neither does a node whose output the plugin doesn't measure (another
+token, none declared, no forwarding).
 
 ### One trigger, step by step
 
@@ -85,6 +87,7 @@ sequenceDiagram
     Note over Plugin: the DAO lost ≤ available of the budget's token (none with fund actions)
     Plugin->>Budget: commitActions(caller, budgetData)
     Plugin->>DAO: execute(commit actions)
+    Note over Plugin: emit FlowExecuted(caller, nonce, root input)
 ```
 
 Any failure reverts the whole trigger: a flow never runs halfway. When a `WeightSplitter` divides
@@ -95,6 +98,8 @@ nor anything below it runs. Every trigger counts up a nonce, so its execution ID
 even in the same block. Within a trigger, each `dao.execute` has its own index: 0 for the budget's
 fund actions, i + 1 for node i, `nodes.length + 1` for the commit. The errors about a DAO action
 (`MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`) report that same index.
+A run that finishes emits `FlowExecuted(caller, nonce, input)` last, after the commit: `input` is what
+the budget gave the root, not what the flow spent.
 
 An execution ID isn't a hash: it packs the plugin's address (20 bytes) and the trigger's nonce (8),
 which identify the run, then the execution index (4). Trigger 5's node 1, for example, is
@@ -121,13 +126,22 @@ the budget has fund actions (`BudgetExceeded`).
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
-1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
+1. At least 1 node; every child comes after its parent, has exactly one parent, and is reachable from node 0. There's no fixed cap (see below).
 2. A node without an action has at least 2 children.
 3. A node with 2+ children has a splitter made for that many children, or for any (`childCount()` returns 0); other nodes have none (`InvalidSplitter`). Whether the splitter returns one amount per child is checked at trigger (`InvalidSplit`).
 4. An action bound to a budget (OpenFill) must be bound to the flow's budget. It may sit anywhere.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
 7. Only a node with an action and children can be marked `forwardSurplus` (`InvalidForwardSurplus`).
+
+Gas and the EVM's call stack bound a flow instead, and `setFlow` checks neither: a flow past them
+saves, then every trigger reverts. Measured on a first payout:
+
+- Size: a root splitting into transfer leaves fits 215 leaves under 16M gas (15.9M), and about 225
+  under the 2^24 transaction cap (EIP-7825). Each transfer leaf adds about 75k gas. Setting a flow
+  that size costs about 10M gas.
+- Depth: the tree is walked recursively. A straight chain runs up to 69 nodes deep; at 70 the
+  trigger reverts with a stack overflow.
 
 ## Components
 
