@@ -75,13 +75,13 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     event BudgetSettingsUpdated(IERC20 token, uint256 amountPerEpoch, uint256 maxBudget, uint256 epochInterval);
 
     /// @notice Emitted when the growth per epoch is updated
-    event NewAmountPerEpoch(uint256 amountPerEpoch);
+    event AmountPerEpochUpdated(uint256 amountPerEpoch);
 
     /// @notice Emitted when the cap is updated
-    event NewMaxBudget(uint256 maxBudget);
+    event MaxBudgetUpdated(uint256 maxBudget);
 
     /// @notice Emitted when the epoch interval is updated
-    event NewEpochInterval(uint256 epochInterval);
+    event EpochIntervalUpdated(uint256 epochInterval);
 
     /// @notice Emitted when the amount restarts from zero after a spend
     /// @param lastSeenBalance The DAO balance left after the spend
@@ -170,14 +170,14 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     function setAmountPerEpoch(uint256 _amountPerEpoch) external virtual auth(MANAGER_PERMISSION_ID) {
         _sync();
         amountPerEpoch = _amountPerEpoch;
-        emit NewAmountPerEpoch(_amountPerEpoch);
+        emit AmountPerEpochUpdated(_amountPerEpoch);
     }
 
     /// @notice Updates the cap on the available amount (0 for no cap)
     function setMaxBudget(uint256 _maxBudget) external virtual auth(MANAGER_PERMISSION_ID) {
         _sync();
         maxBudget = _maxBudget;
-        emit NewMaxBudget(_maxBudget);
+        emit MaxBudgetUpdated(_maxBudget);
     }
 
     /// @notice Updates the epoch interval, which changes the growth rate
@@ -223,7 +223,7 @@ contract FundedStreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
 
         epochInterval = _epochInterval;
 
-        emit NewEpochInterval(_epochInterval);
+        emit EpochIntervalUpdated(_epochInterval);
     }
 
     /// @dev The DAO's current balance of the streamed token
