@@ -11,6 +11,9 @@ import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
+import {KeepAction} from "../src/actions/KeepAction.sol";
+import {VaultDonateAction} from "../src/actions/VaultDonateAction.sol";
+import {IDonationVault} from "../src/interfaces/IDonationVault.sol";
 import {IBudget, ICheckpointedBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
 import {Node} from "../src/lib/types.sol";
@@ -35,6 +38,9 @@ library Recipes {
     bytes32 internal constant TRANSFER_TO_BENEFICIARY = "TransferToBeneficiaryAction@1";
     bytes32 internal constant BURN = "BurnAction@1";
     bytes32 internal constant KEEP = "KeepAction@1";
+    bytes32 internal constant VAULT_DONATE = "VaultDonateAction@1";
+
+    error InvalidDonateWeight();
 
     address internal constant ANY_ADDR = address(type(uint160).max);
 
@@ -94,6 +100,42 @@ library Recipes {
         _params.nodes[1] = _leaf(2);
         _params.nodes[2] = _leaf(3);
 
+        _params.grants = _swapGrants(_manager);
+    }
+
+    /// @notice Stream → OpenFill → donate `_donateWeight` of the proceeds, keep the rest.
+    ///         Weight is out of RATIO_BASE; 0 and 100% use a single child (no zero-weight nodes).
+    ///         Components: 0 budget, 1 OpenFill, 2 Donate, 3 Keep.
+    function buybackAndDonate(
+        address _manager,
+        Stream memory _stream,
+        Swap memory _swap,
+        IDonationVault _vault,
+        uint256 _donateWeight
+    ) internal pure returns (CapitalPipelinePluginSetup.InstallParams memory _params) {
+        if (_donateWeight > RATIO_BASE) revert InvalidDonateWeight();
+        _params.components = new CapitalPipelinePluginSetup.Component[](4);
+        _params.components[0] = _streamBudget(_stream);
+        _params.components[1] = _openFill(_swap);
+        _params.components[2] =
+            _component(VAULT_DONATE, abi.encodeCall(VaultDonateAction.initialize, (IDAO(DAO_REF), _vault)));
+        _params.components[3] = _component(KEEP, abi.encodeCall(KeepAction.initialize, (IDAO(DAO_REF))));
+        _params.budget = IBudget(ref(0));
+        if (_donateWeight == 0 || _donateWeight == RATIO_BASE) {
+            _params.nodes = new Node[](2);
+            _params.nodes[0] = _then(1, 1);
+            _params.nodes[1] = _leaf(_donateWeight == 0 ? 3 : 2);
+        } else {
+            _params.nodes = new Node[](3);
+            _params.nodes[0].action = INodeAction(ref(1));
+            _params.nodes[0].children = new uint32[](2);
+            (_params.nodes[0].children[0], _params.nodes[0].children[1]) = (1, 2);
+            _params.nodes[0].weights = new uint32[](2);
+            (_params.nodes[0].weights[0], _params.nodes[0].weights[1]) =
+            (uint32(_donateWeight), uint32(RATIO_BASE - _donateWeight));
+            _params.nodes[1] = _leaf(2);
+            _params.nodes[2] = _leaf(3);
+        }
         _params.grants = _swapGrants(_manager);
     }
 
