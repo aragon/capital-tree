@@ -106,8 +106,7 @@ contract Install is Script {
     function _swap(string memory _config) internal pure returns (Recipes.Swap memory) {
         return Recipes.Swap({
             demandedToken: IERC20(_config.readAddress(".swap.demandedToken")),
-            demandPerFill: _config.readUint(".swap.demandPerFill"),
-            minDemandedPerOffered: _config.readUint(".swap.minDemandedPerOffered")
+            demandPerFill: _config.readUint(".swap.demandPerFill")
         });
     }
 

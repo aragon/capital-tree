@@ -6,12 +6,13 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Recipes} from "../script/Recipes.sol";
 import {METADATA_URIS} from "./helpers/Fixture.sol";
@@ -21,19 +22,20 @@ contract MetadataTest is Test {
     function test_EachFileMatchesItsInitializer() public view {
         _assertMatches("FundedStreamBudget", FundedStreamBudget.initialize.selector);
         _assertMatches("BalanceBudget", BalanceBudget.initialize.selector);
+        _assertMatches("MerkleClaimBudget", MerkleClaimBudget.initialize.selector);
         _assertMatches("OpenFillAction", OpenFillAction.initialize.selector);
-        _assertMatches("MerkleClaimAction", MerkleClaimAction.initialize.selector);
         _assertMatches("TransferAction", TransferAction.initialize.selector);
         _assertMatches("TransferToBeneficiaryAction", TransferToBeneficiaryAction.initialize.selector);
         _assertMatches("BurnAction", BurnAction.initialize.selector);
         _assertMatches("KeepAction", KeepAction.initialize.selector);
+        _assertMatches("WeightSplitter", WeightSplitter.initialize.selector);
     }
 
     function test_UrisFileListsEveryComponent() public view {
         string memory _uris = vm.readFile("metadata/uris.json");
         string[] memory _names = vm.parseJsonKeys(_uris, ".components");
 
-        assertEq(_names.length, 8);
+        assertEq(_names.length, 9);
         for (uint256 i; i < _names.length; ++i) {
             assertTrue(vm.exists(string.concat("metadata/components/", _names[i], ".json")), _names[i]);
         }

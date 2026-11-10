@@ -43,7 +43,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenA.balanceOf(address(solver)), RATE);
         assertEq(tokenB.balanceOf(address(solver)), 0);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
         assertEq(budget.lastSeenBalance(), DAO_A - RATE);
         assertEq(budget.baseTimestamp(), block.timestamp);
     }
@@ -58,7 +58,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(BURN), DEMAND * 95 / 100);
         assertEq(tokenB.balanceOf(fee), DEMAND * 5 / 100);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_CallbackDataAtNonRootNode() public {
@@ -80,7 +80,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
         assertEq(budget.lastSeenBalance(), DAO_A - RATE);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_MultipleOpenFillNodesKeepSeparatePayloads() public {
@@ -104,14 +104,16 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + 2 * DEMAND);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
         assertEq(budget.lastSeenBalance(), DAO_A - RATE);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_RevertWhen_UnderpaidRestoresBalancesAndStream() public {
         bytes[] memory data = _data(_calls(RATE, DEMAND - 1, address(dao)));
         uint256 checkpoint = budget.baseTimestamp();
 
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(
+            abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + DEMAND - 1)
+        );
         solver.trigger(data);
 
         _assertUnfilled(checkpoint);
@@ -177,14 +179,14 @@ contract GenericFillSolverTest is Fixture {
         bytes[] memory data = _data(new Action[](0));
         uint256 checkpoint = budget.baseTimestamp();
         // The solver accepts an empty batch, but OpenFill still requires payment.
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 3));
+        vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B));
         solver.trigger(data);
         _assertUnfilled(checkpoint);
     }
 
     function test_RevertWhen_BatchReentersPipeline() public {
         Action[] memory calls = new Action[](1);
-        calls[0] = Action(address(plugin), 0, abi.encodeCall(plugin.trigger, (new bytes[](0))));
+        calls[0] = Action(address(plugin), 0, abi.encodeCall(plugin.trigger, ("", new bytes[](0))));
         bytes[] memory data = _data(calls);
         uint256 checkpoint = budget.baseTimestamp();
 
@@ -335,7 +337,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
         assertEq(tokenB.balanceOf(alice), 2 ether);
         assertEq(tokenB.balanceOf(address(solver)), 0);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_RevertWhen_AuthorizedAddressIsZero() public {
@@ -355,7 +357,7 @@ contract GenericFillSolverTest is Fixture {
 
         solver.trigger(data);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
-        assertEq(budget.available(), 0);
+        assertEq(_available(budget), 0);
     }
 
     function test_SweepRejectsFalseReturningToken() public {
@@ -394,7 +396,7 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenA.balanceOf(address(solver)), 0);
         assertEq(tokenB.balanceOf(address(solver)), DEMAND);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
-        assertEq(budget.available(), RATE);
+        assertEq(_available(budget), RATE);
         assertEq(budget.baseTimestamp(), checkpoint);
     }
 }

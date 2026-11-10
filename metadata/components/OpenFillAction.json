@@ -1,7 +1,7 @@
 {
   "name": "OpenFillAction",
   "version": 1,
-  "description": "Root action, or below branches without an action. Dutch-auction swap of the budget's token: any filler pays the demanded amount and receives the offer. Restarts its budget when the manager changes the price, so it needs CHECKPOINT_PERMISSION_ID on that budget.",
+  "description": "Dutch-auction swap: offers its whole input for a flat demandPerFill of the demanded token, and any filler can take it. It has no cap of its own: feed it from a stream with a maxBudget, which sets the worst price (demandPerFill over the most the node can receive). Restarts its budget when the manager changes demandPerFill, so it needs CHECKPOINT_PERMISSION_ID on that budget.",
   "initialize": {
     "inputs": [
       {
@@ -14,23 +14,18 @@
         "name": "budget",
         "type": "address",
         "internalType": "contract ICheckpointedBudget",
-        "description": "The flow's stream budget. In a recipe: ref(i) of the budget component."
+        "description": "The flow's stream budget, restarted when the demand changes. In a recipe: ref(i) of the budget component."
       },
       {
         "name": "demandedToken",
         "type": "address",
         "internalType": "contract IERC20",
-        "description": "The token the DAO must receive. 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE for native ETH."
+        "description": "The token the DAO must receive: an ERC20 (use WETH for ether). Native ETH isn't supported."
       },
       {
         "name": "demandPerFill",
         "type": "uint256",
         "description": "How much of the demanded token must come back per fill."
-      },
-      {
-        "name": "minDemandedPerOffered",
-        "type": "uint256",
-        "description": "The lowest acceptable price, demanded per offered, 1e18-scaled."
       }
     ]
   }

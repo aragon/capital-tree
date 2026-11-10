@@ -59,8 +59,8 @@ async function refresh() {
 // Graph editor
 
 const GROUPS = [
-  ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1"]],
-  ["Root actions", ["OpenFillAction@1", "MerkleClaimAction@1"]],
+  ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1", "MerkleClaimBudget@1"]],
+  ["Actions", ["OpenFillAction@1"]],
   ["Splits", [graph.BRANCH]],
   ["Leaves", ["TransferAction@1", "TransferToBeneficiaryAction@1", "BurnAction@1", "KeepAction@1"]],
 ];
@@ -100,7 +100,8 @@ function updatePreview() {
   try {
     recipe = graph.graphToRecipe(editor.export(), ctx.deployment.account, ctx.meta);
     const name = (i) => `ref(${i}) ${recipe.components[i].id.split("@")[0]}`;
-    const nodes = recipe.nodes.map((n) => ({ ...n, children: lib.numbers(n.children), weights: lib.numbers(n.weights) }));
+    const weights = (n) => (n.splitter === null ? [] : lib.numbers(recipe.components[n.splitter].args.weights));
+    const nodes = recipe.nodes.map((n) => ({ ...n, children: lib.numbers(n.children), weights: weights(n) }));
     const tree = lib.describeTree(nodes, (n) => (n.action === null ? "branch (no action)" : name(n.action)));
     const who = (w) => w.replace(/ref\((\d+)\)/, (_, i) => name(Number(i))).replace(ctx.deployment.account, "you");
     const grants = recipe.grants.map((g) => `  ${g.permission} on ${who(g.where)} → ${who(g.who)}`).join("\n");
@@ -177,13 +178,12 @@ async function renderFlows() {
   }
   $("#flows").innerHTML = all
     .map((f) => {
-      const root = f.nodes[0];
       const tree = lib.describeTree(f.nodes, (n) => [n.name, ...n.details].join(" · "));
       let run = `<button data-trigger="${f.plugin}">Trigger</button>`;
-      if (root.name === "OpenFillAction") run = `<button data-fill="${f.plugin}">Fill with the playground filler</button>`;
-      if (root.name === "MerkleClaimAction") {
+      if (f.nodes.some((n) => n.name === "OpenFillAction")) run = `<button data-fill="${f.plugin}">Fill with the playground filler</button>`;
+      if (f.budget.name === "MerkleClaimBudget") {
         run = `<input data-cumulative="${f.plugin}" value="100e18" title="Cumulative amount in the tree">
-          <button data-claim="${f.plugin}" data-nodes="${f.nodes.length}">Claim</button>`;
+          <button data-claim="${f.plugin}">Claim</button>`;
       }
       return `<div class="flow">
         <div class="row"><strong>Plugin</strong> <span class="mono">${f.plugin}</span>${f.paused ? ' <span class="bad">paused</span>' : ""}</div>
@@ -195,7 +195,7 @@ async function renderFlows() {
 }
 
 async function runFlow(e) {
-  const { fill, trigger, claim, nodes } = e.target.dataset;
+  const { fill, trigger, claim } = e.target.dataset;
   const plugin = fill ?? trigger ?? claim;
   if (!plugin) return;
   const log = document.querySelector(`[data-log="${plugin}"]`);
@@ -207,7 +207,7 @@ async function runFlow(e) {
     if (trigger) await lib.trigger(ctx, plugin);
     if (claim) {
       const cumulative = lib.amount(document.querySelector(`[data-cumulative="${plugin}"]`).value);
-      await lib.claim(ctx, plugin, Number(nodes), cumulative);
+      await lib.claim(ctx, plugin, cumulative);
     }
     await refresh();
     const after = document.querySelector(`[data-log="${plugin}"]`);

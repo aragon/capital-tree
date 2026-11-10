@@ -5,10 +5,11 @@
     "FundedStreamBudget": "",
     "BalanceBudget": "",
     "OpenFillAction": "",
-    "MerkleClaimAction": "",
+    "MerkleClaimBudget": "",
     "TransferAction": "",
     "TransferToBeneficiaryAction": "",
     "BurnAction": "",
-    "KeepAction": ""
+    "KeepAction": "",
+    "WeightSplitter": ""
   }
 }

@@ -53,9 +53,20 @@
                   "description": "Indexes of the child nodes, each greater than this node's."
                 },
                 {
-                  "name": "weights",
-                  "type": "uint32[]",
-                  "description": "One per child when there are 2+, summing to 1,000,000."
+                  "name": "splitter",
+                  "type": "address",
+                  "internalType": "contract ISplitter",
+                  "description": "ref(i) of a splitter component that divides the output among the children when there are 2+ (a WeightSplitter for fixed weights), or address(0) otherwise."
+                },
+                {
+                  "name": "skipWhenEmpty",
+                  "type": "bool",
+                  "description": "Skip this node and everything below it when it receives 0, instead of reverting. Never on the root."
+                },
+                {
+                  "name": "forwardSurplus",
+                  "type": "bool",
+                  "description": "Give the children everything that arrived, not just the declared output. Off by default: anything above it stays in the DAO. Only on a node with an action and children; with one token, the node passes its whole input on."
                 }
               ]
             },

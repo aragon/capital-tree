@@ -38,12 +38,12 @@ contract MockFiller is IFiller {
     function fill(bytes memory _data) external {
         bytes[] memory _perNode = new bytes[](plugin.nodes().length);
         _perNode[0] = _data;
-        plugin.trigger(_perNode);
+        plugin.trigger("", _perNode);
     }
 
     /// @notice Triggers with no data at all, which works for flows of any length
     function fillWithoutData() external {
-        plugin.trigger(new bytes[](0));
+        plugin.trigger("", new bytes[](0));
     }
 
     function fillOffer(
@@ -54,7 +54,7 @@ contract MockFiller is IFiller {
         bytes calldata
     ) external {
         if (reenter) {
-            try plugin.trigger(new bytes[](0)) {}
+            try plugin.trigger("", new bytes[](0)) {}
             catch (bytes memory _reason) {
                 reentryError = _reason;
             }

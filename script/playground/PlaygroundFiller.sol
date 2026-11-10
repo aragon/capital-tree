@@ -5,12 +5,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {IFiller} from "../../src/interfaces/IFiller.sol";
 
-/// @notice A filler for the playground: takes the open-fill offer at the root of any flow and pays
-///         the demanded amount from its own balance. Anyone can make it fill.
+/// @notice A filler for the playground: takes the open-fill offer of any flow and pays the demanded
+///         amount from its own balance. Anyone can make it fill.
 contract PlaygroundFiller is IFiller {
-    /// @notice Triggers `_plugin`, whose root must be an OpenFillAction, and takes its offer
+    /// @notice Triggers `_plugin`, which must have an OpenFillAction, and takes its offer
     function fill(CapitalPipelinePlugin _plugin) external {
-        _plugin.trigger(new bytes[](0));
+        _plugin.trigger("", new bytes[](0));
     }
 
     /// @inheritdoc IFiller

@@ -5,19 +5,33 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 
 /// @title IBudget
-/// @notice How much of a token a flow may spend right now
+/// @notice How much of a token a flow may spend in one trigger
 /// @dev Budgets are clones initialized for one DAO and expose it as `dao()`
 ///      (`DaoAuthorizableUpgradeable`). The plugin rejects budgets bound to another DAO or to none.
 interface IBudget {
     /// @notice The token this budget releases
     function token() external view returns (IERC20);
 
-    /// @notice The amount the flow may spend right now
-    function available() external view returns (uint256);
+    /// @notice What the flow spends in this trigger: the root's input, all of which it must take
+    /// @param caller Who triggered the flow
+    /// @param data The trigger's budget data, empty for a budget that needs none
+    /// @return amount The amount the root receives
+    function available(address caller, bytes calldata data) external view returns (uint256 amount);
+
+    /// @notice DAO actions that bring the amount `available` returned into the DAO, for a budget
+    ///         whose tokens sit elsewhere (a vault, a holder, a claimable position). Empty when the
+    ///         DAO already holds them. The plugin executes them once, in their own `dao.execute`,
+    ///         before the root. A budget with fund actions may cost the DAO none of its own tokens:
+    ///         the trigger reverts if the DAO ends it with less of `token()` than it started with.
+    /// @param caller Who triggered the flow
+    /// @param data The trigger's budget data, as passed to `available`
+    function fundActions(address caller, bytes calldata data) external view returns (Action[] memory);
 
     /// @notice DAO actions that record the spend. The plugin executes them once, in their own
     ///         `dao.execute`, after the whole tree ran.
-    function commitActions() external view returns (Action[] memory);
+    /// @param caller Who triggered the flow
+    /// @param data The trigger's budget data, as passed to `available`
+    function commitActions(address caller, bytes calldata data) external view returns (Action[] memory);
 }
 
 /// @title ICheckpointedBudget

@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {Node} from "../../src/lib/types.sol";
 import {Fixture} from "../helpers/Fixture.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MockFiller} from "../mocks/MockFiller.sol";
@@ -35,8 +36,13 @@ contract Handler is Test {
     }
 
     function fill() external {
-        if (budget.available() == 0) return; // nothing on offer: a trigger would revert by design
+        uint256 _available = budget.available(address(0), "");
+        if (_available == 0) return; // nothing on offer: a trigger would revert by design
         filler.fillWithoutData();
+    }
+
+    function overpay(uint256 _extra) external {
+        filler.setFillDelta(int256(bound(_extra, 0, 1_000 ether)));
     }
 
     function deposit(uint256 _amount) external {
@@ -58,17 +64,9 @@ contract Handler is Test {
     }
 
     function setDemandPerFill(uint256 _demand) external {
-        // Keeps maxOffered() >= 1, and at least 20 wei so the 5% branch is never empty
-        uint256 _lowest = action.minDemandedPerOffered() / 1e18 + 1;
-        if (_lowest < 20) _lowest = 20;
+        // At least 20 wei so the 5% branch is never empty
         vm.prank(manager);
-        action.setDemandPerFill(bound(_demand, _lowest, 2_000_000 ether));
-    }
-
-    function setMinDemandedPerOffered(uint256 _price) external {
-        uint256 _highest = action.demandPerFill() * 1e18; // keeps maxOffered() >= 1
-        vm.prank(manager);
-        action.setMinDemandedPerOffered(bound(_price, 1, _highest));
+        action.setDemandPerFill(bound(_demand, 20, 2_000_000 ether));
     }
 }
 
@@ -79,7 +77,10 @@ contract PipelineInvariantTest is Fixture {
         super.setUp();
         FundedStreamBudget _budget = _deployBudget(RATE, 0);
         OpenFillAction _action = _deployAction(_budget);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _splitToBurnAndFee(_action));
+        // Forwarding the surplus, so whatever the filler overpays is split too
+        Node[] memory _tree = _splitToBurnAndFee(_action);
+        _tree[0].forwardSurplus = true;
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _tree);
 
         filler = new MockFiller(_plugin);
         tokenB.mint(address(filler), type(uint128).max);

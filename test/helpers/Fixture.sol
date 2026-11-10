@@ -8,12 +8,13 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
 import {BalanceBudget} from "../../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../../src/actions/BurnAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
+import {WeightSplitter} from "../../src/splitters/WeightSplitter.sol";
 import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
@@ -30,9 +31,9 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 /// @dev Metadata links for the deploy script, one per component (see metadata/uris.json)
 string constant METADATA_URIS = '{"release":"ipfs://release","build":"ipfs://build","components":{'
     '"FundedStreamBudget":"ipfs://FundedStreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
-    '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimAction":"ipfs://MerkleClaimAction",'
+    '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimBudget":"ipfs://MerkleClaimBudget",'
     '"TransferAction":"ipfs://TransferAction","TransferToBeneficiaryAction":"ipfs://TransferToBeneficiaryAction",'
-    '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction"}}';
+    '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction","WeightSplitter":"ipfs://WeightSplitter"}}';
 
 /// @notice A DAO holding the offered token A and some pre-existing demanded token B.
 ///         The test contract is the DAO's ROOT, so it can grant permissions directly.
@@ -46,7 +47,7 @@ abstract contract Fixture is Test {
     uint256 internal constant RATE = 10 ether; // offer growth per epoch
     uint256 internal constant EPOCH = 1 days;
     uint256 internal constant DEMAND = 1000 ether; // B demanded per fill
-    uint256 internal constant MIN_PRICE = 50 ether; // 50 B per A, 1e18-scaled → maxOffered = 20 A
+    uint256 internal constant STREAM_CAP = 20 ether; // 1,000 B for at most 20 A: 50 B per A or better
 
     address internal manager = makeAddr("manager");
     address internal fee = makeAddr("fee");
@@ -112,6 +113,11 @@ abstract contract Fixture is Test {
         dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
     }
 
+    /// @dev What `_budget` gives a flow triggered without budget data
+    function _available(IBudget _budget) internal view returns (uint256 _amount) {
+        _amount = _budget.available(address(0), "");
+    }
+
     function _deployBalanceBudget(IERC20 _token) internal returns (BalanceBudget _budget) {
         _budget = BalanceBudget(
             ProxyLib.deployMinimalProxy(
@@ -122,7 +128,7 @@ abstract contract Fixture is Test {
 
     // Actions
 
-    /// @dev Demands token B. Bound to `_budget`, which it may restart when its price terms change.
+    /// @dev Demands token B. Bound to `_budget`, which it restarts when its demand changes.
     function _deployAction(FundedStreamBudget _budget) internal returns (OpenFillAction) {
         return _deployOpenFill(_budget, tokenB);
     }
@@ -132,17 +138,17 @@ abstract contract Fixture is Test {
         _action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
                 address(new OpenFillAction()),
-                abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND, MIN_PRICE))
+                abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND))
             )
         );
         dao.grant(address(_action), manager, MANAGER_PERMISSION_ID);
         dao.grant(address(_budget), address(_action), CHECKPOINT_PERMISSION_ID);
     }
 
-    function _deployMerkle(IBudget _budget, bytes32 _root) internal returns (MerkleClaimAction _merkle) {
-        _merkle = MerkleClaimAction(
+    function _deployMerkle(IERC20 _token, bytes32 _root) internal returns (MerkleClaimBudget _merkle) {
+        _merkle = MerkleClaimBudget(
             ProxyLib.deployMinimalProxy(
-                address(new MerkleClaimAction()), abi.encodeCall(MerkleClaimAction.initialize, (dao, _budget, _root))
+                address(new MerkleClaimBudget()), abi.encodeCall(MerkleClaimBudget.initialize, (dao, _token, _root))
             )
         );
         dao.grant(address(_merkle), manager, MANAGER_PERMISSION_ID);
@@ -153,6 +159,14 @@ abstract contract Fixture is Test {
         return TransferAction(
             ProxyLib.deployMinimalProxy(
                 address(new TransferAction()), abi.encodeCall(TransferAction.initialize, (dao, _to))
+            )
+        );
+    }
+
+    function _deployWeightSplitter(uint32[] memory _weights) internal returns (WeightSplitter) {
+        return WeightSplitter(
+            ProxyLib.deployMinimalProxy(
+                address(new WeightSplitter()), abi.encodeCall(WeightSplitter.initialize, (dao, _weights))
             )
         );
     }
@@ -194,17 +208,17 @@ abstract contract Fixture is Test {
         _node.children[0] = _child;
     }
 
-    /// @dev A node with two children, split by weights (fractions of RATIO_BASE)
+    /// @dev A node with two children, split by a weight splitter (fractions of RATIO_BASE)
     function _branch(INodeAction _action, uint32 _childA, uint32 _weightA, uint32 _childB, uint32 _weightB)
         internal
-        pure
         returns (Node memory _node)
     {
         _node.action = _action;
         _node.children = new uint32[](2);
         (_node.children[0], _node.children[1]) = (_childA, _childB);
-        _node.weights = new uint32[](2);
-        (_node.weights[0], _node.weights[1]) = (_weightA, _weightB);
+        uint32[] memory _weights = new uint32[](2);
+        (_weights[0], _weights[1]) = (_weightA, _weightB);
+        _node.splitter = _deployWeightSplitter(_weights);
     }
 
     /// @dev A one-node tree
@@ -233,7 +247,6 @@ abstract contract Fixture is Test {
     /// @dev `_root` split by weight between two leaves
     function _fork(INodeAction _root, uint32 _weightA, INodeAction _a, uint32 _weightB, INodeAction _b)
         internal
-        pure
         returns (Node[] memory _tree)
     {
         _tree = new Node[](3);

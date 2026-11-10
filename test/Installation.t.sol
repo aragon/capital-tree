@@ -56,7 +56,8 @@ contract InstallationTest is Fixture {
 
     /// The proposal's three actions install a buy-and-burn flow, which then burns a fill's proceeds
     function test_DaoInstallsBuyAndBurnWithTheProposalActions() public {
-        (address _plugin, Action[] memory _actions) = installer.install(psp, repo, address(dao), _buyAndBurnConfig());
+        (address _plugin, Action[] memory _actions) =
+            installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
 
         dao.grant(address(dao), address(dao), dao.ROOT_PERMISSION_ID()); // as Aragon's DAOFactory does
         dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID()); // stands in for a passed proposal
@@ -75,7 +76,7 @@ contract InstallationTest is Fixture {
     }
 
     function test_RevertWhen_SomeoneElseAppliesTheInstallation() public {
-        (, Action[] memory _actions) = installer.install(psp, repo, address(dao), _buyAndBurnConfig());
+        (, Action[] memory _actions) = installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
 
         vm.prank(alice);
         (bool _ok, bytes memory _reason) = _actions[1].to.call(_actions[1].data);
@@ -93,19 +94,26 @@ contract InstallationTest is Fixture {
     }
 
     function test_ConfigBuildsTheSameRecipe() public view {
-        Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, 0, EPOCH);
-        Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND, MIN_PRICE);
+        Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, STREAM_CAP, EPOCH);
+        Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND);
 
         assertEq(
-            abi.encode(installer.recipe(_buyAndBurnConfig())), abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
+            abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP))),
+            abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
         );
     }
 
     function test_EveryExampleConfigBuildsItsRecipe() public view {
         assertEq(installer.recipe(_example("buy-and-burn")).components.length, 3);
-        assertEq(installer.recipe(_example("buyback")).components.length, 4);
-        assertEq(installer.recipe(_example("merkle-claim")).components.length, 3);
-        assertEq(installer.recipe(_example("payroll")).components.length, 3);
+        assertEq(installer.recipe(_example("buyback")).components.length, 5);
+        assertEq(installer.recipe(_example("merkle-claim")).components.length, 2);
+        assertEq(installer.recipe(_example("payroll")).components.length, 4);
+    }
+
+    /// OpenFill has no cap of its own: without the stream's, an auction has no worst price
+    function test_RevertWhen_AnAuctionStreamHasNoCap() public {
+        vm.expectRevert(Recipes.UncappedStream.selector);
+        installer.recipe(_buyAndBurnConfig(0));
     }
 
     function test_RevertWhen_TheRecipeIsUnknown() public {
@@ -115,7 +123,7 @@ contract InstallationTest is Fixture {
 
     // Helpers
 
-    function _buyAndBurnConfig() internal view returns (string memory) {
+    function _buyAndBurnConfig(uint256 _maxBudget) internal view returns (string memory) {
         return string.concat(
             '{"recipe":"buyAndBurn","manager":"',
             vm.toString(manager),
@@ -123,14 +131,14 @@ contract InstallationTest is Fixture {
             vm.toString(address(tokenA)),
             '","amountPerEpoch":"',
             vm.toString(RATE),
-            '","maxBudget":"0","epochInterval":"',
+            '","maxBudget":"',
+            vm.toString(_maxBudget),
+            '","epochInterval":"',
             vm.toString(EPOCH),
             '"},"swap":{"demandedToken":"',
             vm.toString(address(tokenB)),
             '","demandPerFill":"',
             vm.toString(DEMAND),
-            '","minDemandedPerOffered":"',
-            vm.toString(MIN_PRICE),
             '"}}'
         );
     }

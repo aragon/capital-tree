@@ -36,7 +36,7 @@ contract GenericFillSolver is IFiller {
     /// @notice Entrypoint for passing generic calldata for atomic swaps.
     function trigger(bytes[] calldata data) external {
         _checkAuth(msg.sender);
-        plugin.trigger(data);
+        plugin.trigger("", data);
     }
 
     /// @notice Sends the entire ERC20 balance to recipient.

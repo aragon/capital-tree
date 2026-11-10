@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
-import {Input, Movement} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 import {LeafAction} from "./base/LeafAction.sol";
 
 /// @title KeepAction
@@ -15,10 +15,10 @@ contract KeepAction is LeafAction {
     }
 
     /// @inheritdoc INodeAction
-    function build(address, bytes calldata, Input calldata _input)
+    function build(address, bytes calldata, Asset calldata _input)
         external
         pure
-        returns (Movement memory, Action[] memory)
+        returns (Asset memory, Action[] memory)
     {
         return (_consume(_input), new Action[](0)); // no actions: the input stays where it is
     }

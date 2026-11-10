@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
@@ -11,6 +12,7 @@ import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetu
 import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
@@ -22,6 +24,7 @@ import {Deploy} from "../script/Deploy.s.sol";
 import {Recipes} from "../script/Recipes.sol";
 import {Fixture, METADATA_URIS} from "./helpers/Fixture.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
+import {CapSplitter} from "./mocks/MockSplitter.sol";
 
 contract CapitalPipelinePluginSetupTest is Fixture {
     ComponentRegistry internal registry;
@@ -59,6 +62,23 @@ contract CapitalPipelinePluginSetupTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
+    /// The recipe marks the swap node forwardSurplus, so the 100 B the filler overpays are split too
+    function test_InstallsAForwardingNode() public {
+        CapitalPipelinePluginSetup.InstallParams memory _params = _buyback();
+        _params.nodes[0].forwardSurplus = true;
+        (CapitalPipelinePlugin _plugin,) = _install(_params);
+        MockFiller _filler = _newFiller(_plugin);
+        _filler.setFillDelta(100 ether);
+        uint256 _supply = tokenB.totalSupply();
+
+        _filler.fill("");
+
+        assertTrue(_plugin.nodes()[0].forwardSurplus);
+        assertEq(tokenB.totalSupply(), _supply - 1045 ether, "95% of 1,100 B burned");
+        assertEq(tokenB.balanceOf(fee), 55 ether);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B);
+    }
+
     function test_MerkleClaimPaysTheAccount() public {
         bytes32 _aliceLeaf = _leafHash(alice, 10 ether);
         bytes32 _bobLeaf = _leafHash(bob, 30 ether);
@@ -67,11 +87,12 @@ contract CapitalPipelinePluginSetupTest is Fixture {
 
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _bobLeaf;
-        bytes[] memory _data = new bytes[](2);
-        _data[0] = abi.encode(alice, 10 ether, _proof, address(0));
+        // The TransferToBeneficiary root pays the address in its node data
+        bytes[] memory _data = new bytes[](1);
+        _data[0] = abi.encode(alice);
 
         vm.prank(alice);
-        _plugin.trigger(_data);
+        _plugin.trigger(abi.encode(alice, 10 ether, _proof), _data);
 
         assertEq(tokenA.balanceOf(alice), 10 ether);
     }
@@ -80,10 +101,48 @@ contract CapitalPipelinePluginSetupTest is Fixture {
         (CapitalPipelinePlugin _plugin,) = _install(Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights()));
         vm.warp(block.timestamp + EPOCH);
 
-        _plugin.trigger(noData);
+        _plugin.trigger("", noData);
 
         assertEq(tokenA.balanceOf(alice), 9.5 ether);
         assertEq(tokenA.balanceOf(bob), 0.5 ether);
+    }
+
+    /// The recipe lets the manager change the shares
+    function test_TheManagerChangesThePayrollWeights() public {
+        (CapitalPipelinePlugin _plugin, address[] memory _helpers) =
+            _install(Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights()));
+        WeightSplitter _splitter = WeightSplitter(_helpers[3]);
+        uint32[] memory _swapped = new uint32[](2);
+        (_swapped[0], _swapped[1]) = (300_000, 700_000);
+
+        vm.prank(manager);
+        _splitter.setWeights(_swapped);
+        vm.warp(block.timestamp + EPOCH);
+        _plugin.trigger("", noData);
+
+        assertEq(tokenA.balanceOf(alice), 3 ether);
+        assertEq(tokenA.balanceOf(bob), 7 ether);
+    }
+
+    /// A payroll whose branch caps alice at 3 A with a custom splitter in place of the weight splitter
+    function test_InstallsASplitter() public {
+        dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
+        registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
+        CapitalPipelinePluginSetup.InstallParams memory _params =
+            Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights());
+        _params.components[3] = CapitalPipelinePluginSetup.Component(
+            "CapSplitter@1", abi.encodeCall(CapSplitter.initialize, (IDAO(DAO_REF), 3 ether))
+        );
+        _params.nodes[2].skipWhenEmpty = true;
+
+        (CapitalPipelinePlugin _plugin, address[] memory _helpers) = _install(_params);
+        vm.warp(block.timestamp + EPOCH);
+        _plugin.trigger("", noData);
+
+        assertEq(address(_plugin.nodes()[0].splitter), _helpers[3]);
+        assertTrue(_plugin.nodes()[2].skipWhenEmpty);
+        assertEq(tokenA.balanceOf(alice), 3 ether);
+        assertEq(tokenA.balanceOf(bob), RATE - 3 ether);
     }
 
     // =========================================================================================
@@ -218,11 +277,12 @@ contract CapitalPipelinePluginSetupTest is Fixture {
     }
 
     function _stream() internal view returns (Recipes.Stream memory) {
-        return Recipes.Stream({token: IERC20(tokenA), amountPerEpoch: RATE, maxBudget: 0, epochInterval: EPOCH});
+        return
+            Recipes.Stream({token: IERC20(tokenA), amountPerEpoch: RATE, maxBudget: STREAM_CAP, epochInterval: EPOCH});
     }
 
     function _swap() internal view returns (Recipes.Swap memory) {
-        return Recipes.Swap({demandedToken: IERC20(tokenB), demandPerFill: DEMAND, minDemandedPerOffered: MIN_PRICE});
+        return Recipes.Swap({demandedToken: IERC20(tokenB), demandPerFill: DEMAND});
     }
 
     function _pair(address _a, address _b) internal pure returns (address[] memory _recipients) {

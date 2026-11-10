@@ -54,8 +54,7 @@ abstract contract DeployFlow is Script {
         );
         d.action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
-                address(new OpenFillAction()),
-                abi.encodeCall(OpenFillAction.initialize, (d.dao, d.budget, buy, demand, demand * 1e18 / amount))
+                address(new OpenFillAction()), abi.encodeCall(OpenFillAction.initialize, (d.dao, d.budget, buy, demand))
             )
         );
         KeepAction keep = KeepAction(
