@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.28;
 
-/// @dev Tunes parameters on components and pauses the plugin
-bytes32 constant MANAGER_PERMISSION_ID = keccak256("MANAGER_PERMISSION");
+/// @dev Pauses and unpauses the plugin
+bytes32 constant PAUSE_PERMISSION_ID = keccak256("PAUSE_PERMISSION");
+
+/// @dev Changes a component's settings: a stream's rate and cap, an open fill's demand, a
+///      splitter's weights, a Merkle root
+bytes32 constant SET_SETTINGS_PERMISSION_ID = keccak256("SET_SETTINGS_PERMISSION");
 
 /// @dev Calls `trigger()` on the plugin
 bytes32 constant TRIGGER_PERMISSION_ID = keccak256("TRIGGER_PERMISSION");

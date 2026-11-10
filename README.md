@@ -193,7 +193,7 @@ xychart-beta
 | ------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
 | `sync()`                                                | anyone                     | Carries the current amount forward and records the DAO balance. Never raises the amount. |
 | `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The plugin runs it through the DAO after every trigger.              |
-| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `MANAGER_PERMISSION_ID`    | Sync first, so time already elapsed keeps the old values.                                |
+| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `SET_SETTINGS_PERMISSION_ID` | Sync first, so time already elapsed keeps the old values.                                |
 
 After a deposit the amount stays frozen until someone calls `sync()`: run a keeper, or add a
 `sync()` action wherever revenue enters the DAO.
@@ -215,7 +215,7 @@ raises the cumulative amounts for the next round.
   `TransferToBeneficiaryAction` pays it out.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
   rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
-- **Settings**: `setRoot` (`MANAGER_PERMISSION_ID`). Whoever holds it can direct payouts up to the
+- **Settings**: `setRoot` (`SET_SETTINGS_PERMISSION_ID`). Whoever holds it can direct payouts up to the
   DAO's balance of the token.
 - **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
   callback before the first one records it.
@@ -249,7 +249,7 @@ finds the trade worth it first calls `trigger()` and fills it.
   an auction" below); below an action, whatever that action passes on. Every node of the flow then
   waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
-- **Settings**: `setDemandPerFill` (`MANAGER_PERMISSION_ID`) restarts the auction, so the action
+- **Settings**: `setDemandPerFill` (`SET_SETTINGS_PERMISSION_ID`) restarts the auction, so the action
   needs `CHECKPOINT_PERMISSION_ID` on its budget. The stream's `setMaxBudget` moves the worst price:
   raising the cap lowers it.
 
@@ -325,7 +325,7 @@ interface ISplitter {
   then it and everything below it are skipped, as with a weight that rounds down.
 - **View only:** a split changes no state.
 - **Setters:** a splitter with its own setters gives its shares to whoever the recipe grants that
-  permission. A `WeightSplitter`'s `setWeights` needs `MANAGER_PERMISSION_ID`, which the recipes
+  permission. A `WeightSplitter`'s `setWeights` needs `SET_SETTINGS_PERMISSION_ID`, which the recipes
   grant to the manager.
 
 `WeightSplitter` takes one weight per child, in the node's child order, each non-zero, summing to
@@ -450,7 +450,8 @@ Only the DAO itself can apply the installation.
 | ---------------------------- | -------------------------- | ------------------------------------------------------------- |
 | `TRIGGER_PERMISSION_ID`      | anyone                     | `trigger()`                                                   |
 | `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
-| `MANAGER_PERMISSION_ID`      | manager                    | parameter setters, Merkle `setRoot()`, weight splitter `setWeights()`, `pause()`, `unpause()` |
+| `PAUSE_PERMISSION_ID`        | guardian                   | `pause()`, `unpause()`                                        |
+| `SET_SETTINGS_PERMISSION_ID` | manager                    | stream setters, OpenFill `setDemandPerFill()`, Merkle `setRoot()`, weight splitter `setWeights()` |
 | `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | restarting the stream budget                                  |
 | `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
 | `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
@@ -463,6 +464,7 @@ these (an arrow goes from the holder to the contract it may call):
 flowchart LR
     anyone(("anyone"))
     manager(("manager"))
+    guardian(("guardian"))
     dao["DAO"]
     plugin["Plugin"]
     budget["StreamBudget"]
@@ -472,12 +474,12 @@ flowchart LR
     anyone -- "TRIGGER" --> plugin
     dao -- "CONFIGURE" --> plugin
     plugin -- "EXECUTE" --> dao
-    manager -- "MANAGER" --> plugin
-    manager -- "MANAGER" --> budget
-    manager -- "MANAGER" --> fill
+    guardian -- "PAUSE" --> plugin
+    manager -- "SET_SETTINGS" --> budget
+    manager -- "SET_SETTINGS" --> fill
     dao -- "CHECKPOINT" --> budget
     fill -- "CHECKPOINT" --> budget
-    manager -- "MANAGER" --> splitter
+    manager -- "SET_SETTINGS" --> splitter
 ```
 
 ## Layout
@@ -575,7 +577,9 @@ Override network addresses in `.env` or an editable `.env.<network>` using the s
 ## Install a flow
 
 1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `merkle-claim`, `payroll`) and fill
-   in the DAO, the manager, the tokens and the amounts (in the token's smallest unit).
+   in the DAO, the manager, the guardian, the tokens and the amounts (in the token's smallest unit).
+   The manager changes the components' settings; the guardian pauses and unpauses the flow. They
+   can be the same address.
 2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=installs/<yours>.json`
    and `PLUGIN_REPO=0x...` in `.env`, and configure `DEPLOYER_KEY` in `.env` or `vars`.
    `PLUGIN_SETUP_PROCESSOR_ADDRESS` comes from the selected network; override it using the same name.
@@ -587,4 +591,4 @@ just run script/Install.s.sol:Install
 ```
 
 4. Put the three actions printed by the broadcast run in a DAO proposal. Once it executes, the
-   flow is live: fillers can call `trigger()` and the manager can tune it.
+   flow is live: fillers can call `trigger()`, the manager can tune it and the guardian can pause it.

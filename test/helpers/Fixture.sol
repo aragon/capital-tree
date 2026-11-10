@@ -20,7 +20,8 @@ import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
 import {Node} from "../../src/lib/types.sol";
 import {
-    MANAGER_PERMISSION_ID,
+    PAUSE_PERMISSION_ID,
+    SET_SETTINGS_PERMISSION_ID,
     CHECKPOINT_PERMISSION_ID,
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
@@ -50,6 +51,7 @@ abstract contract Fixture is Test {
     uint256 internal constant STREAM_CAP = 20 ether; // 1,000 B for at most 20 A: 50 B per A or better
 
     address internal manager = makeAddr("manager");
+    address internal guardian = makeAddr("guardian");
     address internal fee = makeAddr("fee");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -106,7 +108,7 @@ abstract contract Fixture is Test {
                 abi.encodeCall(StreamBudget.initialize, (dao, _token, _rate, _maxBudget, EPOCH))
             )
         );
-        dao.grant(address(_budget), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
     }
 
@@ -138,7 +140,7 @@ abstract contract Fixture is Test {
                 abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND))
             )
         );
-        dao.grant(address(_action), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_action), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_budget), address(_action), CHECKPOINT_PERMISSION_ID);
     }
 
@@ -148,7 +150,7 @@ abstract contract Fixture is Test {
                 address(new MerkleClaimBudget()), abi.encodeCall(MerkleClaimBudget.initialize, (dao, _token, _root))
             )
         );
-        dao.grant(address(_merkle), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_merkle), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_merkle), address(dao), RECORD_CLAIM_PERMISSION_ID);
     }
 
@@ -187,7 +189,7 @@ abstract contract Fixture is Test {
         dao.grant(address(dao), address(_plugin), dao.EXECUTE_PERMISSION_ID());
         dao.grant(address(_plugin), ANY_ADDR, TRIGGER_PERMISSION_ID);
         dao.grant(address(_plugin), address(dao), CONFIGURE_PERMISSION_ID);
-        dao.grant(address(_plugin), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_plugin), manager, PAUSE_PERMISSION_ID);
     }
 
     // Trees

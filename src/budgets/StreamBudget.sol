@@ -10,7 +10,7 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
-import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title StreamBudget
 /// @notice A streaming pot whose available amount only grows while the DAO can fund it. Built
@@ -167,21 +167,21 @@ contract StreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     // Manager settings. Each one syncs first, so time already elapsed keeps the old values.
 
     /// @notice Updates how much the available amount grows per epoch
-    function setAmountPerEpoch(uint256 _amountPerEpoch) external virtual auth(MANAGER_PERMISSION_ID) {
+    function setAmountPerEpoch(uint256 _amountPerEpoch) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _sync();
         amountPerEpoch = _amountPerEpoch;
         emit AmountPerEpochUpdated(_amountPerEpoch);
     }
 
     /// @notice Updates the cap on the available amount (0 for no cap)
-    function setMaxBudget(uint256 _maxBudget) external virtual auth(MANAGER_PERMISSION_ID) {
+    function setMaxBudget(uint256 _maxBudget) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _sync();
         maxBudget = _maxBudget;
         emit MaxBudgetUpdated(_maxBudget);
     }
 
     /// @notice Updates the epoch interval, which changes the growth rate
-    function setEpochInterval(uint256 _epochInterval) external virtual auth(MANAGER_PERMISSION_ID) {
+    function setEpochInterval(uint256 _epochInterval) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _sync();
         _setEpochInterval(_epochInterval);
     }

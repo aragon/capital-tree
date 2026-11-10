@@ -176,10 +176,10 @@ export function graphToRecipe(graph, account, meta) {
 export function suggestGrants(components, manager) {
   const grants = [
     { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-    { where: "PLUGIN", who: manager, permission: "MANAGER" },
+    { where: "PLUGIN", who: manager, permission: "PAUSE" },
   ];
   components.forEach((c, i) => {
-    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `ref(${i})`, who: manager, permission: "MANAGER" });
+    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `ref(${i})`, who: manager, permission: "SET_SETTINGS" });
   });
   components.forEach((c, i) => {
     const name = nameOf(c.id);

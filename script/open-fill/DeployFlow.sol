@@ -14,7 +14,8 @@ import {Node} from "../../src/lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
-    MANAGER_PERMISSION_ID,
+    PAUSE_PERMISSION_ID,
+    SET_SETTINGS_PERMISSION_ID,
     CHECKPOINT_PERMISSION_ID
 } from "../../src/lib/constants.sol";
 
@@ -72,9 +73,9 @@ abstract contract DeployFlow is Script {
         );
         d.dao.grant(address(d.dao), address(d.plugin), d.dao.EXECUTE_PERMISSION_ID());
         d.dao.grant(address(d.plugin), address(d.dao), CONFIGURE_PERMISSION_ID);
-        d.dao.grant(address(d.plugin), ADMIN, MANAGER_PERMISSION_ID);
-        d.dao.grant(address(d.budget), ADMIN, MANAGER_PERMISSION_ID);
-        d.dao.grant(address(d.action), ADMIN, MANAGER_PERMISSION_ID);
+        d.dao.grant(address(d.plugin), ADMIN, PAUSE_PERMISSION_ID);
+        d.dao.grant(address(d.budget), ADMIN, SET_SETTINGS_PERMISSION_ID);
+        d.dao.grant(address(d.action), ADMIN, SET_SETTINGS_PERMISSION_ID);
         d.dao.grant(address(d.budget), address(d.dao), CHECKPOINT_PERMISSION_ID);
         d.dao.grant(address(d.budget), address(d.action), CHECKPOINT_PERMISSION_ID);
         d.solver = new GenericFillSolver(operator, d.plugin);

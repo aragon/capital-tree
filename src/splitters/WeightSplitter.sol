@@ -7,12 +7,12 @@ import {
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
 import {Asset} from "../lib/types.sol";
-import {RATIO_BASE, MANAGER_PERMISSION_ID} from "../lib/constants.sol";
+import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title WeightSplitter
 /// @notice Splits a branch's output by weights: one per child, in the node's child order, each
 ///         non-zero, summing to RATIO_BASE. The rounding remainder goes to the largest weight.
-///         Holders of MANAGER_PERMISSION_ID can change them.
+///         Holders of SET_SETTINGS_PERMISSION_ID can change them.
 contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
     uint32[] internal _weights;
 
@@ -33,7 +33,7 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
 
     /// @notice Replaces the weights from the next trigger on
     /// @dev Keeps their number: the node's children only change with `setFlow`
-    function setWeights(uint32[] calldata _newWeights) external auth(MANAGER_PERMISSION_ID) {
+    function setWeights(uint32[] calldata _newWeights) external auth(SET_SETTINGS_PERMISSION_ID) {
         if (_newWeights.length != _weights.length) revert WeightCountChanged(_weights.length, _newWeights.length);
         _setWeights(_newWeights);
     }

@@ -99,7 +99,7 @@ contract InstallationTest is Fixture {
 
         assertEq(
             abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP))),
-            abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
+            abi.encode(Recipes.buyAndBurn(manager, guardian, _stream, _swap))
         );
     }
 
@@ -118,7 +118,12 @@ contract InstallationTest is Fixture {
 
     function test_RevertWhen_TheRecipeIsUnknown() public {
         vm.expectRevert(abi.encodeWithSelector(Install.UnknownRecipe.selector, "swapEverything"));
-        installer.recipe('{"recipe":"swapEverything","manager":"0x0000000000000000000000000000000000000001"}');
+        installer.recipe(
+            string.concat(
+                '{"recipe":"swapEverything","manager":"0x0000000000000000000000000000000000000001",',
+                '"guardian":"0x0000000000000000000000000000000000000002"}'
+            )
+        );
     }
 
     // Helpers
@@ -127,6 +132,8 @@ contract InstallationTest is Fixture {
         return string.concat(
             '{"recipe":"buyAndBurn","manager":"',
             vm.toString(manager),
+            '","guardian":"',
+            vm.toString(guardian),
             '","stream":{"token":"',
             vm.toString(address(tokenA)),
             '","amountPerEpoch":"',

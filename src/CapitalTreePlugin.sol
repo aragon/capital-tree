@@ -14,7 +14,7 @@ import {IBudget} from "./interfaces/IBudget.sol";
 import {INodeAction} from "./interfaces/INodeAction.sol";
 import {ISplitter} from "./interfaces/ISplitter.sol";
 import {Asset, Node} from "./lib/types.sol";
-import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} from "./lib/constants.sol";
+import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID} from "./lib/constants.sol";
 
 /// @title CapitalTreePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
@@ -143,12 +143,12 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     }
 
     /// @notice Stops the flow until `unpause`
-    function pause() external auth(MANAGER_PERMISSION_ID) {
+    function pause() external auth(PAUSE_PERMISSION_ID) {
         _pause();
     }
 
     /// @notice Resumes the flow
-    function unpause() external auth(MANAGER_PERMISSION_ID) {
+    function unpause() external auth(PAUSE_PERMISSION_ID) {
         _unpause();
     }
 

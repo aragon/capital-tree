@@ -18,7 +18,7 @@ import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
 import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {Asset, Node} from "../src/lib/types.sol";
-import {CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, RATIO_BASE} from "../src/lib/constants.sol";
+import {CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID, RATIO_BASE} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
@@ -85,7 +85,7 @@ contract CapitalTreePluginTest is Fixture {
     function test_RevertWhen_PauseUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(plugin), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(plugin), address(this), PAUSE_PERMISSION_ID
             )
         );
         plugin.pause();

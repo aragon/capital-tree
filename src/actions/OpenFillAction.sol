@@ -11,7 +11,7 @@ import {INodeAction} from "../interfaces/INodeAction.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
 import {Asset} from "../lib/types.sol";
-import {MANAGER_PERMISSION_ID} from "../lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title OpenFillAction
 /// @notice Take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input; the DAO
@@ -140,7 +140,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     // Manager settings
 
     /// @notice Updates how much must come back per fill, and restarts the auction
-    function setDemandPerFill(uint256 _demandPerFill) external virtual auth(MANAGER_PERMISSION_ID) {
+    function setDemandPerFill(uint256 _demandPerFill) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _setDemandPerFill(_demandPerFill);
         _restartAuction();
     }

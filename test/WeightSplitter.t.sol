@@ -6,7 +6,7 @@ import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {Asset} from "../src/lib/types.sol";
-import {RATIO_BASE, MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
+import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
 contract WeightSplitterTest is Fixture {
@@ -84,7 +84,7 @@ contract WeightSplitterTest is Fixture {
 
     function test_TheManagerChangesTheWeights() public {
         WeightSplitter _splitter = _deployWeightSplitter(_pair(700_000, 300_000));
-        dao.grant(address(_splitter), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_splitter), manager, SET_SETTINGS_PERMISSION_ID);
 
         vm.expectEmit(address(_splitter));
         emit WeightSplitter.WeightsUpdated(_pair(250_000, 750_000));
@@ -101,7 +101,7 @@ contract WeightSplitterTest is Fixture {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(_splitter), alice, MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(_splitter), alice, SET_SETTINGS_PERMISSION_ID
             )
         );
         vm.prank(alice);
@@ -110,7 +110,7 @@ contract WeightSplitterTest is Fixture {
 
     function test_RevertWhen_NewWeightsAreInvalid() public {
         WeightSplitter _splitter = _deployWeightSplitter(_pair(700_000, 300_000));
-        dao.grant(address(_splitter), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_splitter), manager, SET_SETTINGS_PERMISSION_ID);
 
         vm.expectRevert(WeightSplitter.InvalidWeights.selector);
         vm.prank(manager);
@@ -119,7 +119,7 @@ contract WeightSplitterTest is Fixture {
 
     function test_RevertWhen_NewWeightsChangeTheCount() public {
         WeightSplitter _splitter = _deployWeightSplitter(_pair(700_000, 300_000));
-        dao.grant(address(_splitter), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_splitter), manager, SET_SETTINGS_PERMISSION_ID);
         uint32[] memory _three = new uint32[](3);
         (_three[0], _three[1], _three[2]) = (400_000, 300_000, 300_000);
 

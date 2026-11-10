@@ -16,7 +16,8 @@ import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
-    MANAGER_PERMISSION_ID,
+    PAUSE_PERMISSION_ID,
+    SET_SETTINGS_PERMISSION_ID,
     CHECKPOINT_PERMISSION_ID
 } from "../src/lib/constants.sol";
 import {DAO_REF, PLUGIN_REF, ref} from "../src/lib/placeholders.sol";
@@ -40,7 +41,7 @@ contract CapitalTreePluginSetupTest is Fixture {
     // =========================================================================================
 
     function test_BuyAndBurnBurnsEverything() public {
-        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(manager, _stream(), _swap()));
+        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(manager, guardian, _stream(), _swap()));
         MockFiller _filler = _newFiller(_plugin);
         uint256 _supply = tokenB.totalSupply();
 
@@ -83,7 +84,7 @@ contract CapitalTreePluginSetupTest is Fixture {
         bytes32 _aliceLeaf = _leafHash(alice, 10 ether);
         bytes32 _bobLeaf = _leafHash(bob, 30 ether);
         (CapitalTreePlugin _plugin,) =
-            _install(Recipes.merkleClaim(manager, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf)));
+            _install(Recipes.merkleClaim(manager, guardian, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf)));
 
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _bobLeaf;
@@ -98,7 +99,8 @@ contract CapitalTreePluginSetupTest is Fixture {
     }
 
     function test_PayrollPaysEachRecipient() public {
-        (CapitalTreePlugin _plugin,) = _install(Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights()));
+        (CapitalTreePlugin _plugin,) =
+            _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
         vm.warp(block.timestamp + EPOCH);
 
         _plugin.trigger("", noData);
@@ -110,7 +112,7 @@ contract CapitalTreePluginSetupTest is Fixture {
     /// The recipe lets the manager change the shares
     function test_TheManagerChangesThePayrollWeights() public {
         (CapitalTreePlugin _plugin, address[] memory _helpers) =
-            _install(Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights()));
+            _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
         WeightSplitter _splitter = WeightSplitter(_helpers[3]);
         uint32[] memory _swapped = new uint32[](2);
         (_swapped[0], _swapped[1]) = (300_000, 700_000);
@@ -129,7 +131,7 @@ contract CapitalTreePluginSetupTest is Fixture {
         dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
         registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
         CapitalTreePluginSetup.InstallParams memory _params =
-            Recipes.payroll(manager, _stream(), _pair(alice, bob), _weights());
+            Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights());
         _params.components[3] = CapitalTreePluginSetup.Component(
             "CapSplitter@1", abi.encodeCall(CapSplitter.initialize, (IDAO(DAO_REF), 3 ether))
         );
@@ -167,6 +169,7 @@ contract CapitalTreePluginSetupTest is Fixture {
         assertFalse(
             dao.hasPermission(address(_plugin), manager, CONFIGURE_PERMISSION_ID, ""), "manager can't set the flow"
         );
+        assertFalse(dao.hasPermission(address(_plugin), manager, PAUSE_PERMISSION_ID, ""), "manager can't pause");
     }
 
     function test_UninstallRevokesEverything() public {
@@ -219,7 +222,7 @@ contract CapitalTreePluginSetupTest is Fixture {
 
     function test_RevertWhen_AGrantTargetsAnOutsideContract() public {
         CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.grants[0] = CapitalTreePluginSetup.Grant(address(tokenA), manager, MANAGER_PERMISSION_ID);
+        _params.grants[0] = CapitalTreePluginSetup.Grant(address(tokenA), manager, SET_SETTINGS_PERMISSION_ID);
 
         _expectInstallRevert(
             _params, abi.encodeWithSelector(CapitalTreePluginSetup.GrantOutsideInstallation.selector, address(tokenA))
@@ -269,7 +272,7 @@ contract CapitalTreePluginSetupTest is Fixture {
 
     /// @dev Swap 10 A for 1,000 B, then burn 95% and pay 5% to the fee address
     function _buyback() internal view returns (CapitalTreePluginSetup.InstallParams memory) {
-        return Recipes.buyback(manager, _stream(), _swap(), fee, 50_000);
+        return Recipes.buyback(manager, guardian, _stream(), _swap(), fee, 50_000);
     }
 
     function _stream() internal view returns (Recipes.Stream memory) {
@@ -311,9 +314,9 @@ contract CapitalTreePluginSetupTest is Fixture {
         assertEq(dao.hasPermission(address(dao), _plugin, dao.EXECUTE_PERMISSION_ID(), ""), _expected, "execute");
         assertEq(dao.hasPermission(_plugin, address(0xA11CE), TRIGGER_PERMISSION_ID, ""), _expected, "trigger");
         assertEq(dao.hasPermission(_plugin, address(dao), CONFIGURE_PERMISSION_ID, ""), _expected, "configure");
-        assertEq(dao.hasPermission(_plugin, manager, MANAGER_PERMISSION_ID, ""), _expected, "manage plugin");
-        assertEq(dao.hasPermission(_budget, manager, MANAGER_PERMISSION_ID, ""), _expected, "manage budget");
-        assertEq(dao.hasPermission(_action, manager, MANAGER_PERMISSION_ID, ""), _expected, "manage action");
+        assertEq(dao.hasPermission(_plugin, guardian, PAUSE_PERMISSION_ID, ""), _expected, "pause plugin");
+        assertEq(dao.hasPermission(_budget, manager, SET_SETTINGS_PERMISSION_ID, ""), _expected, "manage budget");
+        assertEq(dao.hasPermission(_action, manager, SET_SETTINGS_PERMISSION_ID, ""), _expected, "manage action");
         assertEq(dao.hasPermission(_budget, address(dao), CHECKPOINT_PERMISSION_ID, ""), _expected, "dao checkpoint");
         assertEq(dao.hasPermission(_budget, _action, CHECKPOINT_PERMISSION_ID, ""), _expected, "action checkpoint");
     }

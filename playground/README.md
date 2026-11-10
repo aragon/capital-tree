@@ -48,8 +48,8 @@ The shares under a box become a WeightSplitter component for it.
 The preview shows the tree the graph turns into, or what's wrong with it. Component order and
 `ref(i)` come from the graph (budget first, then actions breadth first, then one WeightSplitter
 per box with 2+ children), and the permissions are suggested
-from it with the same rules as `script/Recipes.sol`: TRIGGER for anyone, MANAGER for you on the
-plugin and on components with settings, CHECKPOINT on a stream for the DAO and its OpenFill,
+from it with the same rules as `script/Recipes.sol`: TRIGGER for anyone, PAUSE for you on the
+plugin, SET_SETTINGS for you on components with settings, CHECKPOINT on a stream for the DAO and its OpenFill,
 RECORD_CLAIM on a Merkle claim for the DAO.
 
 Installing runs the real Aragon path: `PluginSetupProcessor.prepareInstallation`, then the DAO

@@ -6,7 +6,7 @@ import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
-import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../src/lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
 contract StreamBudgetTest is Fixture {
@@ -114,7 +114,7 @@ contract StreamBudgetTest is Fixture {
     function test_RevertWhen_SetterUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(budget), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(budget), address(this), SET_SETTINGS_PERMISSION_ID
             )
         );
         budget.setAmountPerEpoch(1);

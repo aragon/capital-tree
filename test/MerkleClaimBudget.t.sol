@@ -9,7 +9,7 @@ import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/Proxy
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {Node} from "../src/lib/types.sol";
-import {MANAGER_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../src/lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
 import {BadAction} from "./mocks/BadComponents.sol";
@@ -95,7 +95,7 @@ contract MerkleClaimBudgetTest is Fixture {
     function test_RevertWhen_SetRootUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(merkle), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(merkle), address(this), SET_SETTINGS_PERMISSION_ID
             )
         );
         merkle.setRoot(bytes32(0));

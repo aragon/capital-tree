@@ -18,7 +18,8 @@ import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {Node} from "../src/lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
-    MANAGER_PERMISSION_ID,
+    PAUSE_PERMISSION_ID,
+    SET_SETTINGS_PERMISSION_ID,
     CHECKPOINT_PERMISSION_ID,
     RECORD_CLAIM_PERMISSION_ID,
     RATIO_BASE
@@ -27,7 +28,8 @@ import {DAO_REF, PLUGIN_REF, ref} from "../src/lib/placeholders.sol";
 
 /// @title Recipes
 /// @notice Registry ids and install recipes for the common flows. A recipe is
-///         `abi.encode(CapitalTreePluginSetup.InstallParams)`.
+///         `abi.encode(CapitalTreePluginSetup.InstallParams)`. Every recipe gives `_guardian` PAUSE on
+///         the plugin and `_manager` SET_SETTINGS on each component with setters.
 library Recipes {
     bytes32 internal constant STREAM_BUDGET = "StreamBudget@1";
     bytes32 internal constant BALANCE_BUDGET = "BalanceBudget@1";
@@ -58,7 +60,7 @@ library Recipes {
 
     /// @notice Stream → OpenFill → burn all the proceeds. The stream's `maxBudget` sets the worst
     ///         price: `demandPerFill / maxBudget`. Components: 0 budget, 1 OpenFill, 2 Burn.
-    function buyAndBurn(address _manager, Stream memory _stream, Swap memory _swap)
+    function buyAndBurn(address _manager, address _guardian, Stream memory _stream, Swap memory _swap)
         internal
         pure
         returns (CapitalTreePluginSetup.InstallParams memory _params)
@@ -73,17 +75,20 @@ library Recipes {
         _params.nodes[0] = _then(1, 1);
         _params.nodes[1] = _leaf(2);
 
-        _params.grants = _swapGrants(_manager, 0);
+        _params.grants = _swapGrants(_manager, _guardian, 0);
     }
 
     /// @notice Stream → OpenFill → burn the proceeds, except `_feeWeight` (of RATIO_BASE) to `_fee`.
     ///         The stream's `maxBudget` sets the worst price: `demandPerFill / maxBudget`.
     ///         Components: 0 budget, 1 OpenFill, 2 Burn, 3 Transfer, 4 WeightSplitter.
-    function buyback(address _manager, Stream memory _stream, Swap memory _swap, address _fee, uint32 _feeWeight)
-        internal
-        pure
-        returns (CapitalTreePluginSetup.InstallParams memory _params)
-    {
+    function buyback(
+        address _manager,
+        address _guardian,
+        Stream memory _stream,
+        Swap memory _swap,
+        address _fee,
+        uint32 _feeWeight
+    ) internal pure returns (CapitalTreePluginSetup.InstallParams memory _params) {
         uint32[] memory _weights = new uint32[](2);
         (_weights[0], _weights[1]) = (uint32(RATIO_BASE) - _feeWeight, _feeWeight);
 
@@ -103,13 +108,13 @@ library Recipes {
         _params.nodes[1] = _leaf(2);
         _params.nodes[2] = _leaf(3);
 
-        _params.grants = _swapGrants(_manager, 1);
-        _params.grants[6] = _grant(ref(4), _manager, MANAGER_PERMISSION_ID);
+        _params.grants = _swapGrants(_manager, _guardian, 1);
+        _params.grants[6] = _grant(ref(4), _manager, SET_SETTINGS_PERMISSION_ID);
     }
 
     /// @notice Merkle claim of `_token` → pay the beneficiary.
     ///         Components: 0 MerkleClaimBudget, 1 TransferToBeneficiary.
-    function merkleClaim(address _manager, IERC20 _token, bytes32 _root)
+    function merkleClaim(address _manager, address _guardian, IERC20 _token, bytes32 _root)
         internal
         pure
         returns (CapitalTreePluginSetup.InstallParams memory _params)
@@ -127,18 +132,20 @@ library Recipes {
 
         _params.grants = new CapitalTreePluginSetup.Grant[](4);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
-        _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
-        _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
+        _params.grants[1] = _grant(PLUGIN_REF, _guardian, PAUSE_PERMISSION_ID);
+        _params.grants[2] = _grant(ref(0), _manager, SET_SETTINGS_PERMISSION_ID);
         _params.grants[3] = _grant(ref(0), DAO_REF, RECORD_CLAIM_PERMISSION_ID);
     }
 
     /// @notice Stream → a branch paying each recipient its weight (of RATIO_BASE). Two or more
     ///         recipients. Components: 0 budget, then one Transfer per recipient, then the WeightSplitter.
-    function payroll(address _manager, Stream memory _stream, address[] memory _recipients, uint32[] memory _weights)
-        internal
-        pure
-        returns (CapitalTreePluginSetup.InstallParams memory _params)
-    {
+    function payroll(
+        address _manager,
+        address _guardian,
+        Stream memory _stream,
+        address[] memory _recipients,
+        uint32[] memory _weights
+    ) internal pure returns (CapitalTreePluginSetup.InstallParams memory _params) {
         uint256 _count = _recipients.length;
         _params.components = new CapitalTreePluginSetup.Component[](2 + _count);
         _params.components[0] = _streamBudget(_stream);
@@ -156,10 +163,10 @@ library Recipes {
 
         _params.grants = new CapitalTreePluginSetup.Grant[](5);
         _params.grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
-        _params.grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
-        _params.grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
+        _params.grants[1] = _grant(PLUGIN_REF, _guardian, PAUSE_PERMISSION_ID);
+        _params.grants[2] = _grant(ref(0), _manager, SET_SETTINGS_PERMISSION_ID);
         _params.grants[3] = _grant(ref(0), DAO_REF, CHECKPOINT_PERMISSION_ID);
-        _params.grants[4] = _grant(ref(1 + _count), _manager, MANAGER_PERMISSION_ID);
+        _params.grants[4] = _grant(ref(1 + _count), _manager, SET_SETTINGS_PERMISSION_ID);
     }
 
     // Components
@@ -225,16 +232,16 @@ library Recipes {
 
     /// @dev For flows of a stream budget (component 0) and an OpenFill (component 1) at the root.
     ///      Leaves `_extra` empty slots at the end for the recipe's own grants.
-    function _swapGrants(address _manager, uint256 _extra)
+    function _swapGrants(address _manager, address _guardian, uint256 _extra)
         private
         pure
         returns (CapitalTreePluginSetup.Grant[] memory _grants)
     {
         _grants = new CapitalTreePluginSetup.Grant[](6 + _extra);
         _grants[0] = _grant(PLUGIN_REF, ANY_ADDR, TRIGGER_PERMISSION_ID);
-        _grants[1] = _grant(PLUGIN_REF, _manager, MANAGER_PERMISSION_ID);
-        _grants[2] = _grant(ref(0), _manager, MANAGER_PERMISSION_ID);
-        _grants[3] = _grant(ref(1), _manager, MANAGER_PERMISSION_ID);
+        _grants[1] = _grant(PLUGIN_REF, _guardian, PAUSE_PERMISSION_ID);
+        _grants[2] = _grant(ref(0), _manager, SET_SETTINGS_PERMISSION_ID);
+        _grants[3] = _grant(ref(1), _manager, SET_SETTINGS_PERMISSION_ID);
         _grants[4] = _grant(ref(0), DAO_REF, CHECKPOINT_PERMISSION_ID);
         _grants[5] = _grant(ref(0), ref(1), CHECKPOINT_PERMISSION_ID);
     }

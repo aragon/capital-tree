@@ -9,7 +9,7 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
-import {MANAGER_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title MerkleClaimBudget
 /// @notice Cumulative Merkle distribution as a budget. Each leaf is (account, cumulative amount); an
@@ -98,7 +98,7 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
 
     /// @notice Replaces the root, usually with higher cumulative amounts for a new round
     /// @dev Whoever holds this can direct payouts up to the DAO's balance of the token
-    function setRoot(bytes32 _root) external virtual auth(MANAGER_PERMISSION_ID) {
+    function setRoot(bytes32 _root) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _setRoot(_root);
     }
 

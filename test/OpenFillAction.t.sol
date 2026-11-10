@@ -9,7 +9,7 @@ import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IFiller} from "../src/interfaces/IFiller.sol";
 import {Asset} from "../src/lib/types.sol";
-import {MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
 contract OpenFillActionTest is Fixture {
@@ -73,7 +73,7 @@ contract OpenFillActionTest is Fixture {
     function test_RevertWhen_SetterUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(action), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(action), address(this), SET_SETTINGS_PERMISSION_ID
             )
         );
         action.setDemandPerFill(1);

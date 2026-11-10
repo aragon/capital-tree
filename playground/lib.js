@@ -23,7 +23,7 @@ import {
 
 export const RPC = "http://127.0.0.1:8545";
 export const ANY_ADDR = "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF";
-export const PERMISSIONS = ["TRIGGER", "MANAGER", "CHECKPOINT", "RECORD_CLAIM"];
+export const PERMISSIONS = ["TRIGGER", "PAUSE", "SET_SETTINGS", "CHECKPOINT", "RECORD_CLAIM"];
 export const permissionId = (name) => keccak256(toHex(`${name}_PERMISSION`));
 
 // Anvil's second and third accounts, used as default payroll recipients
@@ -152,9 +152,9 @@ const weightSplitter = (weights) => component("WeightSplitter@1", { weights });
 const leaf = (action) => ({ action, children: "", splitter: null });
 const swapGrants = (manager) => [
   { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-  { where: "PLUGIN", who: manager, permission: "MANAGER" },
-  { where: "ref(0)", who: manager, permission: "MANAGER" },
-  { where: "ref(1)", who: manager, permission: "MANAGER" },
+  { where: "PLUGIN", who: manager, permission: "PAUSE" },
+  { where: "ref(0)", who: manager, permission: "SET_SETTINGS" },
+  { where: "ref(1)", who: manager, permission: "SET_SETTINGS" },
   { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
   { where: "ref(0)", who: "ref(1)", permission: "CHECKPOINT" },
 ];
@@ -178,7 +178,7 @@ export function templates({ tokenA, tokenB, account }) {
       ],
       budget: 0,
       nodes: [{ action: 1, children: "1, 2", splitter: 4 }, leaf(2), leaf(3)],
-      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "MANAGER" }],
+      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "SET_SETTINGS" }],
     },
     Payroll: {
       components: [
@@ -191,10 +191,10 @@ export function templates({ tokenA, tokenB, account }) {
       nodes: [{ action: null, children: "1, 2", splitter: 3 }, leaf(1), leaf(2)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-        { where: "PLUGIN", who: account, permission: "MANAGER" },
-        { where: "ref(0)", who: account, permission: "MANAGER" },
+        { where: "PLUGIN", who: account, permission: "PAUSE" },
+        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
         { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
-        { where: "ref(3)", who: account, permission: "MANAGER" },
+        { where: "ref(3)", who: account, permission: "SET_SETTINGS" },
       ],
     },
     "Merkle claim": {
@@ -206,8 +206,8 @@ export function templates({ tokenA, tokenB, account }) {
       nodes: [leaf(1)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-        { where: "PLUGIN", who: account, permission: "MANAGER" },
-        { where: "ref(0)", who: account, permission: "MANAGER" },
+        { where: "PLUGIN", who: account, permission: "PAUSE" },
+        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
         { where: "ref(0)", who: "DAO", permission: "RECORD_CLAIM" },
       ],
     },
