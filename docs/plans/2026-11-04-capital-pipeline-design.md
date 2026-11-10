@@ -91,9 +91,8 @@ trigger(bytes budgetData, bytes[] nodeData)             nonReentrant, whenNotPau
   nonce += 1                                            makes this trigger's execution IDs unique
   amount = budget.available(caller, budgetData)
   dao.execute(budget.fundActions(caller, budgetData))   when not empty
-      the DAO's balance of budget.token() grew by ≥ amount   else revert BudgetNotFunded
   run(node 0, input = { budget.token(), amount })
-  the DAO lost ≤ amount of the budget's token since funding   else revert BudgetExceeded
+  the DAO lost ≤ amount of the budget's token, 0 with fund actions   else revert BudgetExceeded
   dao.execute(budget.commitActions(caller, budgetData)) once, after the whole tree
 
 run(node, input)                                        depth first
@@ -232,7 +231,7 @@ Aragon's framework contracts import ENS, so `lib/ens-contracts` (v0.0.8) is a de
 - Any revert in any node, hook or balance check reverts the whole `trigger`.
 - Paused plugin: `Pausable: paused`. Re-entry: `ReentrancyGuard: reentrant call`.
 - Setup errors: `UnknownComponent` (registry), `UnknownReference`, `GrantOutsideInstallation`, `ReservedPermission`, `GrantsMismatch` (uninstall).
-- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidSplitter`, `BudgetMismatch`, `InvalidForwardSurplus`) and trigger (`DataLengthMismatch`, `BudgetNotFunded`, `EmptyInput`, `InvalidSplit`, `OutputWithoutChildren`, `MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`, `BudgetExceeded`).
+- Plugin errors: configuration (`NoBudget`, `ForeignComponent`, `InvalidNodeCount`, `SkippableRoot`, `MissingAction`, `InvalidChild`, `UnreachableNode`, `InvalidSplitter`, `BudgetMismatch`, `InvalidForwardSurplus`) and trigger (`DataLengthMismatch`, `EmptyInput`, `InvalidSplit`, `OutputWithoutChildren`, `MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`, `UnexpectedBalance`, `BudgetExceeded`).
 
 ## Constraints and known limits
 

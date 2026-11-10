@@ -63,7 +63,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Trigger errors
     error DataLengthMismatch(uint256 expected, uint256 actual);
-    error BudgetNotFunded(uint256 expected, uint256 received);
     error EmptyInput(uint256 nodeIndex);
     error InvalidSplit(uint256 nodeIndex);
     /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
@@ -73,8 +72,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error ActionTargetsDao(uint256 executionIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 executionIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
-    /// @notice The tree spent more of the budget's token than the budget made available
-    error BudgetExceeded(uint256 available, uint256 spent);
+    /// @notice The trigger cost the DAO more of the budget's token than allowed: what the budget made
+    ///         available, or none when the budget brings its own tokens
+    error BudgetExceeded(uint256 maxSpend, uint256 spent);
 
     function initialize(IDAO _dao, IBudget _budget, Node[] calldata _newNodes) external initializer {
         __PluginCloneable_init(_dao);
@@ -100,12 +100,13 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         ++_nonce;
         IERC20 _token = budget.token();
         uint256 _available = budget.available(msg.sender, _budgetData);
-        _fundBudget(_token, _available, _budgetData);
 
-        // Read after funding: otherwise the tree could spend the funded tokens on top of the amount
         uint256 _before = _token.balanceOf(address(dao()));
+        Action[] memory _fundActions = budget.fundActions(msg.sender, _budgetData);
+        if (_fundActions.length != 0) emit BudgetFunded(_execute(0, _fundActions));
         _runNode(0, Asset(_token, _available), _nodeData);
-        _checkBudgetSpend(_token, _available, _before);
+        // A budget that brings its own tokens may cost the DAO none of its own
+        _checkBudgetSpend(_token, _fundActions.length == 0 ? _available : 0, _before);
 
         _commitBudget(_budgetData);
     }
@@ -233,22 +234,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         IExecutor(_dao).execute(_executionId, _daoActions, 0);
     }
 
-    /// @dev Before the root, for a budget whose tokens sit outside the DAO: the DAO must then hold at
-    ///      least `_available` more of the budget's token
-    function _fundBudget(IERC20 _token, uint256 _available, bytes calldata _budgetData) internal {
-        Action[] memory _daoActions = budget.fundActions(msg.sender, _budgetData);
-        if (_daoActions.length == 0) return;
-
-        address _dao = address(dao());
-        uint256 _before = _token.balanceOf(_dao);
-        bytes32 _executionId = _execute(0, _daoActions);
-
-        uint256 _after = _token.balanceOf(_dao);
-        uint256 _received = _after > _before ? _after - _before : 0;
-        if (_received < _available) revert BudgetNotFunded(_available, _received);
-        emit BudgetFunded(_executionId);
-    }
-
     // Balance checks
 
     /// @dev The DAO's balances a node is checked against, read once before it runs and once after:
@@ -304,13 +289,14 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
     }
 
-    /// @dev Whatever the nodes did, the whole tree spent at most what the budget made available.
-    ///      Each action checks its own node; this catches anything that slips between them.
-    function _checkBudgetSpend(IERC20 _token, uint256 _available, uint256 _before) internal view {
+    /// @dev Whatever the fund actions and the nodes did, the DAO lost at most `_maxSpend` of the
+    ///      budget's token since `_before`. Each action checks its own node; this catches anything
+    ///      that slips between them, and a budget that brought less than it made available.
+    function _checkBudgetSpend(IERC20 _token, uint256 _maxSpend, uint256 _before) internal view {
         uint256 _after = _token.balanceOf(address(dao()));
-        if (_after + _available < _before) {
-            // Safe: the condition implies `_before > _available`
-            revert BudgetExceeded(_available, _before - _after);
+        if (_after + _maxSpend < _before) {
+            // Safe: the condition implies `_before > _maxSpend`
+            revert BudgetExceeded(_maxSpend, _before - _after);
         }
     }
 

@@ -347,12 +347,24 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(_held.balanceOf(address(dao)), 0);
     }
 
+    /// The DAO holds none of the token: the root's transfer of what never arrived fails
     function test_RevertWhen_TheBudgetFundsLessThanItReleases() public {
         (MockHolderBudget _budget,) = _holderBudget(10 ether);
         _budget.setDelivered(9 ether);
         CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.BudgetNotFunded.selector, 10 ether, 9 ether));
+        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
+        _plugin.trigger("", noData);
+    }
+
+    /// The DAO already holds 10: the 1 the budget didn't bring can't come out of them
+    function test_RevertWhen_AShortfallWouldSpendTheDaosOwnTokens() public {
+        (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
+        _held.mint(address(dao), 10 ether);
+        _budget.setDelivered(9 ether);
+        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.BudgetExceeded.selector, 0, 1 ether));
         _plugin.trigger("", noData);
     }
 

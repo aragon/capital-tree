@@ -69,7 +69,6 @@ sequenceDiagram
     Plugin->>Budget: fundActions(caller, budgetData)
     opt the budget's tokens sit outside the DAO
         Plugin->>DAO: execute(fund actions)
-        Note over Plugin: DAO received ≥ amount
     end
     Note over Plugin: root input = (token, amount)
     loop every node with an action, depth first
@@ -83,7 +82,7 @@ sequenceDiagram
         Note over Plugin: DAO spent ≤ input and received ≥ output
         Note over Plugin: split the output among the children (splitter), or everything that arrived with forwardSurplus
     end
-    Note over Plugin: the tree spent ≤ available of the budget's token
+    Note over Plugin: the DAO lost ≤ available of the budget's token (none with fund actions)
     Plugin->>Budget: commitActions(caller, budgetData)
     Plugin->>DAO: execute(commit actions)
 ```
@@ -102,9 +101,6 @@ fund actions, i + 1 for node i, `nodes.length + 1` for the commit. The errors ab
 The plugin only enforces limits that hold for any action. Whether a result is acceptable (a few wei
 short, a cap on the surplus, a recipient really paid) is up to each action's postconditions.
 
-Before the root runs, a budget's fund actions must grow the DAO's balance of its token by at least
-`available` (`BudgetNotFunded`).
-
 When a node runs:
 
 1. After its `dao.execute`, the DAO lost at most the node's input of the input token: a node never spends more than it was given (`UnexpectedBalance`).
@@ -115,7 +111,8 @@ When a node runs:
 6. A node that receives nothing (a weight that rounds down, a splitter's 0, a parent that produced nothing) reverts, unless it's marked `skipWhenEmpty`: then it and everything below it are skipped.
 7. A node marked `forwardSurplus` gives its children everything that arrived: the output token's increase with two tokens, its input plus the net change with one.
 
-After the whole tree, the DAO lost at most `available` of the budget's token since funding (`BudgetExceeded`).
+Over the whole trigger, the DAO lost at most `available` of the budget's token, or none of it when
+the budget has fund actions (`BudgetExceeded`).
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
@@ -137,9 +134,10 @@ runs; and `commitActions(caller, data)`, the DAO actions that record the spend a
 ran.
 
 Fund actions are for budgets whose tokens sit outside the DAO: a vault, a holder, a claimable
-position. The plugin runs them in their own `dao.execute` and reverts unless the DAO's balance of
-the token grew by at least the amount (`BudgetNotFunded`). Anything above it stays in the DAO. The
-budgets below pay from the DAO's own balance, so they have none.
+position. The plugin runs them in their own `dao.execute`, before the root. Such a budget may cost
+the DAO none of its own tokens: the trigger reverts (`BudgetExceeded`) if the DAO ends it with less
+of the token than it started with. A budget that brings less than it made available fails when the
+tree spends what never arrived. The budgets below pay from the DAO's own balance, so they have none.
 
 | Budget               | `available()`                                                              | Commit             |
 | -------------------- | -------------------------------------------------------------------------- | ------------------ |
