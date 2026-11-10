@@ -338,8 +338,8 @@ contract CapitalPipelinePluginTest is Fixture {
         CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
         vm.expectEmit(address(_plugin));
-        // The first trigger counts the nonce up to 1
-        emit CapitalPipelinePlugin.BudgetFunded(keccak256(abi.encode(address(_plugin), 1, type(uint256).max - 1)));
+        // The first trigger counts the nonce up to 1; fund actions run at execution index 0
+        emit CapitalPipelinePlugin.BudgetFunded(keccak256(abi.encode(address(_plugin), 1, 0)));
         _plugin.trigger("", noData);
 
         assertEq(_held.balanceOf(alice), 10 ether);
@@ -369,15 +369,13 @@ contract CapitalPipelinePluginTest is Fixture {
         assertEq(_held.balanceOf(address(dao)), 2 ether);
     }
 
-    /// Fund actions go through the same guards as a node's, reported at the index their execution ID uses
+    /// Fund actions go through the same guards as a node's, reported at execution index 0
     function test_RevertWhen_AFundActionTargetsTheDao() public {
         (MockHolderBudget _budget,) = _holderBudget(10 ether);
         _budget.setFundTarget(address(dao));
         CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, type(uint256).max - 1, 0)
-        );
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, 0, 0));
         _plugin.trigger("", noData);
     }
 
@@ -791,14 +789,15 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_AnActionTargetsTheDao() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetDao), keep));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, 0, 0));
+        // Node 0 runs at execution index 1
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, 1, 0));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_AnActionTargetsThePlugin() public {
         CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetPlugin), keep));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsPlugin.selector, 0, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsPlugin.selector, 1, 0));
         _plugin.trigger("", noData);
     }
 
@@ -886,7 +885,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function _expectNodeExecuted(address _plugin, address _caller, Asset memory _input, Asset memory _output)
         internal
     {
-        bytes32 _executionId = keccak256(abi.encode(_plugin, uint256(1), uint256(0)));
+        bytes32 _executionId = keccak256(abi.encode(_plugin, uint256(1), uint256(1)));
         vm.expectEmit(_plugin);
         emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionId, _input, _output);
     }

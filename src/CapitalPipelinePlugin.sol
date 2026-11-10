@@ -40,11 +40,6 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     Node[] internal _nodes;
 
-    /// @dev Stand in for a node index when the budget's fund and commit actions run: in their
-    ///      execution IDs and in `_execute`'s errors. No node has them.
-    uint256 internal constant FUND_INDEX = type(uint256).max - 1;
-    uint256 internal constant COMMIT_INDEX = type(uint256).max;
-
     event FlowUpdated(IBudget budget, Node[] nodes);
     /// @param output What the children got: the declared output, or everything that arrived when the
     ///        node forwards its surplus
@@ -73,9 +68,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     error InvalidSplit(uint256 nodeIndex);
     /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
     error OutputWithoutChildren(uint256 nodeIndex, uint256 amount);
-    error MissingFunctionSelector(uint256 nodeIndex, uint256 actionIndex);
-    error ActionTargetsDao(uint256 nodeIndex, uint256 actionIndex);
-    error ActionTargetsPlugin(uint256 nodeIndex, uint256 actionIndex);
+    // `executionIndex`: 0 for the budget's fund actions, i + 1 for node i, nodes.length + 1 for its commit
+    error MissingFunctionSelector(uint256 executionIndex, uint256 actionIndex);
+    error ActionTargetsDao(uint256 executionIndex, uint256 actionIndex);
+    error ActionTargetsPlugin(uint256 executionIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
     /// @notice The tree spent more of the budget's token than the budget made available
     error BudgetExceeded(uint256 available, uint256 spent);
@@ -186,8 +182,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         bool _forwardSurplus = _nodes[_index].forwardSurplus;
         (uint256 _inBefore, uint256 _outBefore) = _readBalances(_input, _output, _forwardSurplus);
 
-        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, _index));
-        _execute(_index, _daoActions, _executionId);
+        bytes32 _executionId = _execute(_index + 1, _daoActions);
         _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
         uint256 _arrived = _verifyBalances(_index, _input, _output, _forwardSurplus, _inBefore, _outBefore);
 
@@ -218,18 +213,22 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _actionSnapshot = _action.preconditions(msg.sender, _data, _input, _output);
     }
     
-    function _execute(uint256 _index, Action[] memory _daoActions, bytes32 _executionId) internal {
-        if (_daoActions.length == 0) return;
+    /// @dev Runs `_daoActions` in one `dao.execute`. The execution ID and the errors share
+    ///      `_executionIndex`: 0 for the budget's fund actions, i + 1 for node i, nodes.length + 1
+    ///      for its commit.
+    function _execute(uint256 _executionIndex, Action[] memory _daoActions) internal returns (bytes32 _executionId) {
+        _executionId = keccak256(abi.encode(address(this), _nonce, _executionIndex));
+        if (_daoActions.length == 0) return _executionId;
 
         address _dao = address(dao());
         for (uint256 i; i < _daoActions.length; ++i) {
             // Value-bearing calls must include a selector. This does not validate the target
             // or bound native spending: configured actions are trusted to authorize that spend.
             if (_daoActions[i].value != 0 && _daoActions[i].data.length < 4) {
-                revert MissingFunctionSelector(_index, i);
+                revert MissingFunctionSelector(_executionIndex, i);
             }
-            if (_daoActions[i].to == _dao) revert ActionTargetsDao(_index, i);
-            if (_daoActions[i].to == address(this)) revert ActionTargetsPlugin(_index, i);
+            if (_daoActions[i].to == _dao) revert ActionTargetsDao(_executionIndex, i);
+            if (_daoActions[i].to == address(this)) revert ActionTargetsPlugin(_executionIndex, i);
         }
         IExecutor(_dao).execute(_executionId, _daoActions, 0);
     }
@@ -242,8 +241,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
         address _dao = address(dao());
         uint256 _before = _token.balanceOf(_dao);
-        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, FUND_INDEX));
-        _execute(FUND_INDEX, _daoActions, _executionId);
+        bytes32 _executionId = _execute(0, _daoActions);
 
         uint256 _after = _token.balanceOf(_dao);
         uint256 _received = _after > _before ? _after - _before : 0;
@@ -321,8 +319,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         Action[] memory _daoActions = budget.commitActions(msg.sender, _budgetData);
         if (_daoActions.length == 0) return;
 
-        bytes32 _executionId = keccak256(abi.encode(address(this), _nonce, COMMIT_INDEX));
-        _execute(COMMIT_INDEX, _daoActions, _executionId);
+        bytes32 _executionId = _execute(_nodes.length + 1, _daoActions);
         emit BudgetCommitted(_executionId);
     }
 

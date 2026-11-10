@@ -93,7 +93,9 @@ a node's output, the rounding remainder goes to the child with the largest weigh
 that receives nothing reverts the trigger too, unless it's marked `skipWhenEmpty`: then neither it
 nor anything below it runs. Every trigger counts up a nonce, so its execution IDs (in the DAO's
 `Executed`, `NodeExecuted`, `BudgetFunded` and `BudgetCommitted`) differ from another trigger's,
-even in the same block.
+even in the same block. Within a trigger, each `dao.execute` has its own index: 0 for the budget's
+fund actions, i + 1 for node i, `nodes.length + 1` for the commit. The errors about a DAO action
+(`MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`) report that same index.
 
 ### What the plugin enforces
 
