@@ -18,10 +18,9 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID} fro
 
 /// @title CapitalTreePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
-///         once, first bringing it into the DAO when it sits elsewhere; every node passes its
-///         output to its children (split by a splitter when there are several); leaves consume
-///         what they receive (transfer, burn, keep). The budget commits once, after the whole
-///         tree ran.
+///         once; every node passes its output to its children (split by a splitter when there are
+///         several); leaves consume what they receive (transfer, burn, keep). The budget commits
+///         once, after the whole tree ran.
 /// @dev Every node that receives something must succeed: every node takes exactly its input, and
 ///      leaves output nothing. Anything else reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
 ///      `skipWhenEmpty`: then neither it nor anything below it runs.
@@ -31,7 +30,7 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID} fro
 ///      declared output. The children get that declared output, or
 ///      everything that arrived when the node is marked `forwardSurplus`.
 contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
-    /// @notice What the flow may spend; read and funded at the start, committed at the end
+    /// @notice What the flow may spend; read at the start, committed at the end
     IBudget public budget;
     /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
     ///      it can't change during one (`nonReentrant`), so the nodes read it from storage. Shares
@@ -55,7 +54,6 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         Asset output,
         uint256 surplus
     );
-    event BudgetFunded(bytes32 executionId);
     event BudgetCommitted(bytes32 executionId);
     /// @notice A trigger ran the whole flow and the budget committed
     /// @param nonce The trigger's nonce, the same as in its execution IDs
@@ -80,13 +78,13 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     error InvalidSplit(uint256 nodeIndex);
     /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
     error OutputWithoutChildren(uint256 nodeIndex, uint256 amount);
-    // `executionIndex`: 0 for the budget's fund actions, i + 1 for node i, nodes.length + 1 for its commit
+    // `executionIndex`: i for node i, nodes.length for the budget's commit
     error MissingFunctionSelector(uint256 executionIndex, uint256 actionIndex);
     error ActionTargetsDao(uint256 executionIndex, uint256 actionIndex);
     error ActionTargetsPlugin(uint256 executionIndex, uint256 actionIndex);
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
-    /// @notice The trigger cost the DAO more of the budget's token than allowed: what the budget made
-    ///         available, or none when the budget brings its own tokens
+    /// @notice The trigger cost the DAO more of the budget's token than the budget made
+    ///         available
     error BudgetExceeded(uint256 maxSpend, uint256 spent);
 
     function initialize(IDAO _dao, IBudget _budget, Node[] calldata _newNodes) external initializer {
@@ -124,14 +122,8 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         uint256 _available = budget.available(msg.sender, _budgetData);
 
         uint256 _before = _token.balanceOf(address(dao()));
-        Action[] memory _fundActions = budget.fundActions(msg.sender, _budgetData);
-        if (_fundActions.length != 0) {
-            bytes32 _executionId = _execute(0, _fundActions);
-            emit BudgetFunded(_executionId);
-        }
         _runNode(0, Asset(_token, _available), _nodeData);
-        // A budget that brings its own tokens may cost the DAO none of its own
-        _checkBudgetSpend(_token, _fundActions.length == 0 ? _available : 0, _before);
+        _checkBudgetSpend(_token, _available, _before);
 
         _commitBudget(_budgetData);
         emit FlowExecuted(msg.sender, _nonce, Asset(_token, _available));
@@ -206,7 +198,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         bool _forwardSurplus = _nodes[_index].forwardSurplus;
         (uint256 _inBefore, uint256 _outBefore) = _readBalances(_input, _output, _forwardSurplus);
 
-        bytes32 _executionId = _execute(_index + 1, _daoActions);
+        bytes32 _executionId = _execute(_index, _daoActions);
         _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
         uint256 _arrived = _verifyBalances(_index, _input, _output, _forwardSurplus, _inBefore, _outBefore);
 
@@ -240,10 +232,9 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     }
     
     /// @dev Runs `_daoActions` in one `dao.execute`. The execution ID and the errors share
-    ///      `_executionIndex`: 0 for the budget's fund actions, i + 1 for node i, nodes.length + 1
-    ///      for its commit. The ID packs the plugin's address (20 bytes) and the nonce (8), the same
-    ///      for the whole trigger, then that index (4). An action's index is its position in the
-    ///      DAO's `Executed` event.
+    ///      `_executionIndex`: i for node i, nodes.length for the budget's commit. The ID packs the
+    ///      plugin's address (20 bytes) and the nonce (8), the same for the whole trigger, then that
+    ///      index (4). An action's index is its position in the DAO's `Executed` event.
     function _execute(uint256 _executionIndex, Action[] memory _daoActions) internal returns (bytes32 _executionId) {
         _executionId = bytes32((uint256(uint160(address(this))) << 96) | (uint256(_nonce) << 32) | _executionIndex);
         if (_daoActions.length == 0) return _executionId;
@@ -320,9 +311,8 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         }
     }
 
-    /// @dev Whatever the fund actions and the nodes did, the DAO lost at most `_maxSpend` of the
-    ///      budget's token since `_before`. Each action checks its own node; this catches anything
-    ///      that slips between them, and a budget that brought less than it made available.
+    /// @dev Whatever the nodes did, the DAO lost at most `_maxSpend` of the budget's token since
+    ///      `_before`. Each action checks its own node; this catches anything that slips between them.
     function _checkBudgetSpend(IERC20 _token, uint256 _maxSpend, uint256 _before) internal view {
         uint256 _after = _token.balanceOf(address(dao()));
         if (_after + _maxSpend < _before) {
@@ -336,7 +326,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         Action[] memory _daoActions = budget.commitActions(msg.sender, _budgetData);
         if (_daoActions.length == 0) return;
 
-        bytes32 _executionId = _execute(_nodes.length + 1, _daoActions);
+        bytes32 _executionId = _execute(_nodes.length, _daoActions);
         emit BudgetCommitted(_executionId);
     }
 
