@@ -1,0 +1,22 @@
+{
+  "_note": "Katana's USDC, KAT and avKAT vault. Replace the DAO, manager, guardian and fee recipient, and choose the auction terms. Amounts are in the token's smallest unit.",
+  "recipe": "buybackAndDonate",
+  "dao": "0x0000000000000000000000000000000000000001",
+  "manager": "0x0000000000000000000000000000000000000002",
+  "guardian": "0x0000000000000000000000000000000000000004",
+  "stream": {
+    "token": "0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36",
+    "amountPerEpoch": "10000000",
+    "maxBudget": "10000000",
+    "epochInterval": "86400"
+  },
+  "swap": {
+    "demandedToken": "0x7F1f4b4b29f5058fA32CC7a97141b8D7e5ABDC2d",
+    "demandPerFill": "2900000000000000000000"
+  },
+  "vault": "0x7231dbaCdFc968E07656D12389AB20De82FbfCeB",
+  "fee": {
+    "recipient": "0x0000000000000000000000000000000000000003",
+    "bps": "10"
+  }
+}

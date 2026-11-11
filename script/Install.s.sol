@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
@@ -11,16 +11,19 @@ import {PermissionManager} from "@aragon/osx/core/permission/PermissionManager.s
 import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {PluginSetupRef, hashHelpers} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessorHelpers.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
+import {IDonationVault} from "../src/interfaces/IDonationVault.sol";
 import {Recipes} from "./Recipes.sol";
 
-/// @notice Prepares the installation of a flow described by a config file, and prints the three
-///         actions the DAO's proposal must execute: grant ROOT to Aragon's PluginSetupProcessor,
-///         apply the installation, revoke ROOT.
+/// @notice Prepares the installation of a flow described by a config file, and prints the actions
+///         the DAO's proposal must execute: grant ROOT to Aragon's PluginSetupProcessor, apply the
+///         installation, revoke ROOT and, when the budget is a stream, start it.
 /// @dev Run: `forge script script/Install.s.sol --rpc-url <rpc> --broadcast` with
-///      - `INSTALL_CONFIG`: a file in `installs/` (see the examples there)
-///      - `PLUGIN_SETUP_PROCESSOR`: Aragon's `PluginSetupProcessor` on that network
+///      - `INSTALL_CONFIG`: a file in `config/` (see the examples there)
+///      - `PLUGIN_SETUP_PROCESSOR_ADDRESS`: Aragon's processor on that network
 ///      - `PLUGIN_REPO`: the plugin repo published by `Deploy.s.sol`
+///      - `DEPLOYER_KEY`: signing key for the installation preparation
 ///      Preparing is permissionless; nothing is installed until the DAO executes the actions.
 contract Install is Script {
     using stdJson for string;
@@ -32,10 +35,10 @@ contract Install is Script {
 
     function run() external returns (address plugin, Action[] memory actions) {
         string memory _config = vm.readFile(vm.envString("INSTALL_CONFIG"));
-        PluginSetupProcessor _psp = PluginSetupProcessor(vm.envAddress("PLUGIN_SETUP_PROCESSOR"));
+        PluginSetupProcessor _psp = PluginSetupProcessor(vm.envAddress("PLUGIN_SETUP_PROCESSOR_ADDRESS"));
         PluginRepo _repo = PluginRepo(vm.envAddress("PLUGIN_REPO"));
 
-        vm.startBroadcast();
+        vm.startBroadcast(vm.envUint("DEPLOYER_KEY"));
         (plugin, actions) = install(_psp, _repo, _config.readAddress(".dao"), _config);
         vm.stopBroadcast();
 
@@ -52,31 +55,49 @@ contract Install is Script {
         returns (address plugin, Action[] memory actions)
     {
         PluginSetupRef memory _ref = PluginSetupRef(PluginRepo.Tag(1, 1), _repo);
+        CapitalTreePluginSetup.InstallParams memory _recipe = recipe(_config);
         IPluginSetup.PreparedSetupData memory _prepared;
-        (plugin, _prepared) = _psp.prepareInstallation(
-            _dao, PluginSetupProcessor.PrepareInstallationParams(_ref, abi.encode(recipe(_config)))
-        );
+        (plugin, _prepared) =
+            _psp.prepareInstallation(_dao, PluginSetupProcessor.PrepareInstallationParams(_ref, abi.encode(_recipe)));
 
         PluginSetupProcessor.ApplyInstallationParams memory _apply = PluginSetupProcessor.ApplyInstallationParams(
             _ref, plugin, _prepared.permissions, hashHelpers(_prepared.helpers)
         );
-        actions = new Action[](3);
+        bool _stream = _recipe.budget.id == Recipes.STREAM_BUDGET;
+        actions = new Action[](_stream ? 4 : 3);
         actions[0] = Action(_dao, 0, abi.encodeCall(PermissionManager.grant, (_dao, address(_psp), ROOT_PERMISSION_ID)));
         actions[1] = Action(address(_psp), 0, abi.encodeCall(PluginSetupProcessor.applyInstallation, (_dao, _apply)));
         actions[2] =
             Action(_dao, 0, abi.encodeCall(PermissionManager.revoke, (_dao, address(_psp), ROOT_PERMISSION_ID)));
+        // A stream starts at its first checkpoint, so it didn't grow while the proposal was voted on
+        if (_stream) actions[3] = Action(_prepared.helpers[0], 0, abi.encodeCall(StreamBudget.writeCheckpoint, ()));
     }
 
     /// @notice The recipe a config describes: `.recipe` names it, the other keys are its parameters
-    function recipe(string memory _config) public pure returns (CapitalPipelinePluginSetup.InstallParams memory) {
+    function recipe(string memory _config) public pure returns (CapitalTreePluginSetup.InstallParams memory) {
         string memory _name = _config.readString(".recipe");
         address _manager = _config.readAddress(".manager");
+        address _guardian = _config.readAddress(".guardian");
         bytes32 _hash = keccak256(bytes(_name));
 
-        if (_hash == keccak256("buyAndBurn")) return Recipes.buyAndBurn(_manager, _stream(_config), _swap(_config));
+        if (_hash == keccak256("buyAndBurn")) {
+            return Recipes.buyAndBurn(_manager, _guardian, _stream(_config), _swap(_config));
+        }
+        if (_hash == keccak256("buybackAndDonate")) {
+            return Recipes.buybackAndDonate(
+                _manager,
+                _guardian,
+                _stream(_config),
+                _swap(_config),
+                IDonationVault(_config.readAddress(".vault")),
+                _config.readAddress(".fee.recipient"),
+                _config.readUint(".fee.bps")
+            );
+        }
         if (_hash == keccak256("buyback")) {
             return Recipes.buyback(
                 _manager,
+                _guardian,
                 _stream(_config),
                 _swap(_config),
                 _config.readAddress(".fee.recipient"),
@@ -84,11 +105,14 @@ contract Install is Script {
             );
         }
         if (_hash == keccak256("merkleClaim")) {
-            return Recipes.merkleClaim(_manager, IERC20(_config.readAddress(".token")), _config.readBytes32(".root"));
+            return Recipes.merkleClaim(
+                _manager, _guardian, IERC20(_config.readAddress(".token")), _config.readBytes32(".root")
+            );
         }
         if (_hash == keccak256("payroll")) {
-            return
-                Recipes.payroll(_manager, _stream(_config), _config.readAddressArray(".recipients"), _weights(_config));
+            return Recipes.payroll(
+                _manager, _guardian, _stream(_config), _config.readAddressArray(".recipients"), _weights(_config)
+            );
         }
         revert UnknownRecipe(_name);
     }
@@ -105,8 +129,7 @@ contract Install is Script {
     function _swap(string memory _config) internal pure returns (Recipes.Swap memory) {
         return Recipes.Swap({
             demandedToken: IERC20(_config.readAddress(".swap.demandedToken")),
-            demandPerFill: _config.readUint(".swap.demandPerFill"),
-            minDemandedPerOffered: _config.readUint(".swap.minDemandedPerOffered")
+            demandPerFill: _config.readUint(".swap.demandPerFill")
         });
     }
 

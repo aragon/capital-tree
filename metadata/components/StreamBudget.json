@@ -1,0 +1,30 @@
+{
+  "name": "StreamBudget",
+  "version": 1,
+  "description": "Budget. Streams a token: the available amount grows each epoch, capped by what the DAO holds. Nothing accrues until the first checkpoint: the install proposal starts the stream by calling writeCheckpoint() after applying the installation. Commits a checkpoint after each flow through the DAO: it requires CHECKPOINT_PERMISSION_ID for the DAO, which the setup grants. setAmountPerEpoch, setMaxBudget and setEpochInterval need SET_SETTINGS_PERMISSION_ID.",
+  "dependencies": [],
+  "settings": [
+    {
+      "name": "token",
+      "type": "address",
+      "internalType": "contract IERC20",
+      "description": "The token streamed: an ERC20 (use WETH for ether). Native ETH isn't supported."
+    },
+    {
+      "name": "amountPerEpoch",
+      "type": "uint256",
+      "description": "How much the available amount grows per epoch. At most 2^128 - 1."
+    },
+    {
+      "name": "maxBudget",
+      "type": "uint256",
+      "description": "Maximum available amount at any time. 0 for no cap."
+    },
+    {
+      "name": "epochInterval",
+      "type": "uint256",
+      "description": "Epoch duration in seconds. Non-zero."
+    }
+  ],
+  "initialization": "Setup supplies no dependencies."
+}

@@ -1,14 +1,13 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IFiller} from "../../src/interfaces/IFiller.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {NATIVE} from "../../src/lib/tokens.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 
 /// @notice Triggers the plugin and fills the offer, delivering `demandedAmount + fillDelta`
 contract MockFiller is IFiller {
-    CapitalPipelinePlugin public immutable plugin;
+    CapitalTreePlugin public immutable plugin;
 
     /// @notice Added to the demanded amount when delivering (negative = under-deliver)
     int256 public fillDelta;
@@ -22,7 +21,7 @@ contract MockFiller is IFiller {
     /// @notice Total demanded token delivered to the DAO
     uint256 public totalDelivered;
 
-    constructor(CapitalPipelinePlugin _plugin) {
+    constructor(CapitalTreePlugin _plugin) {
         plugin = _plugin;
     }
 
@@ -39,12 +38,12 @@ contract MockFiller is IFiller {
     function fill(bytes memory _data) external {
         bytes[] memory _perNode = new bytes[](plugin.nodes().length);
         _perNode[0] = _data;
-        plugin.trigger(_perNode);
+        plugin.trigger("", _perNode);
     }
 
     /// @notice Triggers with no data at all, which works for flows of any length
     function fillWithoutData() external {
-        plugin.trigger(new bytes[](0));
+        plugin.trigger("", new bytes[](0));
     }
 
     function fillOffer(
@@ -53,28 +52,18 @@ contract MockFiller is IFiller {
         IERC20 _demandedToken,
         uint256 _demandedAmount,
         bytes calldata
-    ) external payable {
+    ) external {
         if (reenter) {
-            try plugin.trigger(new bytes[](0)) {}
+            try plugin.trigger("", new bytes[](0)) {}
             catch (bytes memory _reason) {
                 reentryError = _reason;
             }
         }
 
-        // A native offer already arrived as msg.value; an ERC20 offer is pulled
-        if (_offeredToken != NATIVE) {
-            _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
-        }
+        _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
 
         uint256 _amount = uint256(int256(_demandedAmount) + fillDelta);
-        if (_demandedToken == NATIVE) {
-            (bool _ok,) = msg.sender.call{value: _amount}("");
-            require(_ok, "MockFiller: ETH send failed");
-        } else {
-            _demandedToken.transfer(msg.sender, _amount);
-        }
+        _demandedToken.transfer(msg.sender, _amount);
         totalDelivered += _amount;
     }
-
-    receive() external payable {}
 }

@@ -1,15 +1,8 @@
 {
   "name": "TransferToBeneficiaryAction",
   "version": 1,
-  "description": "Leaf action. Sends its whole input to the flow's beneficiary, set by a Merkle claim at the root.",
-  "initialize": {
-    "inputs": [
-      {
-        "name": "dao",
-        "type": "address",
-        "internalType": "contract IDAO",
-        "description": "The installing DAO. In a recipe: DAO_REF."
-      }
-    ]
-  }
+  "description": "Leaf action. Sends its whole input to the address in its node data, abi.encode(address), picked by whoever triggers the flow. Use it only where the caller may direct the funds: under a Merkle claim budget or on a flow with a restricted trigger.",
+  "dependencies": [],
+  "settings": [],
+  "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."
 }

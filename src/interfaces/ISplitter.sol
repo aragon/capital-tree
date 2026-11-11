@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {Asset} from "../lib/types.sol";
+
+/// @title ISplitter
+/// @notice Divides a branch's output among its children when the flow runs (`WeightSplitter` for
+///         fixed weights). The children stay explicit nodes: a splitter only decides how much each gets.
+/// @dev Splitters are clones initialized for one DAO and expose it as `dao()`
+///      (`DaoAuthorizableUpgradeable`). The plugin rejects splitters bound to another DAO or to none.
+interface ISplitter {
+    /// @notice One amount per child, in the order of the node's children, summing to
+    ///         `output.amount`. A child that gets 0 reverts the trigger, unless it's marked
+    ///         `skipWhenEmpty`.
+    /// @param caller Who triggered the flow
+    /// @param output What the node passes to its children: the declared output, or everything that
+    ///        arrived when the node forwards its surplus
+    /// @param childCount The node's number of children
+    function split(address caller, Asset calldata output, uint256 childCount)
+        external
+        view
+        returns (uint256[] memory amounts);
+
+    /// @notice How many children the splitter is made for, or 0 if it splits among any number.
+    ///         The plugin rejects a branch with another number of children when the flow is set.
+    function childCount() external view returns (uint256);
+}

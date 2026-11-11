@@ -1,0 +1,225 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
+import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
+import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../src/lib/constants.sol";
+import {Fixture} from "./helpers/Fixture.sol";
+
+contract StreamBudgetTest is Fixture {
+    StreamBudget internal budget;
+
+    function setUp() public override {
+        super.setUp();
+        budget = _deployBudget(RATE, 0);
+    }
+
+    function test_GrowsAtRatePerEpoch() public {
+        assertEq(_available(budget), 0);
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(budget), RATE);
+
+        vm.warp(block.timestamp + EPOCH / 2);
+        assertEq(_available(budget), RATE + RATE / 2);
+    }
+
+    function test_DepositDoesNotLiftTheCapUntilSync() public {
+        vm.warp(block.timestamp + 20 * EPOCH); // 200 accrued, capped at the 100 seen
+        assertEq(_available(budget), DAO_A);
+
+        tokenA.mint(address(dao), 50 ether);
+        assertEq(_available(budget), DAO_A, "deposit must not lift the cap");
+
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(DAO_A, DAO_A + 50 ether, true);
+        budget.sync();
+        assertEq(_available(budget), DAO_A, "sync must not jump");
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(budget), DAO_A + RATE, "growth resumes from where it froze");
+    }
+
+    /// A sync every block must not freeze a stream slower than one unit per block
+    function test_SyncEveryBlockKeepsTheCurve() public {
+        StreamBudget _slow = _deployBudget(7000, 0); // 0.97 units per 12 s block
+
+        for (uint256 i; i < 300; ++i) {
+            vm.warp(block.timestamp + 12);
+            _slow.sync();
+        }
+
+        assertEq(_available(_slow), (7000 * 3600) / EPOCH, "an hour of growth");
+    }
+
+    function test_UncappedSyncReportsNoRebase() public {
+        uint256 _start = budget.baseTimestamp();
+        vm.warp(block.timestamp + EPOCH / 2);
+
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(RATE / 2, DAO_A, false);
+        vm.prank(alice);
+        budget.sync();
+
+        assertEq(budget.baseAmount(), 0);
+        assertEq(budget.baseTimestamp(), _start);
+        assertEq(_available(budget), RATE / 2);
+    }
+
+    function test_AvailableIgnoresTheCaller() public {
+        vm.warp(block.timestamp + EPOCH);
+
+        assertEq(budget.available(alice, ""), RATE);
+    }
+
+    function test_CommitActionsWriteCheckpoint() public view {
+        Action[] memory _actions = budget.commitActions(alice, "");
+
+        assertEq(_actions.length, 1);
+        assertEq(_actions[0].to, address(budget));
+        assertEq(_actions[0].value, 0);
+        assertEq(_actions[0].data, abi.encodeCall(budget.writeCheckpoint, ()));
+    }
+
+    function test_WriteCheckpointRestartsFromZero() public {
+        vm.warp(block.timestamp + EPOCH);
+
+        vm.prank(address(dao));
+        budget.writeCheckpoint();
+
+        assertEq(_available(budget), 0);
+    }
+
+    function test_SetAmountPerEpochKeepsWhatAccrued() public {
+        vm.warp(block.timestamp + EPOCH);
+
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(RATE, DAO_A, true);
+        vm.prank(manager);
+        budget.setAmountPerEpoch(2 * RATE);
+        assertEq(_available(budget), RATE, "no change in the same block");
+        assertEq(budget.baseAmount(), RATE);
+        assertEq(budget.baseTimestamp(), block.timestamp);
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(budget), RATE + 2 * RATE, "new rate from now on");
+    }
+
+    function test_RaisingMaxBudgetDoesNotJump() public {
+        vm.prank(manager);
+        budget.setMaxBudget(5 ether);
+
+        vm.warp(block.timestamp + 2 * EPOCH); // 20 accrued, capped at 5
+        assertEq(_available(budget), 5 ether);
+
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(5 ether, DAO_A, true);
+        vm.prank(manager);
+        budget.setMaxBudget(0);
+        assertEq(_available(budget), 5 ether, "hidden accrual must not be released");
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(budget), 5 ether + RATE);
+    }
+
+    function test_SetEpochIntervalKeepsWhatAccrued() public {
+        vm.warp(block.timestamp + EPOCH);
+
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(RATE, DAO_A, true);
+        vm.prank(manager);
+        budget.setEpochInterval(2 * EPOCH);
+        assertEq(_available(budget), RATE);
+        assertEq(budget.baseAmount(), RATE);
+        assertEq(budget.baseTimestamp(), block.timestamp);
+
+        vm.warp(block.timestamp + 2 * EPOCH);
+        assertEq(_available(budget), 2 * RATE);
+    }
+
+    function test_RevertWhen_WriteCheckpointUnauthorized() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DaoUnauthorized.selector, address(dao), address(budget), address(this), CHECKPOINT_PERMISSION_ID
+            )
+        );
+        budget.writeCheckpoint();
+    }
+
+    function test_RevertWhen_SetterUnauthorized() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DaoUnauthorized.selector, address(dao), address(budget), address(this), SET_SETTINGS_PERMISSION_ID
+            )
+        );
+        budget.setAmountPerEpoch(1);
+    }
+
+    function test_TheHighestRateNeverOverflows() public {
+        uint256 _highest = budget.MAX_AMOUNT_PER_EPOCH();
+
+        vm.prank(manager);
+        budget.setAmountPerEpoch(_highest);
+
+        vm.warp(block.timestamp + 1000 * 365 days);
+        assertEq(_available(budget), DAO_A, "capped by the balance, not reverting");
+    }
+
+    function test_RevertWhen_TheRateCouldOverflow() public {
+        uint256 _tooHigh = budget.MAX_AMOUNT_PER_EPOCH() + 1;
+
+        vm.prank(manager);
+        vm.expectRevert(StreamBudget.InvalidAmountPerEpoch.selector);
+        budget.setAmountPerEpoch(_tooHigh);
+
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidAmountPerEpoch.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(tokenA, _tooHigh, 0, EPOCH));
+    }
+
+    function test_NothingAccruesBeforeTheFirstCheckpoint() public {
+        StreamBudget _budget = StreamBudget(
+            ProxyLib.deployMinimalProxy(
+                address(new StreamBudget()),
+                abi.encodeCall(StreamBudget.initialize, (dao, _noDeps(), abi.encode(tokenA, RATE, 0, EPOCH)))
+            )
+        );
+        dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
+        dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
+
+        vm.warp(block.timestamp + 7 days); // the vote
+        assertEq(_available(_budget), 0, "nothing accrued during the vote");
+
+        vm.expectEmit(address(_budget));
+        emit StreamBudget.Synced(0, DAO_A, false);
+        _budget.sync();
+        vm.expectEmit(address(_budget));
+        emit StreamBudget.Synced(0, DAO_A, false);
+        vm.prank(manager);
+        _budget.setAmountPerEpoch(2 * RATE);
+        vm.expectEmit(address(_budget));
+        emit StreamBudget.Synced(0, DAO_A, false);
+        vm.prank(manager);
+        _budget.setEpochInterval(EPOCH);
+        assertEq(_budget.baseTimestamp(), 0, "setters must not start the clock");
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(_budget), 0, "neither a sync nor a setter starts it");
+
+        vm.prank(address(dao));
+        _budget.writeCheckpoint();
+        assertEq(_available(_budget), 0, "starts from zero");
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(_budget), 2 * RATE, "then grows at the rate set before the start");
+    }
+
+    function test_RevertWhen_TokenHasNoCode() public {
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(IERC20(address(0xBEEF)), RATE, 0, EPOCH));
+    }
+}

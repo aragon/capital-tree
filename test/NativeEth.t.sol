@@ -1,109 +1,222 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
+import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
-import {Input} from "../src/lib/types.sol";
-import {NATIVE} from "../src/lib/tokens.sol";
+import {IBudget} from "../src/interfaces/IBudget.sol";
+import {INodeAction} from "../src/interfaces/INodeAction.sol";
+import {Asset} from "../src/lib/types.sol";
 import {Fixture} from "./helpers/Fixture.sol";
-import {MockFiller} from "./mocks/MockFiller.sol";
 
-/// @notice Native ETH is `NATIVE` (0xEeee…EEeE) everywhere; address(0) is never a token
 contract NativeEthTest is Fixture {
-    uint256 internal constant DAO_ETH = 100 ether;
+    IERC20 internal constant NATIVE = IERC20(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
 
-    function setUp() public override {
-        super.setUp();
-        vm.deal(address(dao), DAO_ETH);
+    function test_RevertWhen_BalanceBudgetUsesNative() public {
+        BalanceBudget _budget = BalanceBudget(ProxyLib.deployMinimalProxy(address(new BalanceBudget()), ""));
+        vm.expectRevert(BalanceBudget.InvalidToken.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(NATIVE));
     }
 
-    function test_BudgetPaysOutEth() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(
-            _deployBalanceBudget(NATIVE),
-            _fork(NO_ACTION, 500_000, _deployTransfer(alice), 500_000, _deployTransfer(bob))
-        );
-
-        _plugin.trigger(noData);
-
-        assertEq(alice.balance, 50 ether);
-        assertEq(bob.balance, 50 ether);
-        assertEq(address(dao).balance, 0);
+    function test_RevertWhen_StreamUsesNative() public {
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(NATIVE, RATE, 0, EPOCH));
     }
 
-    function test_StreamedEthIsSoldForTokens() public {
-        FundedStreamBudget _budget = _deployStream(NATIVE, RATE, 0);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _splitToBurnAndFee(_deployAction(_budget)));
-        MockFiller _filler = new MockFiller(_plugin);
-        tokenB.mint(address(_filler), DEMAND);
-        vm.warp(block.timestamp + EPOCH);
-
-        _filler.fillWithoutData();
-
-        assertEq(address(_filler).balance, RATE, "the offer arrives as call value");
-        assertEq(address(dao).balance, DAO_ETH - RATE);
-        assertEq(tokenB.balanceOf(BURN), 950 ether);
-        assertEq(tokenB.balanceOf(fee), 50 ether);
-    }
-
-    function test_NativeOfferNeedsNoApproval() public {
-        OpenFillAction _action = _deployAction(_deployStream(NATIVE, RATE, 0));
-
-        (, Action[] memory _actions) = _action.build(alice, "", Input(NATIVE, 10 ether, address(0)));
-
-        assertEq(_actions.length, 1, "callback only");
-        assertEq(_actions[0].to, alice);
-        assertEq(_actions[0].value, 10 ether);
-    }
-
-    function test_TokensAreSoldForEth() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, 0); // token A
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _splitToBurnAndFee(_deployOpenFill(_budget, NATIVE)));
-        MockFiller _filler = new MockFiller(_plugin);
-        vm.deal(address(_filler), DEMAND);
-        vm.warp(block.timestamp + EPOCH);
-
-        _filler.fillWithoutData();
-
-        assertEq(tokenA.balanceOf(address(_filler)), RATE);
-        assertEq(BURN.balance, 950 ether);
-        assertEq(fee.balance, 50 ether);
-        assertEq(address(dao).balance, DAO_ETH, "pre-existing ETH untouched");
-    }
-
-    function test_MerkleClaimPaysEth() public {
-        bytes32 _root = keccak256(bytes.concat(keccak256(abi.encode(alice, 1 ether))));
-        MerkleClaimAction _merkle = _deployMerkle(_deployBalanceBudget(NATIVE), _root);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_merkle.budget(), _chain(_merkle, toBeneficiary));
-
-        bytes[] memory _data = new bytes[](2);
-        _data[0] = abi.encode(alice, 1 ether, new bytes32[](0), address(0));
-        vm.prank(alice);
-        _plugin.trigger(_data);
-
-        assertEq(alice.balance, 1 ether);
-    }
-
-    function test_RevertWhen_RecipientRejectsEth() public {
-        // An ERC20 contract has no receive(), so the native send fails inside the DAO
-        CapitalPipelinePlugin _plugin =
-            _deployPlugin(_deployBalanceBudget(NATIVE), _one(_deployTransfer(address(tokenA))));
-
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
-        _plugin.trigger(noData);
-    }
-
-    /// Issue 7: an unset token no longer means ETH
     function test_RevertWhen_TokenIsUnset() public {
-        FundedStreamBudget _budget =
-            FundedStreamBudget(ProxyLib.deployMinimalProxy(address(new FundedStreamBudget()), ""));
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(IERC20(address(0)), RATE, 0, EPOCH));
+    }
 
-        vm.expectRevert(FundedStreamBudget.InvalidToken.selector);
-        _budget.initialize(dao, IERC20(address(0)), RATE, 0, EPOCH);
+    function test_RevertWhen_OpenFillDemandsNative() public {
+        StreamBudget _budget = _deployBudget(RATE, 0);
+        OpenFillAction _action = OpenFillAction(ProxyLib.deployMinimalProxy(address(new OpenFillAction()), ""));
+        vm.expectRevert(OpenFillAction.InvalidToken.selector);
+        _action.initialize(dao, _deps(address(_budget)), abi.encode(NATIVE, DEMAND));
+    }
+
+    function test_RevertWhen_NodeSendsEthWithoutSelector() public {
+        _assertValueRejected(NativeAction.Mode.Work);
+    }
+
+    function _assertValueRejected(NativeAction.Mode _mode) internal {
+        vm.deal(address(dao), 1 ether);
+        NativeAction _action = new NativeAction(address(dao), _mode);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 0, 0));
+        _plugin.trigger("", noData);
+        assertEq(address(dao).balance, 1 ether);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A);
+    }
+
+    function test_RevertWhen_BudgetCommitHasNoSelectorRollsBackTree() public {
+        vm.deal(address(dao), 1 ether);
+        NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        // The commit of a 1-node flow runs at execution index 1
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 1, 0));
+        _plugin.trigger("", noData);
+        assertEq(address(dao).balance, 1 ether);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A);
+        assertEq(tokenA.balanceOf(alice), 0, "earlier node transfer rolled back");
+    }
+
+    function testFuzz_RevertWhen_ValueCallHasTruncatedSelector(uint8 _length) public {
+        _length = uint8(bound(_length, 0, 3));
+        vm.deal(address(dao), 1 ether);
+        PayableTarget _target = new PayableTarget();
+        NativeAction _action = new NativeAction(address(dao), NativeAction.Mode.Work);
+        _action.setCall(address(_target), new bytes(_length));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 0, 0));
+        _plugin.trigger("", noData);
+        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(_target).balance, 0);
+    }
+
+    function test_NodeCallsPayableFunctionWithDaoEth() public {
+        _assertPayableCall(NativeAction.Mode.Work, false);
+    }
+
+    function test_PayableCallbackCannotReenterTrigger() public {
+        _assertPayableCall(NativeAction.Mode.Work, true);
+    }
+
+    function _assertPayableCall(NativeAction.Mode _mode, bool _reenter) internal {
+        vm.deal(address(dao), 2 ether);
+        PayableTarget _target = new PayableTarget();
+        NativeAction _action = new NativeAction(address(dao), _mode);
+        _action.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+        if (_reenter) _target.setPlugin(_plugin);
+        _plugin.trigger("", noData);
+        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(_target).balance, 1 ether);
+        assertEq(_target.sender(), address(dao));
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A, "ERC20 movement does not account for ETH fees");
+        if (_reenter) {
+            assertEq(
+                _target.reentryError(), abi.encodeWithSignature("Error(string)", "ReentrancyGuard: reentrant call")
+            );
+        }
+    }
+
+    function test_BudgetCommitCallsPayableFunctionWithDaoEth() public {
+        vm.deal(address(dao), 2 ether);
+        PayableTarget _target = new PayableTarget();
+        NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
+        _budget.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        _plugin.trigger("", noData);
+        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(_target).balance, 1 ether);
+        assertEq(_target.sender(), address(dao));
+        assertEq(tokenA.balanceOf(alice), DAO_A);
+    }
+
+    function test_Erc20FlowLeavesNativeBalanceUntouched() public {
+        vm.deal(address(dao), 1 ether);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_deployTransfer(alice)));
+        _plugin.trigger("", noData);
+        assertEq(tokenA.balanceOf(alice), DAO_A);
+        assertEq(address(dao).balance, 1 ether);
+    }
+}
+
+contract NativeAction is INodeAction {
+    enum Mode {
+        Work,
+        Output
+    }
+
+    address public immutable dao;
+    Mode public immutable mode;
+    address public target = address(0xBEEF);
+    bytes public callData;
+
+    function setCall(address _target, bytes calldata _data) external {
+        target = _target;
+        callData = _data;
+    }
+
+    constructor(address _dao, Mode _mode) {
+        dao = _dao;
+        mode = _mode;
+    }
+
+    function budget() external pure returns (IBudget) {}
+    function preconditions(address, bytes calldata, Asset calldata, Asset calldata)
+        external
+        pure
+        returns (bytes memory)
+    {}
+
+    function build(address, bytes calldata, Asset calldata _input)
+        external
+        view
+        returns (Asset memory _output, Action[] memory _actions)
+    {
+        IERC20 _token = mode == Mode.Output ? IERC20(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE) : _input.token;
+        _output = Asset(_token, _input.amount);
+        if (mode == Mode.Work) _actions = _sendEth();
+    }
+
+    function postconditions(address, Asset calldata, Asset calldata, bytes calldata) external pure {}
+
+    function _sendEth() internal view returns (Action[] memory _actions) {
+        _actions = new Action[](1);
+        _actions[0] = Action(target, 1 ether, callData);
+    }
+}
+
+contract NativeCommitBudget is IBudget {
+    address public immutable dao;
+    IERC20 public immutable token;
+    address public target = address(0xBEEF);
+    bytes public callData;
+
+    function setCall(address _target, bytes calldata _data) external {
+        target = _target;
+        callData = _data;
+    }
+
+    constructor(address _dao, IERC20 _token) {
+        dao = _dao;
+        token = _token;
+    }
+
+    function available(address, bytes calldata) external view returns (uint256) {
+        return token.balanceOf(dao);
+    }
+
+    function commitActions(address, bytes calldata) external view returns (Action[] memory _actions) {
+        _actions = new Action[](1);
+        _actions[0] = Action(target, 1 ether, callData);
+    }
+}
+
+contract PayableTarget {
+    address public sender;
+    CapitalTreePlugin public plugin;
+    bytes public reentryError;
+
+    function setPlugin(CapitalTreePlugin _plugin) external {
+        plugin = _plugin;
+    }
+
+    function pay() external payable {
+        sender = msg.sender;
+        if (address(plugin) != address(0)) {
+            try plugin.trigger("", new bytes[](0)) {}
+            catch (bytes memory _reason) {
+                reentryError = _reason;
+            }
+        }
     }
 }

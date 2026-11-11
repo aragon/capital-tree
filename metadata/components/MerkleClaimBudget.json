@@ -1,0 +1,20 @@
+{
+  "name": "MerkleClaimBudget",
+  "version": 1,
+  "description": "Budget. Pays cumulative Merkle allocations: each account claims what it is owed, and the flow's root receives exactly that amount. Only the account can claim; it picks the payout address in the TransferToBeneficiaryAction node's data. The trigger's budget data is abi.encode(account, cumulative, proof). Records claims through the DAO: it requires RECORD_CLAIM_PERMISSION_ID for the DAO, which the setup grants. setRoot needs SET_SETTINGS_PERMISSION_ID.",
+  "dependencies": [],
+  "settings": [
+    {
+      "name": "token",
+      "type": "address",
+      "internalType": "contract IERC20",
+      "description": "The token the claims are paid in."
+    },
+    {
+      "name": "root",
+      "type": "bytes32",
+      "description": "Merkle root of (account, cumulative amount) leaves, OpenZeppelin StandardMerkleTree format."
+    }
+  ],
+  "initialization": "Setup supplies no dependencies."
+}

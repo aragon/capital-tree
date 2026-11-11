@@ -1,0 +1,449 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
+import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+import {PluginCloneable} from "@aragon/osx-commons-contracts/src/plugin/PluginCloneable.sol";
+import {
+    DaoAuthorizableUpgradeable
+} from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
+import {IBudget} from "./interfaces/IBudget.sol";
+import {INodeAction} from "./interfaces/INodeAction.sol";
+import {ISplitter} from "./interfaces/ISplitter.sol";
+import {Asset, Node} from "./lib/types.sol";
+import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID} from "./lib/constants.sol";
+
+/// @title CapitalTreePlugin
+/// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
+///         once; every node passes its output to its children (split by a splitter when there are
+///         several); leaves consume what they receive (transfer, burn, keep). The budget commits
+///         once, after the whole tree ran.
+/// @dev Every node that receives something must succeed: every node takes exactly its input, and
+///      leaves output nothing. Anything else reverts the whole trigger. A node that receives nothing reverts it too, unless it's marked
+///      `skipWhenEmpty`: then neither it nor anything below it runs.
+///      Each node with an action is built (view) right after its parent ran and executes in its
+///      own `dao.execute`, followed by the action's postconditions (such as recipient checks) and
+///      balance checks: the DAO spent no more than the node's input and received at least its
+///      declared output. The children get that declared output, or
+///      everything that arrived when the node is marked `forwardSurplus`.
+contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
+    /// @notice What the flow may spend; read at the start, committed at the end
+    IBudget public budget;
+    /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
+    ///      it can't change during one (`nonReentrant`), so the nodes read it from storage. Shares
+    ///      `budget`'s slot, which every trigger reads anyway: keep the two declarations together.
+    ///      64 bits, so it fits in an execution ID next to the plugin's address and the execution index.
+    uint64 internal _nonce;
+
+    Node[] internal _nodes;
+
+    /// @notice Emitted when the flow is set, at `initialize` or by `setFlow`
+    event FlowUpdated(IBudget budget, Node[] nodes);
+    /// @notice Emitted when a node with an action ran and passed its balance checks
+    /// @param output What the children got: the declared output, or everything that arrived when the
+    ///        node forwards its surplus
+    /// @param surplus What arrived above the declared output, whether the children got it or not.
+    ///        0 on a leaf, and 0 when the plugin doesn't measure the output: another token than the
+    ///        input, none declared and no forwarding.
+    event NodeExecuted(
+        uint256 indexed nodeIndex,
+        address indexed caller,
+        bytes32 executionId,
+        Asset input,
+        Asset output,
+        uint256 surplus
+    );
+    /// @notice Emitted when the plugin executed the budget's commit actions, after the whole tree ran
+    event BudgetCommitted(bytes32 executionId);
+    /// @notice Emitted when a trigger ran the whole flow and the budget committed
+    /// @param nonce The trigger's nonce, the same as in its execution IDs
+    /// @param input What the budget gave the root, not what the flow spent
+    event FlowExecuted(address indexed caller, uint64 indexed nonce, Asset input);
+
+    // Configuration errors
+    /// @notice Thrown when the flow's budget is address(0)
+    error NoBudget();
+    /// @notice Thrown when the budget, an action or a splitter isn't bound to this plugin's DAO
+    error ForeignComponent(address component);
+    /// @notice Thrown when the flow has no nodes
+    error InvalidNodeCount(uint256 count);
+    /// @notice Thrown when the root is marked `skipWhenEmpty`
+    error SkippableRoot();
+    /// @notice Thrown when a node without an action has fewer than 2 children
+    error MissingAction(uint256 nodeIndex);
+    /// @notice Thrown when a child doesn't come after its parent, doesn't exist or already has a parent
+    error InvalidChild(uint256 nodeIndex, uint256 child);
+    /// @notice Thrown when a node other than the root has no parent
+    error UnreachableNode(uint256 nodeIndex);
+    /// @notice Thrown when a node with 2+ children has no splitter or one made for another number of
+    ///         children, or a node with fewer children has a splitter
+    error InvalidSplitter(uint256 nodeIndex);
+    /// @notice Thrown when a node's action is bound to a budget other than the flow's
+    error BudgetMismatch(uint256 nodeIndex);
+    /// @notice Thrown when a node marked `forwardSurplus` has no action or no children
+    error InvalidForwardSurplus(uint256 nodeIndex);
+
+    // Trigger errors
+    /// @notice Thrown when the node data is neither empty nor one entry per node
+    error DataLengthMismatch(uint256 expected, uint256 actual);
+    /// @notice Thrown when a node receives nothing and isn't marked `skipWhenEmpty`
+    error EmptyInput(uint256 nodeIndex);
+    /// @notice Thrown when a splitter doesn't return one amount per child, adding up to the output it divides
+    error InvalidSplit(uint256 nodeIndex);
+    /// @notice Thrown when a leaf's action declares an output: a leaf has no children to pass it to
+    error OutputWithoutChildren(uint256 nodeIndex, uint256 amount);
+    // `executionIndex`: i for node i, nodes.length for the budget's commit
+    /// @notice Thrown when a DAO action sends value without a function selector
+    error MissingFunctionSelector(uint256 executionIndex, uint256 actionIndex);
+    /// @notice Thrown when a DAO action targets the DAO itself
+    error ActionTargetsDao(uint256 executionIndex, uint256 actionIndex);
+    /// @notice Thrown when a DAO action targets the plugin
+    error ActionTargetsPlugin(uint256 executionIndex, uint256 actionIndex);
+    /// @notice Thrown when, after a node ran, the DAO holds less of a token than allowed: the node spent
+    ///         more than its input, or less than its declared output arrived
+    /// @param expected The least the DAO may hold
+    error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
+    /// @notice Thrown when the trigger cost the DAO more of the budget's token than the budget made
+    ///         available
+    error BudgetExceeded(uint256 maxSpend, uint256 spent);
+
+    /// @notice Initializes the plugin with the DAO it executes on and its first flow, checked as in `setFlow`
+    function initialize(IDAO _dao, IBudget _budget, Node[] calldata _newNodes) external initializer {
+        __PluginCloneable_init(_dao);
+        __Pausable_init();
+        __ReentrancyGuard_init();
+        _setFlow(_budget, _newNodes);
+    }
+
+    // Views
+
+    /// @notice The flow's nodes; node 0 is the root
+    function nodes() external view returns (Node[] memory) {
+        return _nodes;
+    }
+
+    // Entry points
+
+    /// @notice Runs the flow
+    /// @param _budgetData Passed to the budget (a Merkle claim's proof); empty for most budgets
+    /// @param _nodeData Empty, or one entry per node (passed to that node's action)
+    function trigger(bytes calldata _budgetData, bytes[] calldata _nodeData)
+        external
+        nonReentrant
+        whenNotPaused
+        auth(TRIGGER_PERMISSION_ID)
+    {
+        uint256 _nodeCount = _nodes.length;
+        if (_nodeData.length != 0 && _nodeData.length != _nodeCount) {
+            revert DataLengthMismatch(_nodeCount, _nodeData.length);
+        }
+
+        _nonce += 1;
+        IERC20 _token = budget.token();
+        uint256 _available = budget.available(msg.sender, _budgetData);
+
+        uint256 _before = _token.balanceOf(address(dao()));
+        _runNode(0, Asset(_token, _available), _nodeData);
+        _checkBudgetSpend(_token, _available, _before);
+
+        _commitBudget(_budgetData);
+        emit FlowExecuted(msg.sender, _nonce, Asset(_token, _available));
+    }
+
+    /// @notice Replaces the flow. DAO only: an action can return arbitrary DAO actions.
+    function setFlow(IBudget _budget, Node[] calldata _newNodes) external nonReentrant auth(CONFIGURE_PERMISSION_ID) {
+        _setFlow(_budget, _newNodes);
+    }
+
+    /// @notice Stops the flow until `unpause`. Called by the guardian.
+    function pause() external auth(PAUSE_PERMISSION_ID) {
+        _pause();
+    }
+
+    /// @notice Resumes the flow. Called by the guardian.
+    /// @dev A stream budget keeps accruing while paused, so the next trigger can spend all of it at
+    ///      once, up to its caps. To resume from zero, the DAO unpauses and calls the stream's
+    ///      `writeCheckpoint()` in the same proposal (it holds CHECKPOINT, and can grant itself PAUSE).
+    function unpause() external auth(PAUSE_PERMISSION_ID) {
+        _unpause();
+    }
+
+    // Running the tree
+
+    /// @dev Runs node `_index` on `_input`, then its children, depth first
+    function _runNode(uint256 _index, Asset memory _input, bytes[] calldata _nodeData) internal {
+        Node storage _node = _nodes[_index];
+        if (_input.amount == 0) {
+            // Skipping a node skips everything below it
+            if (_node.skipWhenEmpty) return;
+            revert EmptyInput(_index);
+        }
+        
+        Asset memory _output;
+        if (address(_node.action) == address(0)) {
+            // If node has no action, the input becomes an output. Both point to the same memory;
+            // nothing below writes to it, since the children get new structs.
+            _output = _input;
+        } else {
+            bytes memory _data;
+            if (_nodeData.length != 0) _data = _nodeData[_index];
+            _output = _runAction(_index, _node.action, _input, _data, _node.children.length == 0);
+        }
+
+        _runChildren(_index, _node, _output, _nodeData);
+    }
+
+    /// @dev The children share `_output.amount`, each getting its share as its input
+    function _runChildren(uint256 _index, Node storage _node, Asset memory _output, bytes[] calldata _nodeData)
+        internal
+    {
+        uint256 _childCount = _node.children.length;
+        if (_childCount == 0) return;
+        if (_childCount == 1) {
+            _runNode(_node.children[0], Asset(_output.token, _output.amount), _nodeData);
+            return;
+        }
+
+        uint256[] memory _amounts = _split(_index, _node.splitter, _output, _childCount);
+        for (uint256 k; k < _childCount; ++k) {
+            _runNode(_node.children[k], Asset(_output.token, _amounts[k]), _nodeData);
+        }
+    }
+
+    function _runAction(uint256 _index, INodeAction _action, Asset memory _input, bytes memory _data, bool _isLeaf)
+        internal
+        returns (Asset memory _output)
+    {
+        Action[] memory _daoActions;
+        bytes memory _actionSnapshot;
+        (_output, _daoActions, _actionSnapshot) = _buildAction(_index, _action, _input, _data, _isLeaf);
+        bool _forwardSurplus = _nodes[_index].forwardSurplus;
+        (uint256 _inBefore, uint256 _outBefore) = _readBalances(_input, _output, _forwardSurplus);
+
+        bytes32 _executionId = _execute(_index, _daoActions);
+        _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
+        uint256 _arrived = _verifyBalances(_index, _input, _output, _forwardSurplus, _inBefore, _outBefore);
+
+        // Against the declared output, before forwarding replaces it. The balance checks keep it from
+        // underflowing. A leaf reports none: it has no children, and with one token what's left of
+        // its input isn't extra.
+        uint256 _surplus = _isLeaf ? 0 : _arrived - _output.amount;
+        // Give the children everything that arrived, not just the declared amount
+        if (_forwardSurplus) _output.amount = _arrived;
+
+        emit NodeExecuted(_index, msg.sender, _executionId, _input, _output, _surplus);
+    }
+
+    /// @dev Builds the node, then calls the action's preconditions on its output.
+    ///      The node is given its whole input; `_verifyBalances` checks that it spent no more.
+    function _buildAction(uint256 _index, INodeAction _action, Asset memory _input, bytes memory _data, bool _isLeaf)
+        internal
+        view
+        returns (Asset memory _output, Action[] memory _daoActions, bytes memory _actionSnapshot)
+    {
+        (_output, _daoActions) = _action.build(msg.sender, _data, _input);
+
+        // A leaf has no children to receive an output. The output depends on the trigger's data and
+        // state, and an action doesn't know where it sits in the tree, so it's checked here, on
+        // every build, before anything runs.
+        if (_isLeaf && _output.amount != 0) {
+            revert OutputWithoutChildren(_index, _output.amount);
+        }
+
+        _actionSnapshot = _action.preconditions(msg.sender, _data, _input, _output);
+    }
+    
+    /// @dev Runs `_daoActions` in one `dao.execute`. The execution ID and the errors share
+    ///      `_executionIndex`: i for node i, nodes.length for the budget's commit. The ID packs the
+    ///      plugin's address (20 bytes) and the nonce (8), the same for the whole trigger, then that
+    ///      index (4). An action's index is its position in the DAO's `Executed` event.
+    function _execute(uint256 _executionIndex, Action[] memory _daoActions) internal returns (bytes32 _executionId) {
+        _executionId = bytes32((uint256(uint160(address(this))) << 96) | (uint256(_nonce) << 32) | _executionIndex);
+        if (_daoActions.length == 0) return _executionId;
+
+        address _dao = address(dao());
+        for (uint256 i; i < _daoActions.length; ++i) {
+            // Value-bearing calls must include a selector. This does not validate the target
+            // or bound native spending: configured actions are trusted to authorize that spend.
+            if (_daoActions[i].value != 0 && _daoActions[i].data.length < 4) {
+                revert MissingFunctionSelector(_executionIndex, i);
+            }
+            if (_daoActions[i].to == _dao) revert ActionTargetsDao(_executionIndex, i);
+            if (_daoActions[i].to == address(this)) revert ActionTargetsPlugin(_executionIndex, i);
+        }
+        IExecutor(_dao).execute(_executionId, _daoActions, 0);
+    }
+
+    // Balance checks
+
+    /// @dev The DAO's balances a node is checked against, read once before it runs and once after:
+    ///      its input token, and its output token when that's another one and the node declares
+    ///      some or forwards what arrived
+    function _readBalances(Asset memory _input, Asset memory _output, bool _forwardSurplus)
+        internal
+        view
+        returns (uint256 _inBalance, uint256 _outBalance)
+    {
+        address _dao = address(dao());
+        _inBalance = _input.token.balanceOf(_dao);
+        if (_output.token != _input.token && (_output.amount != 0 || _forwardSurplus)) {
+            _outBalance = _output.token.balanceOf(_dao);
+        }
+    }
+
+    /// @dev The node spent at most its input, and at least its declared output arrived: whatever
+    ///      the action accepts, its children only get what really arrived. With one token only the
+    ///      net change is visible: the DAO lost at most `input - output`.
+    /// @return _arrived What the children get from a forwarding node
+    function _verifyBalances(
+        uint256 _index,
+        Asset memory _input,
+        Asset memory _output,
+        bool _forwardSurplus,
+        uint256 _inBefore,
+        uint256 _outBefore
+    ) internal view returns (uint256 _arrived) {
+        (uint256 _inAfter, uint256 _outAfter) = _readBalances(_input, _output, _forwardSurplus);
+        if (_output.token == _input.token) {
+            _checkMinBalance(_index, _input.token, _inAfter, _inBefore + _output.amount, _input.amount);
+
+            // The input never left the DAO, so it counts too: input + net change. Example: the DAO
+            // holds 5000 USDC, 100 of them are the node's input. The node pays a 2 USDC fee, so the
+            // DAO holds 4998. `4998 - 5000` loses the node's 100; adding the input back gives
+            // `(4998 + 100) - 5000 = 98`, what's left for the children. The check above keeps it
+            // from underflowing.
+            return _inAfter + _input.amount - _inBefore;
+        }
+        _checkMinBalance(_index, _input.token, _inAfter, _inBefore, _input.amount);
+        if (_output.amount != 0) _checkMinBalance(_index, _output.token, _outAfter, _outBefore + _output.amount, 0);
+        return _outAfter > _outBefore ? _outAfter - _outBefore : 0;
+    }
+
+    /// @dev A balance floor: after the node ran, the DAO holds at least `_target` minus what the node
+    ///      may spend (`_maxSpend`). For the input token the target is the balance before and the
+    ///      node may spend its input; for another output token it's the balance before plus the
+    ///      declared output, with nothing to spend. With one token both combine into one floor.
+    ///      Net balances only: this doesn't prove where the tokens went or came from.
+    function _checkMinBalance(uint256 _index, IERC20 _token, uint256 _actual, uint256 _target, uint256 _maxSpend)
+        internal
+        pure
+    {
+        if (_actual + _maxSpend < _target) {
+            revert UnexpectedBalance(_index, address(_token), _target > _maxSpend ? _target - _maxSpend : 0, _actual);
+        }
+    }
+
+    /// @dev Whatever the nodes did, the DAO lost at most `_maxSpend` of the budget's token since
+    ///      `_before`. Each node is checked on its own; this catches anything that slips between them.
+    function _checkBudgetSpend(IERC20 _token, uint256 _maxSpend, uint256 _before) internal view {
+        uint256 _after = _token.balanceOf(address(dao()));
+        if (_after + _maxSpend < _before) {
+            // Safe: the condition implies `_before > _maxSpend`
+            revert BudgetExceeded(_maxSpend, _before - _after);
+        }
+    }
+
+    /// @dev After the whole tree ran, so a stream checkpoint sees the final balance
+    function _commitBudget(bytes calldata _budgetData) internal {
+        Action[] memory _daoActions = budget.commitActions(msg.sender, _budgetData);
+        if (_daoActions.length == 0) return;
+
+        bytes32 _executionId = _execute(_nodes.length, _daoActions);
+        emit BudgetCommitted(_executionId);
+    }
+
+    // Helpers
+
+    /// @dev The splitter's amounts, which must be one per child and add up to what the children share.
+    ///      `setFlow` only checks the splitter's `childCount()`; what `split` returns depends on the
+    ///      caller, the amount and the splitter's state, so every trigger checks it.
+    function _split(uint256 _index, ISplitter _splitter, Asset memory _output, uint256 _childCount)
+        internal
+        view
+        returns (uint256[] memory _amounts)
+    {
+        _amounts = _splitter.split(msg.sender, _output, _childCount);
+        if (_amounts.length != _childCount) revert InvalidSplit(_index);
+
+        uint256 _sum;
+        for (uint256 k; k < _childCount; ++k) {
+            _sum += _amounts[k];
+        }
+        if (_sum != _output.amount) revert InvalidSplit(_index);
+    }
+
+    // Configuration
+
+    function _setFlow(IBudget _budget, Node[] calldata _newNodes) internal {
+        if (address(_budget) == address(0)) revert NoBudget();
+        _checkOwnDao(address(_budget));
+        uint256 _nodeCount = _newNodes.length;
+        // No fixed cap: gas bounds a flow's size, and the recursive tree walk its depth (see README)
+        if (_nodeCount == 0) revert InvalidNodeCount(_nodeCount);
+        // A trigger with nothing to do reverts
+        if (_newNodes[0].skipWhenEmpty) revert SkippableRoot();
+
+        delete _nodes;
+        bool[] memory _hasParent = new bool[](_nodeCount);
+        for (uint256 i; i < _nodeCount; ++i) {
+            _checkNode(i, _newNodes[i], _budget, _hasParent);
+
+            Node storage _stored = _nodes.push();
+            _stored.action = _newNodes[i].action;
+            _stored.children = _newNodes[i].children;
+            _stored.splitter = _newNodes[i].splitter;
+            _stored.skipWhenEmpty = _newNodes[i].skipWhenEmpty;
+            _stored.forwardSurplus = _newNodes[i].forwardSurplus;
+        }
+        for (uint256 i = 1; i < _nodeCount; ++i) {
+            if (!_hasParent[i]) revert UnreachableNode(i);
+        }
+        budget = _budget;
+
+        emit FlowUpdated(_budget, _newNodes);
+    }
+
+    /// @dev Children come after their parent and have exactly one parent, so the nodes form a tree
+    ///      rooted at node 0 with no cycles. A node with 2+ children splits by a splitter of this DAO
+    ///      made for its number of children, or for any; other nodes have none. A bound action must
+    ///      be bound to the flow's budget.
+    function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent) internal view {
+        uint256 _childCount = _node.children.length;
+        if (address(_node.action) == address(0)) {
+            if (_childCount < 2) revert MissingAction(_index);
+        } else {
+            _checkOwnDao(address(_node.action));
+            IBudget _boundBudget = _node.action.budget();
+            if (address(_boundBudget) != address(0) && _boundBudget != _budget) revert BudgetMismatch(_index);
+        }
+        // Only an action can receive more than it declared, and only children can be given it
+        if (_node.forwardSurplus && (address(_node.action) == address(0) || _childCount == 0)) {
+            revert InvalidForwardSurplus(_index);
+        }
+
+        for (uint256 k; k < _childCount; ++k) {
+            uint256 _child = _node.children[k];
+            if (_child <= _index || _child >= _hasParent.length || _hasParent[_child]) {
+                revert InvalidChild(_index, _child);
+            }
+            _hasParent[_child] = true;
+        }
+
+        bool _hasSplitter = address(_node.splitter) != address(0);
+        if (_hasSplitter != (_childCount >= 2)) revert InvalidSplitter(_index);
+        if (_hasSplitter) {
+            _checkOwnDao(address(_node.splitter));
+            uint256 _splitterChildCount = _node.splitter.childCount();
+            if (_splitterChildCount != 0 && _splitterChildCount != _childCount) revert InvalidSplitter(_index);
+        }
+    }
+
+    /// @dev Rejects a component whose `dao()` isn't this plugin's DAO: implementations (bound to no
+    ///      DAO) and other DAOs' components. It doesn't check that the component is a registered clone.
+    function _checkOwnDao(address _component) internal view {
+        if (DaoAuthorizableUpgradeable(_component).dao() != dao()) revert ForeignComponent(_component);
+    }
+}

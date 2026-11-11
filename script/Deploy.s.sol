@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {Script} from "forge-std/Script.sol";
@@ -6,15 +6,17 @@ import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginRepoFactory} from "@aragon/osx/framework/plugin/repo/PluginRepoFactory.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
+import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
-import {MerkleClaimAction} from "../src/actions/MerkleClaimAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
 import {KeepAction} from "../src/actions/KeepAction.sol";
+import {VaultDonateAction} from "../src/actions/VaultDonateAction.sol";
+import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {Recipes} from "./Recipes.sol";
 
 /// @notice Deploys every component implementation, a registry naming them and the plugin setup,
@@ -22,22 +24,23 @@ import {Recipes} from "./Recipes.sol";
 ///         `metadata/uris.json` holds the metadata links: upload the files in `metadata/` to IPFS
 ///         and fill it in first.
 /// @dev Run: `forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast` with
-///      - `MANAGING_DAO`: maintains the registry, and the plugin repo unless `PLUGIN_REPO_MAINTAINER` is set
-///      - `PLUGIN_REPO_FACTORY`: Aragon's `PluginRepoFactory` on that network
-///      - `PLUGIN_REPO_SUBDOMAIN` (optional): defaults to `capital-pipeline`
+///      - `MANAGEMENT_DAO_ADDRESS`: maintains the registry and, by default, the plugin repo
+///      - `PLUGIN_REPO_FACTORY_ADDRESS`: Aragon's factory on that network
+///      - `PLUGIN_REPO_SUBDOMAIN` (optional): defaults to `capital-tree`
+///      - `DEPLOYER_KEY`: signing key for the deployment
 contract Deploy is Script {
     /// @notice Thrown when a metadata link is empty. Registry entries and plugin repo versions
     ///         can't be changed later, so nothing is published without one.
     error MissingMetadata(string key);
 
-    function run() external returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup, PluginRepo repo) {
-        IDAO _managingDao = IDAO(vm.envAddress("MANAGING_DAO"));
-        PluginRepoFactory _factory = PluginRepoFactory(vm.envAddress("PLUGIN_REPO_FACTORY"));
-        string memory _subdomain = vm.envOr("PLUGIN_REPO_SUBDOMAIN", string("capital-pipeline"));
+    function run() external returns (ComponentRegistry registry, CapitalTreePluginSetup setup, PluginRepo repo) {
+        IDAO _managingDao = IDAO(vm.envAddress("MANAGEMENT_DAO_ADDRESS"));
+        PluginRepoFactory _factory = PluginRepoFactory(vm.envAddress("PLUGIN_REPO_FACTORY_ADDRESS"));
+        string memory _subdomain = vm.envOr("PLUGIN_REPO_SUBDOMAIN", string("capital-tree"));
         address _maintainer = vm.envOr("PLUGIN_REPO_MAINTAINER", address(_managingDao));
         string memory _uris = vm.readFile("metadata/uris.json");
 
-        vm.startBroadcast();
+        vm.startBroadcast(vm.envUint("DEPLOYER_KEY"));
         (registry, setup) = deploy(_managingDao, _uris);
         repo = publish(_factory, setup, _subdomain, _maintainer, _uris);
         vm.stopBroadcast();
@@ -46,15 +49,14 @@ contract Deploy is Script {
     /// @param _uris The contents of `metadata/uris.json`
     function deploy(IDAO _managingDao, string memory _uris)
         public
-        returns (ComponentRegistry registry, CapitalPipelinePluginSetup setup)
+        returns (ComponentRegistry registry, CapitalTreePluginSetup setup)
     {
-        ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](8);
-        _components[0] =
-            _registration(Recipes.FUNDED_STREAM_BUDGET, "FundedStreamBudget", address(new FundedStreamBudget()), _uris);
+        ComponentRegistry.Registration[] memory _components = new ComponentRegistry.Registration[](10);
+        _components[0] = _registration(Recipes.STREAM_BUDGET, "StreamBudget", address(new StreamBudget()), _uris);
         _components[1] = _registration(Recipes.BALANCE_BUDGET, "BalanceBudget", address(new BalanceBudget()), _uris);
         _components[2] = _registration(Recipes.OPEN_FILL, "OpenFillAction", address(new OpenFillAction()), _uris);
         _components[3] =
-            _registration(Recipes.MERKLE_CLAIM, "MerkleClaimAction", address(new MerkleClaimAction()), _uris);
+            _registration(Recipes.MERKLE_CLAIM, "MerkleClaimBudget", address(new MerkleClaimBudget()), _uris);
         _components[4] = _registration(Recipes.TRANSFER, "TransferAction", address(new TransferAction()), _uris);
         _components[5] = _registration(
             Recipes.TRANSFER_TO_BENEFICIARY,
@@ -64,9 +66,13 @@ contract Deploy is Script {
         );
         _components[6] = _registration(Recipes.BURN, "BurnAction", address(new BurnAction()), _uris);
         _components[7] = _registration(Recipes.KEEP, "KeepAction", address(new KeepAction()), _uris);
+        _components[8] = _registration(Recipes.WEIGHT_SPLITTER, "WeightSplitter", address(new WeightSplitter()), _uris);
+
+        _components[9] =
+            _registration(Recipes.VAULT_DONATE, "VaultDonateAction", address(new VaultDonateAction()), _uris);
 
         registry = new ComponentRegistry(_managingDao, _components);
-        setup = new CapitalPipelinePluginSetup(registry);
+        setup = new CapitalTreePluginSetup(registry);
     }
 
     /// @notice Publishes `_setup` as version 1.1 of a new plugin repo, which DAOs install from
@@ -74,7 +80,7 @@ contract Deploy is Script {
     /// @param _uris The contents of `metadata/uris.json`
     function publish(
         PluginRepoFactory _factory,
-        CapitalPipelinePluginSetup _setup,
+        CapitalTreePluginSetup _setup,
         string memory _subdomain,
         address _maintainer,
         string memory _uris

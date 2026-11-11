@@ -1,33 +1,52 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IBudget} from "./IBudget.sol";
-import {Input, Movement} from "../lib/types.sol";
+import {Asset} from "../lib/types.sol";
 
 /// @title INodeAction
-/// @notice What a node of a flow tree does with its input. The plugin calls all three hooks, in
-///         order, on every node that has an action, so an action's safety checks can't be left out.
+/// @notice What a node of a flow tree does with its input. The plugin calls `build`,
+///         `preconditions` and `postconditions`, in that order, on every node that has an action,
+///         so an action's safety checks can't be left out. All three are views, so the plugin
+///         calls them read-only (staticcall).
 /// @dev Actions are clones initialized for one DAO and expose it as `dao()`
 ///      (`DaoAuthorizableUpgradeable`). The plugin rejects actions bound to another DAO or to none.
 interface INodeAction {
     /// @notice The budget this action is bound to, or address(0) if it works with any input.
-    ///         A bound action must be fed by that budget: the root of the flow, or a node below
-    ///         branches without an action.
+    ///         A bound action must be bound to the flow's budget.
     function budget() external view returns (IBudget);
 
-    /// @notice Reverts if the action must not run on `input`
-    function preconditions(address caller, Input calldata input) external view;
-
-    /// @notice What the node spends from `input` (`inAmount`: a node fed by the budget may take less
-    ///         than its input, every other node all of it), what it produces (`outToken`/`outAmount`,
-    ///         zero for a leaf) and optionally a `beneficiary`, plus the actions that do the work.
-    /// @dev `outAmount` must be known here: it is divided among the children before they run
-    function build(address caller, bytes calldata data, Input calldata input)
+    /// @notice What the node produces for its children (`output`, zero for a leaf), plus the
+    ///         actions that do the work. The node spends its whole input.
+    /// @dev `output` is the least the action accepts: the plugin checks that it arrived after the
+    ///      node runs. The children get it, or everything that arrived when the node is marked
+    ///      `forwardSurplus`.
+    /// @param caller Who triggered the flow
+    /// @param data The node's entry in the trigger's node data, empty when the trigger passed none
+    /// @param input What the node receives: the budget at the root, a share of its parent's output elsewhere
+    /// @return output What the node declares for its children
+    /// @return actions The DAO actions the plugin executes for the node, in one `dao.execute`
+    function build(address caller, bytes calldata data, Asset calldata input)
         external
         view
-        returns (Movement memory movement, Action[] memory actions);
+        returns (Asset memory output, Action[] memory actions);
 
-    /// @notice The checks that make the work safe, executed by the DAO right after it
-    function postconditions(address caller, Movement calldata movement) external view returns (Action[] memory);
+    /// @notice Reverts if the action must not run. Called after `build`, on the output the plugin
+    ///         checked, right before the node's `dao.execute`.
+    /// @param data The node's trigger data, as passed to `build`
+    /// @return snapshot What `postconditions` compares against, read before the work runs (a
+    ///         balance, and anything the check needs to find it again, such as a lock id)
+    function preconditions(address caller, bytes calldata data, Asset calldata input, Asset calldata output)
+        external
+        view
+        returns (bytes memory snapshot);
+
+    /// @notice Reverts unless the work went right by the action's own standard (a tolerance, a
+    ///         surplus cap, a recipient check). Called right after the node's `dao.execute`, before
+    ///         the plugin checks that the node spent at most its input and its output arrived.
+    /// @param snapshot What `preconditions` returned
+    function postconditions(address caller, Asset calldata input, Asset calldata output, bytes calldata snapshot)
+        external
+        view;
 }
