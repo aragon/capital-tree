@@ -26,9 +26,8 @@ token back and donate it to a vault's holders; let accounts claim cumulative Mer
 optionally swapped before they're paid; pay a payroll from a stream. Any ERC20 works; native ETH
 isn't supported.
 
-Each component is documented in [`docs/components.md`](docs/components.md). To build and run flows on
-a local fork, use the [playground](playground/README.md). To install one on a DAO, see
-[Install a flow](#install-a-flow).
+Each component is documented in [`docs/components.md`](docs/components.md). To install a flow on a
+DAO, see [Install a flow](#install-a-flow).
 
 ## Example flows
 
