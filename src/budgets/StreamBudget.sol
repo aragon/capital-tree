@@ -51,6 +51,9 @@ import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/const
 ///
 ///      One flow per instance.
 contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgradeable {
+    /// @notice The highest growth per epoch. Below it, `rate x elapsed` can't overflow in any realistic time.
+    uint256 public constant MAX_AMOUNT_PER_EPOCH = type(uint128).max;
+
     /// @notice The token streamed
     IERC20 public token;
 
@@ -96,6 +99,9 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @notice Thrown when the token is not a contract
     error InvalidToken();
 
+    /// @notice Thrown when the growth per epoch is above `MAX_AMOUNT_PER_EPOCH`
+    error InvalidAmountPerEpoch();
+
     /// @notice Thrown when the given epoch interval is zero
     error InvalidEpochInterval();
 
@@ -119,7 +125,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         __DaoAuthorizableUpgradeable_init(_dao);
 
         token = _token;
-        amountPerEpoch = _amountPerEpoch;
+        _setAmountPerEpoch(_amountPerEpoch);
         maxBudget = _maxBudget;
         _setEpochInterval(_epochInterval);
 
@@ -168,7 +174,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @notice Updates how much the available amount grows per epoch
     function setAmountPerEpoch(uint256 _amountPerEpoch) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _rebase();
-        amountPerEpoch = _amountPerEpoch;
+        _setAmountPerEpoch(_amountPerEpoch);
         emit AmountPerEpochUpdated(_amountPerEpoch);
     }
 
@@ -231,6 +237,12 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         lastSeenBalance = _balance;
 
         emit CheckpointWritten(_balance);
+    }
+
+    function _setAmountPerEpoch(uint256 _amountPerEpoch) internal virtual {
+        if (_amountPerEpoch > MAX_AMOUNT_PER_EPOCH) revert InvalidAmountPerEpoch();
+
+        amountPerEpoch = _amountPerEpoch;
     }
 
     function _setEpochInterval(uint256 _epochInterval) internal virtual {

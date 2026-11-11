@@ -13,7 +13,7 @@
     {
       "name": "amountPerEpoch",
       "type": "uint256",
-      "description": "How much the available amount grows per epoch."
+      "description": "How much the available amount grows per epoch. At most 2^128 - 1."
     },
     {
       "name": "maxBudget",

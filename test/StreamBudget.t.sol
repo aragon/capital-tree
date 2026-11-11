@@ -132,6 +132,28 @@ contract StreamBudgetTest is Fixture {
         budget.setAmountPerEpoch(1);
     }
 
+    function test_TheHighestRateNeverOverflows() public {
+        uint256 _highest = budget.MAX_AMOUNT_PER_EPOCH();
+
+        vm.prank(manager);
+        budget.setAmountPerEpoch(_highest);
+
+        vm.warp(block.timestamp + 1000 * 365 days);
+        assertEq(_available(budget), DAO_A, "capped by the balance, not reverting");
+    }
+
+    function test_RevertWhen_TheRateCouldOverflow() public {
+        uint256 _tooHigh = budget.MAX_AMOUNT_PER_EPOCH() + 1;
+
+        vm.prank(manager);
+        vm.expectRevert(StreamBudget.InvalidAmountPerEpoch.selector);
+        budget.setAmountPerEpoch(_tooHigh);
+
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidAmountPerEpoch.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(tokenA, _tooHigh, 0, EPOCH));
+    }
+
     function test_RevertWhen_TokenHasNoCode() public {
         StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
 
