@@ -32,6 +32,9 @@ abstract contract LeafAction is INodeAction, IComponent, DaoAuthorizableUpgradea
     /// @inheritdoc INodeAction
     function postconditions(address, Asset calldata, Asset calldata, bytes calldata) external view virtual {}
 
+    /// @inheritdoc IComponent
+    function requiredPermissions(address, address, address) external pure returns (Permission[] memory) {}
+
     /// @dev What every leaf produces: nothing. It spends its whole input.
     function _consume(Asset calldata _input) internal pure returns (Asset memory) {
         return Asset(_input.token, 0);

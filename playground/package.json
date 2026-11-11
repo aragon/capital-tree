@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test recipes.test.mjs"
+  },
+  "devDependencies": {
+    "viem": "2.21.55"
+  }
+}

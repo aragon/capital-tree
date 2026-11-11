@@ -15,3 +15,5 @@ playground/abis.json
 /report/
 /lcov.info*
 /zkout/
+
+/playground/node_modules/

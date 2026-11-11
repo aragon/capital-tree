@@ -34,6 +34,9 @@ contract WeightSplitter is ISplitter, IComponent, DaoAuthorizableUpgradeable {
         _setWeights(abi.decode(_settings, (uint32[])));
     }
 
+    /// @inheritdoc IComponent
+    function requiredPermissions(address, address, address) external pure returns (Permission[] memory) {}
+
     /// @notice Replaces the weights from the next trigger on
     /// @dev Keeps their number: the node's children only change with `setFlow`
     function setWeights(uint32[] calldata _newWeights) external auth(SET_SETTINGS_PERMISSION_ID) {

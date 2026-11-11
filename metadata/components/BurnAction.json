@@ -3,5 +3,6 @@
   "version": 1,
   "description": "Leaf action. Burns its whole input with ERC20Burnable.burn. Not for native ETH.",
   "dependencies": [],
-  "settings": []
+  "settings": [],
+  "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."
 }

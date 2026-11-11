@@ -3,5 +3,6 @@
   "version": 1,
   "description": "Leaf action. Leaves its whole input in the DAO.",
   "dependencies": [],
-  "settings": []
+  "settings": [],
+  "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."
 }

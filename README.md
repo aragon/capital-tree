@@ -233,7 +233,8 @@ raises the cumulative amounts for the next round.
 - **Available**: what the account is owed, so the tree can split it, swap it or take a fee before a
   `TransferToBeneficiaryAction` pays it out.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
-  rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
+  rolls back with the flow. The budget requires `RECORD_CLAIM_PERMISSION_ID` for the DAO, which the
+  setup grants.
 - **Settings**: `setRoot` (`SET_SETTINGS_PERMISSION_ID`). Whoever holds it can direct payouts up to the
   DAO's balance of the token.
 - **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
@@ -269,7 +270,7 @@ finds the trade worth it first calls `trigger()` and fills it.
   waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
 - **Settings**: `setDemandPerFill` (`SET_SETTINGS_PERMISSION_ID`) restarts the auction, so the action
-  needs `CHECKPOINT_PERMISSION_ID` on its budget. The stream's `setMaxBudget` moves the worst price:
+  requires `CHECKPOINT_PERMISSION_ID` on its budget, which the setup grants. The stream's `setMaxBudget` moves the worst price:
   raising the cap lowers it.
 
 ```mermaid
@@ -354,7 +355,7 @@ interface ISplitter {
 change with `setFlow`.
 
 A splitter is a component like any other (a clone bound to the DAO, registered in the
-`ComponentRegistry`, named by its index in a recipe).
+`ComponentRegistry`, declared directly on the node that uses it).
 
 ## Example flows
 
@@ -423,16 +424,36 @@ flowchart LR
 
 ## Installation
 
-A recipe lists the components to clone (by registry id), the tree and the extra permissions. The
-first component is the flow's budget. The recipe names its own contracts by position: each node's
-action and splitter, a component's dependencies and the grants refer to components by their index
-in the recipe's component list, and `NONE` marks a node without an action or a splitter. A grant
-names the plugin, the DAO, one of the components or an outside account.
+A recipe declares one budget and a tree. Each node contains its own action and splitter
+(registry ID and ABI-encoded settings), plus child **node** indexes. Each declaration deploys a
+fresh clone: identical declarations never share state. ID zero means no action or splitter, and
+an absent declaration must have empty settings and permissions.
 
-Every component is initialized the same way, through `IComponent.initialize(dao, deps, settings)`:
-the installing DAO, the addresses of the earlier components it depends on (an OpenFill depends on
-its budget), and its own settings, ABI-encoded as its metadata file lists them. The tree only ever
-names the recipe's own clones.
+Permissions sit beside the contract they target as `(who, permissionId)` pairs. Recipients are
+actual addresses; `pluginPermissions` targets the plugin. A recipe only grants who governs the
+flow. What each component needs to work, it names itself through
+`IComponent.requiredPermissions(dao, plugin, budget)`, and the setup grants that as declared: it
+trusts the registry's components. For example:
+
+```text
+budget: StreamBudget(settings)
+  permissions: manager → SET_SETTINGS
+nodes:
+  0: OpenFill(settings), children [1]
+     permissions: manager → SET_SETTINGS
+  1: Burn()
+pluginPermissions: anyone → TRIGGER, guardian → PAUSE
+```
+
+On top of these, the stream requires CHECKPOINT on itself for the DAO, which commits it, and OpenFill
+requires CHECKPOINT on the stream for itself, to restart it when the demand changes. A Merkle budget
+requires RECORD_CLAIM on itself for the DAO.
+
+The setup deploys the budget first, then each node's action and splitter. Every clone is initialized
+through `IComponent.initialize(dao, deps, settings)`. Actions receive `[flowBudget]`; actions that
+have no use for it ignore that argument. Budgets and splitters receive `[]`. Recipes cannot choose
+another initializer, an arbitrary dependency, or an existing action/splitter address. A newly
+registered implementation can be used without changing the setup if it follows these interfaces.
 
 ```mermaid
 sequenceDiagram
@@ -445,21 +466,30 @@ sequenceDiagram
 
     PSP->>Setup: prepareInstallation(dao, recipe)
     Setup->>Plugin: clone the plugin (CREATE2, salted with the DAO and the recipe)
-    loop every component
+    Setup->>Registry: implementation(recipe.budget.id)
+    Setup->>Clones: clone and initialize budget(dao, [], settings)
+    loop each node's action and splitter
         Setup->>Registry: implementation(id)
-        Setup->>Clones: clone it
+        Setup->>Clones: clone and initialize (actions receive [budget])
     end
-    loop every component, in recipe order
-        Setup->>Clones: initialize(dao, dependencies, settings)
-    end
-    Setup->>Plugin: initialize(dao, budget = component 0, nodes)
-    Setup-->>PSP: plugin, helpers = clones, permissions
+    Setup->>Plugin: initialize(dao, deployed budget, nodes with deployed addresses)
+    Setup->>Clones: requiredPermissions(dao, plugin, budget)
+    Setup-->>PSP: plugin, helpers = clones, recipe and required permissions
     Note over PSP: the DAO applies the installation, which grants the permissions, then starts a stream budget
 ```
 
-Every component is a fresh clone bound to the installing DAO; the plugin rejects any other.
-Components are initialized in recipe order and may only depend on earlier ones (OpenFill reads its
-budget's token, so the budget comes first).
+Every component is a fresh clone bound to the installing DAO. The setup returns Aragon's flat
+`helpers` array in deployment order: budget first, then each node's action and splitter, skipping
+absent declarations. Recipe authors do not maintain helper indexes.
+
+Uninstallation takes `abi.encode(originalPermissions)`: the complete concrete
+`PermissionLib.MultiTargetPermission[]` returned at preparation (also emitted by the processor),
+including EXECUTE and CONFIGURE. Setup verifies its stored hash and returns the same entries with
+operation Revoke. It does not reconstruct permissions from the recipe or the current tree.
+
+This recipe ABI replaces the component-array format: old encoded recipes must be rebuilt. Old
+installations retain their original setup and uninstall format. Since CREATE2 includes the recipe
+bytes, the new encoding also changes predicted deployment addresses.
 
 Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times that DAO
 has prepared that recipe. The plugin address in a proposal therefore pins the recipe: someone who
@@ -472,7 +502,8 @@ Preparing is permissionless and installs nothing. The DAO installs the flow by e
 actions in one proposal, which `script/Install.s.sol` prints:
 
 1. Grant `ROOT_PERMISSION_ID` on the DAO to the PluginSetupProcessor.
-2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions.
+2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions and the
+   ones the components require.
 3. Revoke that `ROOT_PERMISSION_ID`.
 4. When the budget is a `StreamBudget`, `writeCheckpoint()` on it, which starts the stream.
 

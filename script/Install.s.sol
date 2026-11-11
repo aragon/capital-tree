@@ -63,7 +63,7 @@ contract Install is Script {
         PluginSetupProcessor.ApplyInstallationParams memory _apply = PluginSetupProcessor.ApplyInstallationParams(
             _ref, plugin, _prepared.permissions, hashHelpers(_prepared.helpers)
         );
-        bool _stream = _recipe.components[0].id == Recipes.STREAM_BUDGET;
+        bool _stream = _recipe.budget.id == Recipes.STREAM_BUDGET;
         actions = new Action[](_stream ? 4 : 3);
         actions[0] = Action(_dao, 0, abi.encodeCall(PermissionManager.grant, (_dao, address(_psp), ROOT_PERMISSION_ID)));
         actions[1] = Action(address(_psp), 0, abi.encodeCall(PluginSetupProcessor.applyInstallation, (_dao, _apply)));

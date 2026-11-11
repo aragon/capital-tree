@@ -93,6 +93,18 @@ contract MerkleClaimBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
         });
     }
 
+    /// @inheritdoc IComponent
+    /// @dev The DAO executes the commit, which records the claim
+    function requiredPermissions(address _dao, address, address)
+        external
+        view
+        virtual
+        returns (Permission[] memory _permissions)
+    {
+        _permissions = new Permission[](1);
+        _permissions[0] = Permission(address(this), _dao, RECORD_CLAIM_PERMISSION_ID);
+    }
+
     // Claim record
 
     /// @notice Records a claim. Executed by the DAO when the budget commits, so it rolls back with the flow.

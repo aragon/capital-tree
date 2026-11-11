@@ -31,6 +31,6 @@ abstract contract BuybackDonateFixture is Fixture {
         budget = StreamBudget(_prepared.helpers[0]);
         vm.prank(address(dao));
         budget.writeCheckpoint(); // the install proposal starts the stream
-        donation = VaultDonateAction(_prepared.helpers[2]);
+        donation = VaultDonateAction(address(plugin.nodes()[2].action));
     }
 }

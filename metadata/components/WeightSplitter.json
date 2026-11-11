@@ -9,5 +9,6 @@
       "type": "uint32[]",
       "description": "One per child of the branch, in the node's child order, each non-zero, summing to 1,000,000."
     }
-  ]
+  ],
+  "initialization": "Setup supplies no dependencies."
 }
