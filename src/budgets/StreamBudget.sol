@@ -6,11 +6,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
-import {
-    DaoAuthorizableUpgradeable
-} from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IComponent} from "../interfaces/IComponent.sol";
+import {BaseComponent} from "../base/BaseComponent.sol";
 import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title StreamBudget
@@ -65,7 +63,7 @@ import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/const
 ///      for the DAO, but anyone can time one to slow the stream.
 ///
 ///      One flow per instance.
-contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgradeable {
+contract StreamBudget is ICheckpointedBudget, BaseComponent {
     /// @notice The highest growth per epoch. Below it, `rate x elapsed` can't overflow in any realistic time.
     uint256 public constant MAX_AMOUNT_PER_EPOCH = type(uint128).max;
 
@@ -121,11 +119,6 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @notice Thrown when the given epoch interval is zero
     error InvalidEpochInterval();
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
     /// @notice Initializes the budget. Nothing accrues until the first checkpoint starts the stream.
     /// @param _dao The DAO holding the funds
     /// @param _settings `abi.encode(IERC20 token, uint256 amountPerEpoch, uint256 maxBudget, uint256 epochInterval)`:
@@ -165,6 +158,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         external
         view
         virtual
+        override
         returns (Permission[] memory _permissions)
     {
         _permissions = new Permission[](1);

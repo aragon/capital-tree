@@ -4,13 +4,11 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
-import {
-    DaoAuthorizableUpgradeable
-} from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
 import {IComponent} from "../interfaces/IComponent.sol";
+import {BaseAction} from "./base/BaseAction.sol";
 import {Asset} from "../lib/types.sol";
 import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
@@ -25,10 +23,10 @@ import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/const
 ///      accumulated under the old demand at the new one.
 ///      `demandPerFill` is a minimum. On a node marked `forwardSurplus`, the children get everything
 ///      the filler sent; otherwise they get `demandPerFill` and the rest stays in the DAO.
-contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
+contract OpenFillAction is BaseAction {
     /// @inheritdoc INodeAction
     /// @dev The budget restarted when `demandPerFill` changes
-    IBudget public budget;
+    IBudget public override budget;
 
     /// @notice The token the DAO must receive back
     IERC20 public demandedToken;
@@ -56,11 +54,6 @@ contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
 
     /// @notice Thrown when the DAO gave away more of the offered token than the offer
     error OfferExceeded(uint256 minBalance, uint256 actual);
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
 
     /// @param _dao The DAO executing the fills
     /// @param _deps `[budget]`: the flow's budget, which this action restarts when the demand changes
@@ -90,6 +83,7 @@ contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
         external
         view
         virtual
+        override
         returns (bytes memory)
     {
         address _dao = address(dao());
@@ -123,6 +117,7 @@ contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
         external
         view
         virtual
+        override
     {
         (uint256 _inBefore, uint256 _outBefore) = abi.decode(_snapshot, (uint256, uint256));
         address _dao = address(dao());
@@ -152,6 +147,7 @@ contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
         external
         view
         virtual
+        override
         returns (Permission[] memory _permissions)
     {
         _permissions = new Permission[](1);
