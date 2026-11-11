@@ -97,7 +97,7 @@ abstract contract Fixture is Test {
 
     // Budgets
 
-    /// @dev A stream of token A. Deploy after funding the DAO: the budget records the balance it sees at init.
+    /// @dev A stream of token A, started. Deploy after funding the DAO: the budget records the balance it sees at the start.
     function _deployBudget(uint256 _rate, uint256 _maxBudget) internal returns (StreamBudget) {
         return _deployStream(tokenA, _rate, _maxBudget);
     }
@@ -112,6 +112,8 @@ abstract contract Fixture is Test {
         );
         dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
+        vm.prank(address(dao));
+        _budget.writeCheckpoint(); // a stream starts at its first checkpoint
     }
 
     /// @dev What `_budget` gives a flow triggered without budget data

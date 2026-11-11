@@ -12,6 +12,7 @@ import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSet
 import {ENSSubdomainRegistrar} from "@aragon/osx/framework/utils/ens/ENSSubdomainRegistrar.sol";
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
+import {IBudget} from "../src/interfaces/IBudget.sol";
 import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Install} from "../script/Install.s.sol";
@@ -55,7 +56,7 @@ contract InstallationTest is Fixture {
         assertTrue(repo.isGranted(address(repo), manager, repo.MAINTAINER_PERMISSION_ID(), ""), "maintainer");
     }
 
-    /// The proposal's three actions install a buy-and-burn flow, which then burns a fill's proceeds
+    /// The proposal's actions install a buy-and-burn flow, which then burns a fill's proceeds
     function test_DaoInstallsBuyAndBurnWithTheProposalActions() public {
         (address _plugin, Action[] memory _actions) =
             installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
@@ -74,6 +75,35 @@ contract InstallationTest is Fixture {
         assertEq(tokenB.totalSupply(), _supply - DEMAND, "proceeds burned");
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
         assertFalse(dao.hasPermission(address(dao), address(psp), dao.ROOT_PERMISSION_ID(), ""), "ROOT revoked");
+    }
+
+    /// The stream starts when the proposal executes, not when the installation is prepared
+    function test_TheStreamDoesNotGrowWhileTheProposalIsVoted() public {
+        (address _plugin, Action[] memory _actions) =
+            installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
+        IBudget _budget = CapitalTreePlugin(_plugin).budget();
+
+        vm.warp(block.timestamp + 7 days);
+        _executeProposal(_actions);
+        assertEq(_available(_budget), 0, "no backlog from the vote");
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(_budget), RATE);
+    }
+
+    /// A proposal without the start action installs a flow that pays nothing, instead of a backlog
+    function test_WithoutTheStartActionNothingFlows() public {
+        (address _plugin, Action[] memory _actions) =
+            installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
+        Action[] memory _withoutStart = new Action[](3);
+        for (uint256 i; i < 3; ++i) {
+            _withoutStart[i] = _actions[i];
+        }
+
+        _executeProposal(_withoutStart);
+        vm.warp(block.timestamp + 7 days);
+
+        assertEq(_available(CapitalTreePlugin(_plugin).budget()), 0);
     }
 
     /// Someone who prepares another recipe first can't take the plugin address the proposal names
@@ -154,6 +184,12 @@ contract InstallationTest is Fixture {
     }
 
     // Helpers
+
+    function _executeProposal(Action[] memory _actions) internal {
+        dao.grant(address(dao), address(dao), dao.ROOT_PERMISSION_ID()); // as Aragon's DAOFactory does
+        dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID()); // stands in for a passed proposal
+        dao.execute(bytes32(0), _actions, 0);
+    }
 
     function _buyAndBurnConfig(uint256 _maxBudget) internal view returns (string memory) {
         return string.concat(

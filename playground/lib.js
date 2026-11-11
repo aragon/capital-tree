@@ -311,8 +311,8 @@ export function describeError(e) {
   return e.message ?? String(e);
 }
 
-/** Prepares the installation through Aragon's PluginSetupProcessor, then executes the three
- *  proposal actions as the DAO (the playground account holds EXECUTE on it). */
+/** Prepares the installation through Aragon's PluginSetupProcessor, then executes the proposal's
+ *  actions as the DAO (the playground account holds EXECUTE on it). */
 export async function install(ctx, recipe) {
   const { dao, pluginRepo, pluginSetupProcessor: psp } = ctx.deployment;
   const data = encodeRecipe(ctx, recipe);
@@ -334,6 +334,11 @@ export async function install(ctx, recipe) {
     { to: psp, value: 0n, data: encodeFunctionData({ abi: ctx.abis.psp, functionName: "applyInstallation", args: [dao, apply] }) },
     { to: dao, value: 0n, data: encodeFunctionData({ abi: ctx.abis.dao, functionName: "revoke", args: [dao, psp, root] }) },
   ];
+  // A stream starts at its first checkpoint, so it didn't grow between preparing and applying
+  if (recipe.components[0].id.startsWith("StreamBudget@")) {
+    const start = encodeFunctionData({ abi: ctx.abis.StreamBudget, functionName: "writeCheckpoint" });
+    actions.push({ to: prepared.helpers[0], value: 0n, data: start });
+  }
   await write(ctx, { address: dao, abi: ctx.abis.dao, functionName: "execute", args: [zeroHash, actions, 0n] });
   return plugin;
 }

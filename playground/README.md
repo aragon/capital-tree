@@ -53,7 +53,8 @@ plugin, SET_SETTINGS for you on components with settings, CHECKPOINT on a stream
 RECORD_CLAIM on a Merkle claim for the DAO.
 
 Installing runs the real Aragon path: `PluginSetupProcessor.prepareInstallation`, then the DAO
-executes the proposal's three actions (grant ROOT, `applyInstallation`, revoke ROOT). The Merkle
-recipe uses a one-leaf tree for the first Anvil account, so claims need no proof.
+executes the proposal's actions (grant ROOT, `applyInstallation`, revoke ROOT, then `writeCheckpoint()`
+to start a stream budget). The Merkle recipe uses a one-leaf tree for the first Anvil account, so
+claims need no proof.
 
 The page loads viem from esm.sh and Drawflow from jsDelivr, so the browser needs internet access.

@@ -40,14 +40,29 @@ import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/const
 ///        sync.
 ///      - Every setter syncs first, so a parameter change never alters what has already accrued.
 ///
+///      **Start.** Nothing accrues until the first checkpoint. The install proposal calls
+///      `writeCheckpoint()` right after applying the installation, so the stream doesn't grow while
+///      the installation is voted on. Without that action the stream stays at zero, and nothing
+///      flows, until a later checkpoint.
+///
+///      **Pause.** Pausing the plugin doesn't stop the clock. On unpause, what accrued while paused
+///      is available at once, bounded by `lastSeenBalance`, the DAO balance and `maxBudget`: in an
+///      auction, a filler takes it at the worst price. To resume from zero, call `writeCheckpoint()`
+///      (the DAO holds CHECKPOINT) in the same transaction as `unpause()`.
+///
 ///      **Liveness.** After a deposit the amount stays frozen until someone calls `sync()`. That
 ///      is safe (the amount never rises) but stalls the stream, so operators should run a keeper
 ///      or add a `sync()` action wherever revenue enters the DAO.
 ///
-///      **Residual case.** If funds leave the DAO by another path and come back before any sync,
-///      `lastSeenBalance` is stale and the growth accrued meanwhile is released, bounded by that
-///      stale balance and, in an auction, the stream's `maxBudget`. Proposals that spend the
-///      token should include a `sync()` action.
+///      **Outflows by another path.** Only a sync records a fall in the DAO balance. If the token
+///      leaves the DAO by another path (another proposal or flow) and no sync follows, the curve
+///      keeps growing behind the live balance. When funds come back, the amount jumps to what
+///      accrued meanwhile, bounded by the stale `lastSeenBalance` and `maxBudget`: in an auction, a
+///      filler takes it at the worst price, and an uncapped stream pays it at once. A sync when the
+///      funds come back doesn't undo the jump. Only a sync right after the outflow prevents it, so
+///      every proposal that moves the token out of the DAO must end with a `sync()` action.
+///      Conversely, a sync while the balance is briefly low restarts the curve lower: never a loss
+///      for the DAO, but anyone can time one to slow the stream.
 ///
 ///      One flow per instance.
 contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgradeable {
@@ -69,7 +84,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @notice The amount available at `baseTimestamp`, from which growth continues
     uint256 public baseAmount;
 
-    /// @notice The timestamp of the last checkpoint or sync
+    /// @notice The timestamp of the last checkpoint or sync. Zero until the first checkpoint starts the stream.
     uint256 public baseTimestamp;
 
     /// @notice The DAO balance seen at the last checkpoint or sync. The amount never rises above it.
@@ -110,9 +125,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         _disableInitializers();
     }
 
-    /// @notice Initializes the budget. The amount starts at zero, capped by the current balance.
-    /// @dev A DAO that holds no tokens at initialization keeps the amount at zero until `sync()`
-    ///      is called after it is funded.
+    /// @notice Initializes the budget. Nothing accrues until the first checkpoint starts the stream.
     /// @param _dao The DAO holding the funds
     /// @param _settings `abi.encode(IERC20 token, uint256 amountPerEpoch, uint256 maxBudget, uint256 epochInterval)`:
     ///        the ERC20 token streamed, how much the available amount grows per epoch, the most it
@@ -130,8 +143,6 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         _setEpochInterval(_epochInterval);
 
         emit BudgetSettingsUpdated(_token, _amountPerEpoch, _maxBudget, _epochInterval);
-
-        _writeCheckpoint();
     }
 
     // IBudget
@@ -161,10 +172,10 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         _sync();
     }
 
-    /// @notice Restarts the amount from zero and records the DAO balance
+    /// @notice Restarts the amount from zero and records the DAO balance. The first call starts the stream.
     /// @dev Executed by the DAO after the whole flow ran, so the recorded balance is what is left
     ///      after the tokens have been handed over. Also called by a bound action to restart its
-    ///      auction when its demand changes.
+    ///      auction when its demand changes, and by the install proposal to start the stream.
     function writeCheckpoint() external virtual auth(CHECKPOINT_PERMISSION_ID) {
         _writeCheckpoint();
     }
@@ -204,6 +215,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
 
     /// @dev The amount before any cap
     function _accrued() internal view virtual returns (uint256) {
+        if (!_started()) return 0;
         return baseAmount + (amountPerEpoch * (block.timestamp - baseTimestamp)) / epochInterval;
     }
 
@@ -225,8 +237,13 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @dev Restarts the curve from the current amount, so a new rate applies from now on
     function _rebase() internal virtual {
         _sync();
+        if (!_started()) return;
         baseAmount = _accrued();
         baseTimestamp = block.timestamp;
+    }
+
+    function _started() internal view returns (bool) {
+        return baseTimestamp != 0;
     }
 
     function _writeCheckpoint() internal virtual {

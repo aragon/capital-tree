@@ -192,11 +192,30 @@ xychart-beta
 | Call                                                    | Who                        | Effect                                                                                   |
 | ------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
 | `sync()`                                                | anyone                     | Carries the current amount forward and records the DAO balance. Never raises the amount. |
-| `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The plugin runs it through the DAO after every trigger.              |
+| `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The first call, in the install proposal, starts the stream. The plugin runs it through the DAO after every trigger. |
 | `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `SET_SETTINGS_PERMISSION_ID` | Sync first, so time already elapsed keeps the old values.                                |
 
 After a deposit the amount stays frozen until someone calls `sync()`: run a keeper, or add a
 `sync()` action wherever revenue enters the DAO.
+
+**Start.** Nothing accrues until the first checkpoint, so the stream doesn't grow while the
+installation is voted on. The install proposal starts it with `writeCheckpoint()` right after
+applying the installation. A proposal without that action installs a flow that pays nothing until
+a later checkpoint, never one with a backlog.
+
+**Pause.** Pausing the plugin doesn't stop the stream's clock. On unpause, what accrued while
+paused is available at once, up to the cap: in an auction, a filler takes it at the worst price.
+To resume from zero, unpause and call `writeCheckpoint()` in the same DAO proposal (the DAO holds
+CHECKPOINT, and can grant itself PAUSE).
+
+**Outflows by another path.** Only a `sync()` records a fall in the DAO balance. If another
+proposal or flow moves the token out and no sync follows, the curve keeps growing behind the live
+balance, and when funds come back the amount jumps to what accrued meanwhile, bounded by the
+balance seen at the last sync and by the cap. In an auction, a filler takes that jump at the worst
+price; an uncapped stream pays it at once. A sync when the funds come back doesn't undo it, so
+**every proposal that moves the stream's token out of the DAO must end with a `sync()` action.**
+The reverse is safe for the DAO: a sync while the balance is briefly low restarts the curve
+lower, which anyone can time to slow the stream but never to speed it up.
 
 #### BalanceBudget
 
@@ -435,7 +454,7 @@ sequenceDiagram
     end
     Setup->>Plugin: initialize(dao, budget = component 0, nodes)
     Setup-->>PSP: plugin, helpers = clones, permissions
-    Note over PSP: the DAO applies the installation and grants the permissions
+    Note over PSP: the DAO applies the installation, which grants the permissions, then starts a stream budget
 ```
 
 Every component is a fresh clone bound to the installing DAO; the plugin rejects any other.
@@ -449,12 +468,13 @@ the one the proposal names. Voters can check a proposal's plugin against the pub
 the setup's `pluginAddress(dao, abi.encode(recipe), index)`, where `index` is 0 unless that DAO
 prepared the same recipe before.
 
-Preparing is permissionless and installs nothing. The DAO installs the flow by executing three
+Preparing is permissionless and installs nothing. The DAO installs the flow by executing these
 actions in one proposal, which `script/Install.s.sol` prints:
 
 1. Grant `ROOT_PERMISSION_ID` on the DAO to the PluginSetupProcessor.
 2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions.
 3. Revoke that `ROOT_PERMISSION_ID`.
+4. When the budget is a `StreamBudget`, `writeCheckpoint()` on it, which starts the stream.
 
 Only the DAO itself can apply the installation.
 
@@ -466,7 +486,7 @@ Only the DAO itself can apply the installation.
 | `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
 | `PAUSE_PERMISSION_ID`        | guardian                   | `pause()`, `unpause()`                                        |
 | `SET_SETTINGS_PERMISSION_ID` | manager                    | stream setters, OpenFill `setDemandPerFill()`, Merkle `setRoot()`, weight splitter `setWeights()` |
-| `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | restarting the stream budget                                  |
+| `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | starting and restarting the stream budget                     |
 | `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
 | `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
 
@@ -604,5 +624,5 @@ just dry-run script/Install.s.sol:Install
 just run script/Install.s.sol:Install
 ```
 
-4. Put the three actions printed by the broadcast run in a DAO proposal. Once it executes, the
+4. Put the actions printed by the broadcast run in a DAO proposal. Once it executes, the
    flow is live: fillers can call `trigger()`, the manager can tune it and the guardian can pause it.

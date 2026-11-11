@@ -154,6 +154,33 @@ contract StreamBudgetTest is Fixture {
         _budget.initialize(dao, _noDeps(), abi.encode(tokenA, _tooHigh, 0, EPOCH));
     }
 
+    function test_NothingAccruesBeforeTheFirstCheckpoint() public {
+        StreamBudget _budget = StreamBudget(
+            ProxyLib.deployMinimalProxy(
+                address(new StreamBudget()),
+                abi.encodeCall(StreamBudget.initialize, (dao, _noDeps(), abi.encode(tokenA, RATE, 0, EPOCH)))
+            )
+        );
+        dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
+        dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
+
+        vm.warp(block.timestamp + 7 days); // the vote
+        assertEq(_available(_budget), 0, "nothing accrued during the vote");
+
+        _budget.sync();
+        vm.prank(manager);
+        _budget.setAmountPerEpoch(2 * RATE);
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(_budget), 0, "neither a sync nor a setter starts it");
+
+        vm.prank(address(dao));
+        _budget.writeCheckpoint();
+        assertEq(_available(_budget), 0, "starts from zero");
+
+        vm.warp(block.timestamp + EPOCH);
+        assertEq(_available(_budget), 2 * RATE, "then grows at the rate set before the start");
+    }
+
     function test_RevertWhen_TokenHasNoCode() public {
         StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
 

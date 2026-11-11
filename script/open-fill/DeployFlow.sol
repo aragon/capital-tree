@@ -88,5 +88,8 @@ abstract contract DeployFlow is Script {
         d.solver = new GenericFillSolver(operator, d.plugin);
         d.dao.grant(address(d.plugin), address(d.solver), TRIGGER_PERMISSION_ID);
         vm.stopPrank();
+
+        vm.prank(address(d.dao));
+        d.budget.writeCheckpoint(); // a stream starts at its first checkpoint
     }
 }

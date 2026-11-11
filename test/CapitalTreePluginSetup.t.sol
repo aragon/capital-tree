@@ -10,6 +10,7 @@ import {PermissionLib} from "@aragon/osx-commons-contracts/src/permission/Permis
 import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {IComponent} from "../src/interfaces/IComponent.sol";
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {
@@ -322,6 +323,10 @@ contract CapitalTreePluginSetupTest is Fixture {
         (address _pluginAddress, IPluginSetup.PreparedSetupData memory _prepared) =
             setup.prepareInstallation(address(dao), abi.encode(_params));
         dao.applyMultiTargetPermissions(_prepared.permissions);
+        if (_params.components[0].id == Recipes.STREAM_BUDGET) {
+            vm.prank(address(dao));
+            StreamBudget(_prepared.helpers[0]).writeCheckpoint(); // the install proposal starts the stream
+        }
 
         return (CapitalTreePlugin(_pluginAddress), _prepared.helpers);
     }
