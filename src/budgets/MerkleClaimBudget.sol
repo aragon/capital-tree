@@ -5,11 +5,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
-import {
-    DaoAuthorizableUpgradeable
-} from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
 import {IComponent} from "../interfaces/IComponent.sol";
+import {BaseComponent} from "../base/BaseComponent.sol";
 import {SET_SETTINGS_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title MerkleClaimBudget
@@ -30,7 +28,7 @@ import {SET_SETTINGS_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/con
 ///      again from a node's callback before the first one records it.
 ///      Relayed (gasless) claims could be added later with a signature from the account over the
 ///      data of every node.
-contract MerkleClaimBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
+contract MerkleClaimBudget is IBudget, BaseComponent {
     /// @inheritdoc IBudget
     IERC20 public token;
 
@@ -47,11 +45,6 @@ contract MerkleClaimBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
     error InvalidProof();
     error NotTheAccount();
     error NothingToClaim();
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
 
     /// @param _dao The DAO holding the funds
     /// @param _settings `abi.encode(IERC20 token, bytes32 root)`: the ERC20 token claimed, and the
@@ -95,6 +88,7 @@ contract MerkleClaimBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
         external
         view
         virtual
+        override
         returns (Permission[] memory _permissions)
     {
         _permissions = new Permission[](1);

@@ -4,25 +4,17 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
-import {
-    DaoAuthorizableUpgradeable
-} from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
-import {IComponent} from "../interfaces/IComponent.sol";
+import {BaseComponent} from "../base/BaseComponent.sol";
 
 /// @title BalanceBudget
 /// @notice The DAO's whole balance of a token, with nothing to commit. The root receives all of it.
-contract BalanceBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
+contract BalanceBudget is IBudget, BaseComponent {
     /// @inheritdoc IBudget
     IERC20 public token;
 
     /// @notice Thrown when the token is not a contract
     error InvalidToken();
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
 
     /// @param _dao The DAO holding the funds
     /// @param _settings `abi.encode(IERC20 token)`: the ERC20 token the budget gives
@@ -42,7 +34,4 @@ contract BalanceBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc IBudget
     function commitActions(address, bytes calldata) external pure returns (Action[] memory) {}
-
-    /// @inheritdoc IComponent
-    function requiredPermissions(address, address, address) external pure returns (Permission[] memory) {}
 }

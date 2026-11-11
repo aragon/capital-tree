@@ -2,11 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
-import {
-    DaoAuthorizableUpgradeable
-} from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
-import {IComponent} from "../interfaces/IComponent.sol";
+import {BaseComponent} from "../base/BaseComponent.sol";
 import {Asset} from "../lib/types.sol";
 import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 
@@ -14,7 +11,7 @@ import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 /// @notice Splits a branch's output by weights: one per child, in the node's child order, each
 ///         non-zero, summing to RATIO_BASE. The rounding remainder goes to the largest weight.
 ///         Holders of SET_SETTINGS_PERMISSION_ID can change them.
-contract WeightSplitter is ISplitter, IComponent, DaoAuthorizableUpgradeable {
+contract WeightSplitter is ISplitter, BaseComponent {
     uint32[] internal _weights;
 
     event WeightsUpdated(uint32[] weights);
@@ -22,20 +19,12 @@ contract WeightSplitter is ISplitter, IComponent, DaoAuthorizableUpgradeable {
     error InvalidWeights();
     error WeightCountChanged(uint256 count, uint256 newCount);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
     /// @param _dao The DAO the splitter works for
     /// @param _settings `abi.encode(uint32[] weights)`: one non-zero weight per child, summing to RATIO_BASE
     function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);
         _setWeights(abi.decode(_settings, (uint32[])));
     }
-
-    /// @inheritdoc IComponent
-    function requiredPermissions(address, address, address) external pure returns (Permission[] memory) {}
 
     /// @notice Replaces the weights from the next trigger on
     /// @dev Keeps their number: the node's children only change with `setFlow`

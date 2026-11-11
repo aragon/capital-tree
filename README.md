@@ -241,6 +241,9 @@ action's safety checks can't be skipped. The hooks run in the order of the table
 | `preconditions(caller, data, input, output)`      | A snapshot of what the check compares against (a balance before the work); reverts to block it                                        |
 | `postconditions(caller, input, output, snapshot)` | Nothing; reverts when the work went wrong by the action's own standard. Runs right after the work, before the plugin's balance checks |
 
+Actions extend `BaseAction`, which defaults to no budget and empty preconditions and
+postconditions, so an action only writes `build` and the hooks it uses.
+
 #### OpenFillAction
 
 A take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input of token A, and
@@ -441,6 +444,8 @@ through `IComponent.initialize(dao, deps, settings)`. Actions receive `[flowBudg
 have no use for it ignore that argument. Budgets and splitters receive `[]`. Recipes cannot choose
 another initializer, an arbitrary dependency, or an existing action/splitter address. A newly
 registered implementation can be used without changing the setup if it follows these interfaces.
+Components extend `BaseComponent`: it locks the implementation so only clones can be initialized,
+and declares no required permissions unless the component overrides `requiredPermissions`.
 
 ```mermaid
 sequenceDiagram
@@ -543,6 +548,8 @@ flowchart LR
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
 | `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims; the account picks the payout address                                             |
 | `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |
+| `src/base/BaseComponent.sol`                   | Base for every component: locked implementation, no required permissions by default                        |
+| `src/actions/base/BaseAction.sol`              | Base for actions: no budget, empty preconditions and postconditions by default                             |
 | `src/actions/base/LeafAction.sol`              | Base for leaves: spends the whole input, outputs nothing                                                   |
 | `src/actions/base/TransferBase.sol`            | Base for transfer leaves: one transfer plus a receipt check                                                |
 | `src/actions/TransferAction.sol`               | Leaf: sends its input to a fixed recipient                                                                 |
