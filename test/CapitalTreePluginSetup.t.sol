@@ -10,7 +10,6 @@ import {PermissionLib} from "@aragon/osx-commons-contracts/src/permission/Permis
 import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {IComponent} from "../src/interfaces/IComponent.sol";
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
-import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IBudget} from "../src/interfaces/IBudget.sol";
 import {Node} from "../src/lib/types.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
@@ -44,7 +43,7 @@ contract CapitalTreePluginSetupTest is Fixture {
     // =========================================================================================
 
     function test_BuyAndBurnBurnsEverything() public {
-        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(address(dao), manager, guardian, _stream(), _swap()));
+        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(manager, guardian, _stream(), _swap()));
         MockFiller _filler = _newFiller(_plugin);
         uint256 _supply = tokenB.totalSupply();
 
@@ -86,9 +85,8 @@ contract CapitalTreePluginSetupTest is Fixture {
     function test_MerkleClaimPaysTheAccount() public {
         bytes32 _aliceLeaf = _leafHash(alice, 10 ether);
         bytes32 _bobLeaf = _leafHash(bob, 30 ether);
-        (CapitalTreePlugin _plugin,) = _install(
-            Recipes.merkleClaim(address(dao), manager, guardian, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf))
-        );
+        (CapitalTreePlugin _plugin,) =
+            _install(Recipes.merkleClaim(manager, guardian, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf)));
 
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _bobLeaf;
@@ -104,7 +102,7 @@ contract CapitalTreePluginSetupTest is Fixture {
 
     function test_PayrollPaysEachRecipient() public {
         (CapitalTreePlugin _plugin,) =
-            _install(Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights()));
+            _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
         vm.warp(block.timestamp + EPOCH);
 
         _plugin.trigger("", noData);
@@ -116,7 +114,7 @@ contract CapitalTreePluginSetupTest is Fixture {
     /// The recipe lets the manager change the shares
     function test_TheManagerChangesThePayrollWeights() public {
         (CapitalTreePlugin _plugin, address[] memory _helpers) =
-            _install(Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights()));
+            _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
         WeightSplitter _splitter = WeightSplitter(address(_plugin.nodes()[0].splitter));
         uint32[] memory _swapped = new uint32[](2);
         (_swapped[0], _swapped[1]) = (300_000, 700_000);
@@ -135,7 +133,7 @@ contract CapitalTreePluginSetupTest is Fixture {
         dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
         registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
         CapitalTreePluginSetup.InstallParams memory _params =
-            Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights());
+            Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights());
         _params.nodes[0].splitter = CapitalTreePluginSetup.Component(
             "CapSplitter@1", abi.encode(3 ether), new CapitalTreePluginSetup.Grant[](0)
         );
@@ -189,7 +187,7 @@ contract CapitalTreePluginSetupTest is Fixture {
         address _expected = setup.pluginAddress(address(dao), abi.encode(_buyback()), 0);
 
         CapitalTreePluginSetup.InstallParams memory _other =
-            Recipes.buyback(address(dao), manager, guardian, _stream(), _swap(), alice, 50_000);
+            Recipes.buyback(manager, guardian, _stream(), _swap(), alice, 50_000);
         (CapitalTreePlugin _attacker,) = _install(_other);
         (CapitalTreePlugin _plugin,) = _install(_buyback());
 
@@ -261,7 +259,7 @@ contract CapitalTreePluginSetupTest is Fixture {
 
     function test_IdenticalDeclarationsCreateIsolatedActionsAndSplitters() public {
         CapitalTreePluginSetup.InstallParams memory _params =
-            Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, alice), _weights());
+            Recipes.payroll(manager, guardian, _stream(), _pair(alice, alice), _weights());
         CapitalTreePluginSetup.RecipeNode memory _leafNode = _params.nodes[1];
         CapitalTreePluginSetup.Component memory _splitter = _params.nodes[0].splitter;
         _params.nodes = new CapitalTreePluginSetup.RecipeNode[](7);
@@ -296,15 +294,18 @@ contract CapitalTreePluginSetupTest is Fixture {
         }
     }
 
-    function test_ActionReceivesOnlyDeclaredBudgetPermissions() public {
+    /// Without any recipe grant on the budget or the action, each still gets what it needs to work
+    function test_EachComponentBringsThePermissionsItNeeds() public {
         CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.nodes[0].action.budgetPermissions = new bytes32[](0);
+        _params.budget.permissions = new CapitalTreePluginSetup.Grant[](0);
+        _params.nodes[0].action.permissions = new CapitalTreePluginSetup.Grant[](0);
         (CapitalTreePlugin _plugin,) = _install(_params);
+        address _budget = address(_plugin.budget());
         address _action = address(_plugin.nodes()[0].action);
-        assertFalse(dao.hasPermission(address(_plugin.budget()), _action, CHECKPOINT_PERMISSION_ID, ""));
-        vm.prank(manager);
-        vm.expectRevert();
-        OpenFillAction(_action).setDemandPerFill(DEMAND * 2);
+
+        assertTrue(dao.hasPermission(_budget, address(dao), CHECKPOINT_PERMISSION_ID, ""), "dao checkpoint");
+        assertTrue(dao.hasPermission(_budget, _action, CHECKPOINT_PERMISSION_ID, ""), "action checkpoint");
+        assertFalse(dao.hasPermission(_action, manager, SET_SETTINGS_PERMISSION_ID, ""), "no manager");
     }
 
     function test_GrantTargetsAreAlwaysInstallationContracts() public {
@@ -333,12 +334,11 @@ contract CapitalTreePluginSetupTest is Fixture {
     }
 
     function test_RevertWhen_AnAbsentActionHasSettingsOrPermissions() public {
-        for (uint256 i; i < 3; ++i) {
+        for (uint256 i; i < 2; ++i) {
             CapitalTreePluginSetup.InstallParams memory _params =
-                Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights());
+                Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights());
             if (i == 0) _params.nodes[0].action.settings = hex"01";
             if (i == 1) _params.nodes[0].action.permissions = new CapitalTreePluginSetup.Grant[](1);
-            if (i == 2) _params.nodes[0].action.budgetPermissions = new bytes32[](1);
             _expectInstallRevert(
                 _params, abi.encodeWithSelector(CapitalTreePluginSetup.InvalidAbsentComponent.selector)
             );
@@ -357,13 +357,12 @@ contract CapitalTreePluginSetupTest is Fixture {
     }
 
     function test_RevertWhen_AnyRecipeGrantGivesConfigure() public {
-        for (uint256 i; i < 5; ++i) {
+        for (uint256 i; i < 4; ++i) {
             CapitalTreePluginSetup.InstallParams memory _params = _buyback();
             if (i == 0) _params.pluginPermissions[0].permissionId = CONFIGURE_PERMISSION_ID;
             if (i == 1) _params.budget.permissions[0].permissionId = CONFIGURE_PERMISSION_ID;
             if (i == 2) _params.nodes[0].action.permissions[0].permissionId = CONFIGURE_PERMISSION_ID;
             if (i == 3) _params.nodes[0].splitter.permissions[0].permissionId = CONFIGURE_PERMISSION_ID;
-            if (i == 4) _params.nodes[0].action.budgetPermissions[0] = CONFIGURE_PERMISSION_ID;
             _expectInstallRevert(
                 _params,
                 abi.encodeWithSelector(CapitalTreePluginSetup.ReservedPermission.selector, CONFIGURE_PERMISSION_ID)
@@ -410,7 +409,7 @@ contract CapitalTreePluginSetupTest is Fixture {
 
     /// @dev Swap 10 A for 1,000 B, then burn 95% and pay 5% to the fee address
     function _buyback() internal view returns (CapitalTreePluginSetup.InstallParams memory) {
-        return Recipes.buyback(address(dao), manager, guardian, _stream(), _swap(), fee, 50_000);
+        return Recipes.buyback(manager, guardian, _stream(), _swap(), fee, 50_000);
     }
 
     function _stream() internal view returns (Recipes.Stream memory) {

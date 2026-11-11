@@ -135,22 +135,19 @@ const pluginPermissions = (account) => [
   { who: ANY_ADDR, permission: "TRIGGER" },
   { who: account, permission: "PAUSE" },
 ];
-const stream = (token, dao, account, maxBudget = "0") => component(
-  "StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" },
-  [...managed(account), { who: dao, permission: "CHECKPOINT" }],
+const stream = (token, account, maxBudget = "0") => component(
+  "StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" }, managed(account),
 );
-const openFill = (tokenB, account) => ({
-  ...component("OpenFillAction@1", { demandedToken: tokenB, demandPerFill: "1000e18" }, managed(account)),
-  budgetPermissions: ["CHECKPOINT"],
-});
+const openFill = (tokenB, account) =>
+  component("OpenFillAction@1", { demandedToken: tokenB, demandPerFill: "1000e18" }, managed(account));
 const weightSplitter = (weights, account) => component("WeightSplitter@1", { weights }, managed(account));
 const leaf = (action) => ({ action, children: "", splitter: null });
 
 /** The recipes in script/Recipes.sol, as editable state */
-export function templates({ tokenA, tokenB, account, dao }) {
+export function templates({ tokenA, tokenB, account }) {
   return {
     "Buy and burn": {
-      budget: stream(tokenA, dao, account, "20e18"),
+      budget: stream(tokenA, account, "20e18"),
       nodes: [
         { action: openFill(tokenB, account), children: "1", splitter: null },
         leaf(component("BurnAction@1", {})),
@@ -158,7 +155,7 @@ export function templates({ tokenA, tokenB, account, dao }) {
       pluginPermissions: pluginPermissions(account),
     },
     "Buyback with a fee": {
-      budget: stream(tokenA, dao, account, "20e18"),
+      budget: stream(tokenA, account, "20e18"),
       nodes: [
         { action: openFill(tokenB, account), children: "1, 2", splitter: weightSplitter("950000, 50000", account) },
         leaf(component("BurnAction@1", {})),
@@ -167,7 +164,7 @@ export function templates({ tokenA, tokenB, account, dao }) {
       pluginPermissions: pluginPermissions(account),
     },
     Payroll: {
-      budget: stream(tokenA, dao, account),
+      budget: stream(tokenA, account),
       nodes: [
         { action: null, children: "1, 2", splitter: weightSplitter("700000, 300000", account) },
         leaf(component("TransferAction@1", { to: ALICE })),
@@ -178,7 +175,7 @@ export function templates({ tokenA, tokenB, account, dao }) {
     "Merkle claim": {
       budget: component("MerkleClaimBudget@1", {
         token: tokenA, root: merkleLeaf(account, 100n * 10n ** 18n),
-      }, [...managed(account), { who: dao, permission: "RECORD_CLAIM" }]),
+      }, managed(account)),
       nodes: [leaf(component("TransferToBeneficiaryAction@1", {}))],
       pluginPermissions: pluginPermissions(account),
     },
@@ -207,10 +204,7 @@ export function encodeRecipe(ctx, recipe) {
   const params = {
     budget: encodeComponent(recipe.budget, "budget"),
     nodes: recipe.nodes.map((n, i) => ({
-      action: {
-        ...encodeComponent(n.action, `node ${i} action`),
-        budgetPermissions: (n.action?.budgetPermissions ?? []).map(permissionId),
-      },
+      action: encodeComponent(n.action, `node ${i} action`),
       children: wrap(`node ${i} children`, () => numbers(n.children)),
       splitter: encodeComponent(n.splitter, `node ${i} splitter`),
       skipWhenEmpty: n.skipWhenEmpty ?? false,

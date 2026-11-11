@@ -58,7 +58,7 @@
                 {
                   "name": "action",
                   "type": "tuple",
-                  "internalType": "struct CapitalTreePluginSetup.Action",
+                  "internalType": "struct CapitalTreePluginSetup.Component",
                   "components": [
                     {
                       "name": "id",
@@ -91,15 +91,9 @@
                         }
                       ],
                       "description": "Grants on this declaration's deployed contract."
-                    },
-                    {
-                      "name": "budgetPermissions",
-                      "type": "bytes32[]",
-                      "internalType": "bytes32[]",
-                      "description": "Permission IDs granted to this node's action on the flow budget."
                     }
                   ],
-                  "description": "Fresh action for this node. ID zero means absent; its settings and permission arrays must then be empty."
+                  "description": "Fresh action for this node. ID zero means absent; its settings and permissions must then be empty."
                 },
                 {
                   "name": "children",

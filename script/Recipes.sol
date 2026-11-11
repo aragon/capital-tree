@@ -8,14 +8,13 @@ import {
     TRIGGER_PERMISSION_ID,
     PAUSE_PERMISSION_ID,
     SET_SETTINGS_PERMISSION_ID,
-    CHECKPOINT_PERMISSION_ID,
-    RECORD_CLAIM_PERMISSION_ID,
     RATIO_BASE
 } from "../src/lib/constants.sol";
 
 /// @title Recipes
 /// @notice A budget and a tree of independently deployed actions and splitters. Permissions sit
-///         next to the contract they apply to; recipients, including the DAO, are actual addresses.
+///         next to the contract they apply to; recipients are actual addresses. A recipe only grants
+///         who governs the flow: each component adds the permissions it needs to work.
 library Recipes {
     bytes32 internal constant STREAM_BUDGET = "StreamBudget@1";
     bytes32 internal constant BALANCE_BUDGET = "BalanceBudget@1";
@@ -52,14 +51,14 @@ library Recipes {
     }
 
     /// @notice Stream → OpenFill → burn the proceeds.
-    function buyAndBurn(address _dao, address _manager, address _guardian, Stream memory _stream, Swap memory _swap)
+    function buyAndBurn(address _manager, address _guardian, Stream memory _stream, Swap memory _swap)
         internal
         pure
         returns (Setup.InstallParams memory _params)
     {
         if (_stream.maxBudget == 0) revert UncappedStream();
 
-        _params.budget = _streamBudget(_dao, _manager, _stream);
+        _params.budget = _streamBudget(_manager, _stream);
         _params.pluginPermissions = _pluginPermissions(_guardian);
 
         _params.nodes = new Setup.RecipeNode[](2);
@@ -72,7 +71,6 @@ library Recipes {
 
     /// @notice Stream → OpenFill → burn and pay a fee, split by weight.
     function buyback(
-        address _dao,
         address _manager,
         address _guardian,
         Stream memory _stream,
@@ -82,7 +80,7 @@ library Recipes {
     ) internal pure returns (Setup.InstallParams memory _params) {
         if (_stream.maxBudget == 0) revert UncappedStream();
 
-        _params.budget = _streamBudget(_dao, _manager, _stream);
+        _params.budget = _streamBudget(_manager, _stream);
         _params.pluginPermissions = _pluginPermissions(_guardian);
 
         uint32[] memory _weights = new uint32[](2);
@@ -102,7 +100,6 @@ library Recipes {
 
     /// @notice Stream → OpenFill → pay the fee, then donate the rest, including surplus.
     function buybackAndDonate(
-        address _dao,
         address _manager,
         address _guardian,
         Stream memory _stream,
@@ -115,7 +112,7 @@ library Recipes {
         if (_feeRecipient == address(0)) revert InvalidFeeRecipient();
         if (_stream.maxBudget == 0) revert UncappedStream();
 
-        _params.budget = _streamBudget(_dao, _manager, _stream);
+        _params.budget = _streamBudget(_manager, _stream);
         _params.pluginPermissions = _pluginPermissions(_guardian);
 
         uint32 _feeWeight = uint32(_feeBps * RATIO_BASE / 10_000);
@@ -138,16 +135,14 @@ library Recipes {
     }
 
     /// @notice Merkle claim → pay the beneficiary.
-    function merkleClaim(address _dao, address _manager, address _guardian, IERC20 _token, bytes32 _root)
+    function merkleClaim(address _manager, address _guardian, IERC20 _token, bytes32 _root)
         internal
         pure
         returns (Setup.InstallParams memory _params)
     {
         _params.budget.id = MERKLE_CLAIM;
         _params.budget.settings = abi.encode(_token, _root);
-        _params.budget.permissions = new Setup.Grant[](2);
-        _params.budget.permissions[0] = Setup.Grant(_manager, SET_SETTINGS_PERMISSION_ID);
-        _params.budget.permissions[1] = Setup.Grant(_dao, RECORD_CLAIM_PERMISSION_ID);
+        _params.budget.permissions = _managerPermission(_manager);
 
         _params.pluginPermissions = _pluginPermissions(_guardian);
 
@@ -157,14 +152,13 @@ library Recipes {
 
     /// @notice Stream → a branch paying each recipient its weight. Each leaf owns its Transfer clone.
     function payroll(
-        address _dao,
         address _manager,
         address _guardian,
         Stream memory _stream,
         address[] memory _recipients,
         uint32[] memory _weights
     ) internal pure returns (Setup.InstallParams memory _params) {
-        _params.budget = _streamBudget(_dao, _manager, _stream);
+        _params.budget = _streamBudget(_manager, _stream);
         _params.pluginPermissions = _pluginPermissions(_guardian);
 
         _params.nodes = new Setup.RecipeNode[](1 + _recipients.length);
@@ -182,7 +176,7 @@ library Recipes {
 
     // Declarations include their settings and permissions. No addresses need patching after deployment.
 
-    function _streamBudget(address _dao, address _manager, Stream memory _stream)
+    function _streamBudget(address _manager, Stream memory _stream)
         private
         pure
         returns (Setup.Component memory _budget)
@@ -190,18 +184,13 @@ library Recipes {
         _budget.id = STREAM_BUDGET;
         _budget.settings = abi.encode(_stream.token, _stream.amountPerEpoch, _stream.maxBudget, _stream.epochInterval);
 
-        _budget.permissions = new Setup.Grant[](2);
-        _budget.permissions[0] = Setup.Grant(_manager, SET_SETTINGS_PERMISSION_ID);
-        _budget.permissions[1] = Setup.Grant(_dao, CHECKPOINT_PERMISSION_ID);
+        _budget.permissions = _managerPermission(_manager);
     }
 
-    function _openFill(address _manager, Swap memory _swap) private pure returns (Setup.Action memory _action) {
+    function _openFill(address _manager, Swap memory _swap) private pure returns (Setup.Component memory _action) {
         _action.id = OPEN_FILL;
         _action.settings = abi.encode(_swap.demandedToken, _swap.demandPerFill);
         _action.permissions = _managerPermission(_manager);
-
-        _action.budgetPermissions = new bytes32[](1);
-        _action.budgetPermissions[0] = CHECKPOINT_PERMISSION_ID;
     }
 
     function _splitter(address _manager, uint32[] memory _weights)

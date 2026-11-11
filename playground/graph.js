@@ -105,7 +105,7 @@ export function recipeToGraph(recipe, meta) {
 }
 
 /** The recipe a graph describes; throws a readable error for anything that isn't a valid tree */
-export function graphToRecipe(graph, account, meta, dao) {
+export function graphToRecipe(graph, account, meta) {
   const data = graph.drawflow.Home.data;
   const all = Object.values(data);
   const label = (b) => `${b.name === BRANCH ? "Branch" : nameOf(b.name)} (box ${b.id})`;
@@ -159,12 +159,12 @@ export function graphToRecipe(graph, account, meta, dao) {
   });
 
   const recipe = { budget: component(budget), nodes, pluginPermissions: [] };
-  suggestGrants(recipe, account, dao);
+  suggestGrants(recipe, account);
   return recipe;
 }
 
 /** Attach the permissions used by the built-in recipes to their target declarations. */
-export function suggestGrants(recipe, manager, dao) {
+export function suggestGrants(recipe, manager) {
   const manage = (c) => {
     if (c) c.permissions = SETTERS.has(nameOf(c.id)) ? [{ who: manager, permission: "SET_SETTINGS" }] : [];
   };
@@ -173,14 +173,9 @@ export function suggestGrants(recipe, manager, dao) {
     { who: manager, permission: "PAUSE" },
   ];
   manage(recipe.budget);
-  const budgetName = nameOf(recipe.budget.id);
-  if (budgetName === "StreamBudget") recipe.budget.permissions.push({ who: dao, permission: "CHECKPOINT" });
-  if (budgetName === "MerkleClaimBudget") recipe.budget.permissions.push({ who: dao, permission: "RECORD_CLAIM" });
   for (const node of recipe.nodes) {
     manage(node.action);
     manage(node.splitter);
-    if (node.action) node.action.budgetPermissions =
-      budgetName === "StreamBudget" && nameOf(node.action.id) === "OpenFillAction" ? ["CHECKPOINT"] : [];
   }
 }
 

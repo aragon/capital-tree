@@ -18,9 +18,11 @@ import {CONFIGURE_PERMISSION_ID} from "../lib/constants.sol";
 /// @title CapitalTreePluginSetup
 /// @notice Installs a budget and a tree. Each node declares its own action and splitter; each
 ///         declaration creates a fresh registered clone, even when two declarations are identical.
-/// @dev Grants belong to the contract they target. Recipients are actual addresses. An action's
-///      budgetPermissions grant that action permissions on the flow's budget.
-///      CREATE2 salts bind addresses to the DAO, the complete recipe and its preparation count.
+/// @dev Grants belong to the contract they target. Recipients are actual addresses. On top of the
+///      recipe's grants, each component names the permissions it needs to work
+///      (`IComponent.requiredPermissions`), and setup grants them as declared: it trusts the
+///      registry's components. CREATE2 salts bind addresses to the DAO, the complete recipe and its
+///      preparation count.
 contract CapitalTreePluginSetup is PluginSetup {
     /// @notice A permission on the contract containing this grant
     struct Grant {
@@ -28,26 +30,17 @@ contract CapitalTreePluginSetup is PluginSetup {
         bytes32 permissionId;
     }
 
-    /// @notice A budget or splitter to deploy from the registry
+    /// @notice A budget, action or splitter to deploy from the registry
     struct Component {
         bytes32 id;
         bytes settings;
         Grant[] permissions;
     }
 
-    /// @notice An action to deploy for one node
-    /// @param budgetPermissions Permissions this action receives on the flow's budget
-    struct Action {
-        bytes32 id;
-        bytes settings;
-        Grant[] permissions;
-        bytes32[] budgetPermissions;
-    }
-
     /// @notice A node with its own action and splitter. ID zero means absent; all other fields of
     ///         an absent declaration must be empty. Children are node indexes, as in runtime Node.
     struct RecipeNode {
-        Action action;
+        Component action;
         uint32[] children;
         Component splitter;
         bool skipWhenEmpty;
@@ -118,7 +111,7 @@ contract CapitalTreePluginSetup is PluginSetup {
         CapitalTreePlugin(plugin).initialize(IDAO(_dao), IBudget(_budget), _nodes);
 
         preparedSetupData.helpers = _deployedContracts;
-        preparedSetupData.permissions = _permissions(_dao, plugin, _recipe, _budget, _nodes);
+        preparedSetupData.permissions = _permissions(_dao, plugin, _recipe, _deployedContracts, _nodes);
         permissionsHash[plugin] = keccak256(abi.encode(preparedSetupData.permissions));
     }
 
@@ -227,12 +220,12 @@ contract CapitalTreePluginSetup is PluginSetup {
     /// @return The action clone, or address zero for a valid absent declaration
     function _deployAction(
         address _dao,
-        Action memory _action,
+        Component memory _action,
         address[] memory _budgetDependency,
         bytes32 _salt,
         uint256 _index
     ) internal returns (INodeAction) {
-        _checkActionDeclaration(_action);
+        _checkDeclaration(_action);
         if (_action.id == bytes32(0)) return INodeAction(address(0));
 
         return INodeAction(_clone(_dao, _action.id, _action.settings, _budgetDependency, _salt, _index));
@@ -248,7 +241,7 @@ contract CapitalTreePluginSetup is PluginSetup {
         internal
         returns (ISplitter)
     {
-        _checkSplitterDeclaration(_splitter);
+        _checkDeclaration(_splitter);
         if (_splitter.id == bytes32(0)) return ISplitter(address(0));
 
         return ISplitter(_clone(_dao, _splitter.id, _splitter.settings, new address[](0), _salt, _index));
@@ -256,23 +249,11 @@ contract CapitalTreePluginSetup is PluginSetup {
 
     // Declaration checks
 
-    /// @dev ID zero means absent, so settings and both permission arrays must also be empty.
-    ///      Present actions are checked by registry lookup, initialization and plugin validation.
-    /// @param _action Declaration to check before deploying a node's action
-    function _checkActionDeclaration(Action memory _action) internal pure {
-        if (
-            _action.id == bytes32(0)
-                && (_action.settings.length != 0
-                    || _action.permissions.length != 0
-                    || _action.budgetPermissions.length != 0)
-        ) revert InvalidAbsentComponent();
-    }
-
     /// @dev ID zero means absent, so settings and permissions must also be empty.
-    ///      Present splitters are checked by registry lookup, initialization and plugin validation.
-    /// @param _splitter Declaration to check before deploying a node's splitter
-    function _checkSplitterDeclaration(Component memory _splitter) internal pure {
-        if (_splitter.id == bytes32(0) && (_splitter.settings.length != 0 || _splitter.permissions.length != 0)) {
+    ///      Present components are checked by registry lookup, initialization and plugin validation.
+    /// @param _component Declaration to check before deploying a node's action or splitter
+    function _checkDeclaration(Component memory _component) internal pure {
+        if (_component.id == bytes32(0) && (_component.settings.length != 0 || _component.permissions.length != 0)) {
             revert InvalidAbsentComponent();
         }
     }
@@ -301,21 +282,24 @@ contract CapitalTreePluginSetup is PluginSetup {
     // Permissions
 
     /// @dev Allocates the complete permission list and fills it in order: standard permissions,
-    ///      plugin grants, budget grants, then each node's action, splitter and budget permissions.
+    ///      plugin grants, budget grants, each node's action and splitter grants, then what each
+    ///      component requires.
     /// @param _dao Installing DAO, receiving CONFIGURE on the plugin
     /// @param _plugin Deployed plugin, receiving EXECUTE on the DAO
-    /// @param _recipe Attached grants and action-to-budget permission IDs
-    /// @param _budget Deployed budget address
+    /// @param _recipe Grants attached to each declaration
+    /// @param _components Deployed components: the budget first, then each node's action and splitter
     /// @param _nodes Deployed nodes in the same order as the recipe
     /// @return _perms Concrete Grant operations for the processor to apply
     function _permissions(
         address _dao,
         address _plugin,
         InstallParams memory _recipe,
-        address _budget,
+        address[] memory _components,
         Node[] memory _nodes
-    ) internal pure returns (PermissionLib.MultiTargetPermission[] memory _perms) {
-        _perms = new PermissionLib.MultiTargetPermission[](_countPermissions(_recipe));
+    ) internal view returns (PermissionLib.MultiTargetPermission[] memory _perms) {
+        (IComponent.Permission[][] memory _required, uint256 _requiredCount) =
+            _requiredPermissions(_dao, _plugin, _components);
+        _perms = new PermissionLib.MultiTargetPermission[](_countPermissions(_recipe) + _requiredCount);
 
         _perms[0] = _grant(_dao, _plugin, EXECUTE_PERMISSION_ID);
         _perms[1] = _grant(_plugin, _dao, CONFIGURE_PERMISSION_ID);
@@ -326,23 +310,21 @@ contract CapitalTreePluginSetup is PluginSetup {
         _next = _writeGrants(_perms, _next, _plugin, _recipe.pluginPermissions);
 
         // Permissions on the budget, such as updating its rate.
-        _next = _writeGrants(_perms, _next, _budget, _recipe.budget.permissions);
+        _next = _writeGrants(_perms, _next, _components[0], _recipe.budget.permissions);
 
         for (uint256 i; i < _recipe.nodes.length; ++i) {
             RecipeNode memory _node = _recipe.nodes[i];
-            address _action = address(_nodes[i].action);
-            address _splitter = address(_nodes[i].splitter);
-
-            _next = _writeGrants(_perms, _next, _action, _node.action.permissions);
-            _next = _writeGrants(_perms, _next, _splitter, _node.splitter.permissions);
-            _next = _writeBudgetPermissions(_perms, _next, _budget, _action, _node.action.budgetPermissions);
+            _next = _writeGrants(_perms, _next, address(_nodes[i].action), _node.action.permissions);
+            _next = _writeGrants(_perms, _next, address(_nodes[i].splitter), _node.splitter.permissions);
         }
+
+        _writeRequiredPermissions(_perms, _next, _required);
     }
 
     /// @dev Solidity memory arrays need their length before entries can be written. Count the two
     ///      standard grants and every declared grant once; this does not validate their contents.
     /// @param _recipe Installation recipe whose permission list will be allocated
-    /// @return _count Exact length required by _permissions
+    /// @return _count Length _permissions needs for the recipe's grants, before the required ones
     function _countPermissions(InstallParams memory _recipe) internal pure returns (uint256 _count) {
         _count = 2; // Plugin receives EXECUTE on the DAO; DAO receives CONFIGURE on the plugin.
         _count += _recipe.pluginPermissions.length;
@@ -350,7 +332,42 @@ contract CapitalTreePluginSetup is PluginSetup {
         for (uint256 i; i < _recipe.nodes.length; ++i) {
             _count += _recipe.nodes[i].action.permissions.length;
             _count += _recipe.nodes[i].splitter.permissions.length;
-            _count += _recipe.nodes[i].action.budgetPermissions.length;
+        }
+    }
+
+    /// @dev Asks every deployed component which permissions it needs to work
+    /// @param _dao Installing DAO
+    /// @param _plugin Deployed plugin
+    /// @param _components Deployed components, the budget first
+    /// @return _required Each component's permissions, in the order of `_components`
+    /// @return _count How many there are in total
+    function _requiredPermissions(address _dao, address _plugin, address[] memory _components)
+        internal
+        view
+        returns (IComponent.Permission[][] memory _required, uint256 _count)
+    {
+        _required = new IComponent.Permission[][](_components.length);
+        for (uint256 i; i < _components.length; ++i) {
+            _required[i] = IComponent(_components[i]).requiredPermissions(_dao, _plugin, _components[0]);
+            _count += _required[i].length;
+        }
+    }
+
+    /// @dev Writes the components' required permissions as they declared them, without checks:
+    ///      setup trusts the registry's components
+    /// @param _perms Preallocated permission array, modified in memory
+    /// @param _next First free position to write
+    /// @param _required Each component's permissions, from _requiredPermissions
+    function _writeRequiredPermissions(
+        PermissionLib.MultiTargetPermission[] memory _perms,
+        uint256 _next,
+        IComponent.Permission[][] memory _required
+    ) internal pure {
+        for (uint256 i; i < _required.length; ++i) {
+            for (uint256 j; j < _required[i].length; ++j) {
+                IComponent.Permission memory _p = _required[i][j];
+                _perms[_next++] = _grant(_p.where, _p.who, _p.permissionId);
+            }
         }
     }
 
@@ -372,28 +389,6 @@ contract CapitalTreePluginSetup is PluginSetup {
             // Keep CONFIGURE out of recipe grants; setup grants it to the DAO on the plugin above.
             if (_g.permissionId == CONFIGURE_PERMISSION_ID) revert ReservedPermission(_g.permissionId);
             _perms[_next++] = _grant(_where, _g.who, _g.permissionId);
-        }
-        return _next;
-    }
-
-    /// @dev Writes the permissions a node's action receives on the flow budget, rejecting CONFIGURE.
-    /// @param _perms Preallocated permission array, modified in memory
-    /// @param _next First free position to write
-    /// @param _budget Budget granting the permissions
-    /// @param _action Deployed action receiving them
-    /// @param _permissionIds Permission IDs declared in the action's budgetPermissions
-    /// @return First free position after the written permissions
-    function _writeBudgetPermissions(
-        PermissionLib.MultiTargetPermission[] memory _perms,
-        uint256 _next,
-        address _budget,
-        address _action,
-        bytes32[] memory _permissionIds
-    ) internal pure returns (uint256) {
-        for (uint256 i; i < _permissionIds.length; ++i) {
-            bytes32 _id = _permissionIds[i];
-            if (_id == CONFIGURE_PERMISSION_ID) revert ReservedPermission(_id);
-            _perms[_next++] = _grant(_budget, _action, _id);
         }
         return _next;
     }

@@ -55,7 +55,7 @@ contract Install is Script {
         returns (address plugin, Action[] memory actions)
     {
         PluginSetupRef memory _ref = PluginSetupRef(PluginRepo.Tag(1, 1), _repo);
-        CapitalTreePluginSetup.InstallParams memory _recipe = recipe(_dao, _config);
+        CapitalTreePluginSetup.InstallParams memory _recipe = recipe(_config);
         IPluginSetup.PreparedSetupData memory _prepared;
         (plugin, _prepared) =
             _psp.prepareInstallation(_dao, PluginSetupProcessor.PrepareInstallationParams(_ref, abi.encode(_recipe)));
@@ -74,22 +74,17 @@ contract Install is Script {
     }
 
     /// @notice The recipe a config describes: `.recipe` names it, the other keys are its parameters
-    function recipe(address _dao, string memory _config)
-        public
-        pure
-        returns (CapitalTreePluginSetup.InstallParams memory)
-    {
+    function recipe(string memory _config) public pure returns (CapitalTreePluginSetup.InstallParams memory) {
         string memory _name = _config.readString(".recipe");
         address _manager = _config.readAddress(".manager");
         address _guardian = _config.readAddress(".guardian");
         bytes32 _hash = keccak256(bytes(_name));
 
         if (_hash == keccak256("buyAndBurn")) {
-            return Recipes.buyAndBurn(_dao, _manager, _guardian, _stream(_config), _swap(_config));
+            return Recipes.buyAndBurn(_manager, _guardian, _stream(_config), _swap(_config));
         }
         if (_hash == keccak256("buybackAndDonate")) {
             return Recipes.buybackAndDonate(
-                _dao,
                 _manager,
                 _guardian,
                 _stream(_config),
@@ -101,7 +96,6 @@ contract Install is Script {
         }
         if (_hash == keccak256("buyback")) {
             return Recipes.buyback(
-                _dao,
                 _manager,
                 _guardian,
                 _stream(_config),
@@ -112,12 +106,12 @@ contract Install is Script {
         }
         if (_hash == keccak256("merkleClaim")) {
             return Recipes.merkleClaim(
-                _dao, _manager, _guardian, IERC20(_config.readAddress(".token")), _config.readBytes32(".root")
+                _manager, _guardian, IERC20(_config.readAddress(".token")), _config.readBytes32(".root")
             );
         }
         if (_hash == keccak256("payroll")) {
             return Recipes.payroll(
-                _dao, _manager, _guardian, _stream(_config), _config.readAddressArray(".recipients"), _weights(_config)
+                _manager, _guardian, _stream(_config), _config.readAddressArray(".recipients"), _weights(_config)
             );
         }
         revert UnknownRecipe(_name);
