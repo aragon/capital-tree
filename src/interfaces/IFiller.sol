@@ -10,6 +10,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         at least `demandedAmount` more of `demandedToken` before returning.
 /// @dev Same selector as capital-router's `ISwapSolver.fillOffer`, so existing fillers keep working.
 interface IFiller {
+    /// @notice Takes the offer: pulls up to `offeredAmount` of `offeredToken` from the DAO, and leaves
+    ///         the DAO holding at least `demandedAmount` more of `demandedToken`
+    /// @param data The filler's own entry in the trigger's node data, passed through unchanged
     function fillOffer(
         IERC20 offeredToken,
         uint256 offeredAmount,

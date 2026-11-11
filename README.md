@@ -4,9 +4,10 @@
 
 Aragon OSx plugin that runs one treasury flow per install: a **budget** feeding a **tree of
 actions**. Every node passes its output to its children, split by a splitter (fixed weights or
-custom shares) when there are several, and every branch ends in a leaf that consumes what it receives (transfer, burn, keep).
-Each node runs in its own `dao.execute`, followed by balance checks, so a node can only ever spend
-what the budget released or what its parent really produced.
+custom shares) when there are several, and every branch ends in a leaf that consumes what it
+receives (transfer, burn, keep, donate). Each node runs in its own `dao.execute`, followed by
+balance checks, so a node can only ever spend what the budget released or what its parent really
+produced.
 
 ```mermaid
 flowchart LR
@@ -20,11 +21,96 @@ flowchart LR
     fill -- "5% of the B received" --> fee
 ```
 
-Examples: sell token A in a Dutch auction and burn 95% of the proceeds, paying 5% as a fee; let
-accounts claim cumulative Merkle allocations, optionally swapped before they're paid; pay a
-payroll from a stream. Any ERC20 works; native ETH isn't supported.
+Examples: sell token A in a Dutch auction and burn 95% of the proceeds, paying 5% as a fee; buy a
+token back and donate it to a vault's holders; let accounts claim cumulative Merkle allocations,
+optionally swapped before they're paid; pay a payroll from a stream. Any ERC20 works; native ETH
+isn't supported.
 
-Design: [`docs/plans/2026-11-04-capital-pipeline-design.md`](docs/plans/2026-11-04-capital-pipeline-design.md)
+Each component is documented in [`docs/components.md`](docs/components.md). To build and run flows on
+a local fork, use the [playground](playground/README.md). To install one on a DAO, see
+[Install a flow](#install-a-flow).
+
+## Example flows
+
+`script/Recipes.sol` builds five flows. The buyback is the diagram at the top. The other four:
+
+**Buy and burn**: the buyback without a fee, burning everything the swap brings in.
+
+```mermaid
+flowchart LR
+    budget[("StreamBudget<br/>token A")]
+    fill["OpenFillAction<br/>sells A for B"]
+    burn["BurnAction"]
+
+    budget -- "available() A" --> fill
+    fill -- "all the B received" --> burn
+```
+
+**Buyback and donate**: the buyback, but the proceeds go to a vault's holders. A fee in basis points
+goes to a fee recipient, and the rest is donated to the vault, which raises its assets without
+minting shares. The OpenFill forwards its surplus, so the fee and the donation split everything the
+filler sent. [`docs/avkat-buyback.md`](docs/avkat-buyback.md) walks through the avKAT version.
+
+```mermaid
+flowchart LR
+    budget[("StreamBudget<br/>token A")]
+    fill["OpenFillAction<br/>sells A for B<br/>(forwards surplus)"]
+    donate["VaultDonateAction<br/>to the vault"]
+    fee["TransferAction<br/>to feeAddr"]
+
+    budget -- "available() A" --> fill
+    fill -- "all the B received, minus the fee" --> donate
+    fill -- "fee bps of the B received" --> fee
+```
+
+**Merkle claim**: an account claims what it's owed and gets paid at the address it names in the
+leaf's node data.
+
+```mermaid
+flowchart LR
+    budget[("MerkleClaimBudget<br/>token A, proof for the caller")]
+    pay["TransferToBeneficiaryAction<br/>to the address in its node data"]
+    who(("payout address"))
+
+    budget -- "amount owed" --> pay
+    pay -- "A" --> who
+```
+
+**Payroll**: a stream split among fixed recipients by a branch with no action.
+
+```mermaid
+flowchart LR
+    budget[("StreamBudget<br/>token A")]
+    split{"branch<br/>(no action)"}
+    one["TransferAction<br/>recipient 1"]
+    two["TransferAction<br/>recipient 2"]
+    three["TransferAction<br/>recipient 3"]
+
+    budget -- "available() A" --> split
+    split -- "60%" --> one
+    split -- "30%" --> two
+    split -- "10%" --> three
+```
+
+**Grants and an auction** (no recipe): a branch with no action splits a stream between a grants
+transfer and an auction, so the auction's offer grows at half the stream's rate, up to half the
+stream's cap. Grants are paid only when someone fills the auction, and the stream then restarts
+from zero for both. Changing the auction's demand restarts it too, so the grants lose what accrued
+since the last fill (it stays in the DAO).
+
+```mermaid
+flowchart LR
+    budget[("StreamBudget<br/>token A")]
+    split{"branch<br/>(no action)"}
+    grants["TransferAction<br/>to grantsSafe"]
+    fill["OpenFillAction<br/>sells A for B"]
+    keep["KeepAction"]
+
+    budget -- "available() A" --> split
+    split -- "50%" --> grants
+    split -- "50%" --> fill
+    fill -- "all the B received" --> keep
+```
 
 ## How it works
 
@@ -86,16 +172,13 @@ sequenceDiagram
     Note over Plugin: emit FlowExecuted(caller, nonce, root input)
 ```
 
-Any failure reverts the whole trigger: a flow never runs halfway. When a `WeightSplitter` divides
-a node's output, the rounding remainder goes to the child with the largest weight. A node
-that receives nothing reverts the trigger too, unless it's marked `skipWhenEmpty`: then neither it
-nor anything below it runs. Every trigger counts up a nonce, so its execution IDs (in the DAO's
-`Executed`, `NodeExecuted` and `BudgetCommitted`) differ from another trigger's, even in the same
-block. Within a trigger, each `dao.execute` has its own index: i for node i, `nodes.length` for the
-commit. The errors about a DAO action (`MissingFunctionSelector`, `ActionTargetsDao`,
-`ActionTargetsPlugin`) report that same index.
-A run that finishes emits `FlowExecuted(caller, nonce, input)` last, after the commit: `input` is what
-the budget gave the root, not what the flow spent.
+Any failure reverts the whole trigger: a flow never runs halfway. Every trigger counts up a nonce,
+so its execution IDs (in the DAO's `Executed`, `NodeExecuted` and `BudgetCommitted`) differ from
+another trigger's, even in the same block. Within a trigger, each `dao.execute` has its own index:
+i for node i, `nodes.length` for the commit. The errors about a DAO action (`MissingFunctionSelector`,
+`ActionTargetsDao`, `ActionTargetsPlugin`) report that same index. A run that finishes emits
+`FlowExecuted(caller, nonce, input)` last, after the commit: `input` is what the budget gave the
+root, not what the flow spent.
 
 An execution ID isn't a hash: it packs the plugin's address (20 bytes) and the trigger's nonce (8),
 which identify the run, then the execution index (4). Trigger 5's node 1, for example, is
@@ -125,7 +208,7 @@ When the flow is set (`initialize` or `setFlow`, DAO only):
 2. A node without an action has at least 2 children.
 3. A node with 2+ children has a splitter made for that many children, or for any (`childCount()` returns 0); other nodes have none (`InvalidSplitter`). Whether the splitter returns one amount per child is checked at trigger (`InvalidSplit`).
 4. An action bound to a budget (OpenFill) must be bound to the flow's budget. It may sit anywhere.
-5. The budget, every action and every splitter are clones bound to this plugin's DAO.
+5. The budget, every action and every splitter are bound to this plugin's DAO (`ForeignComponent`).
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
 7. Only a node with an action and children can be marked `forwardSurplus` (`InvalidForwardSurplus`).
 
@@ -140,94 +223,27 @@ saves, then every trigger reverts. Measured on a first payout:
 
 ## Components
 
+Every component is a clone bound to one DAO. Each has its own doc, linked below, with how it
+behaves, its calls and its caveats; its settings and dependencies are in
+`metadata/components/<Name>.json`.
+
+| Component                                                                       | Kind     | Does                                                                            |
+| ------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------- |
+| [`StreamBudget`](docs/components.md#streambudget)                               | Budget   | Grows at a fixed rate up to what the DAO holds and an optional cap; never jumps |
+| [`BalanceBudget`](docs/components.md#balancebudget)                             | Budget   | The DAO's whole balance of a token                                              |
+| [`MerkleClaimBudget`](docs/components.md#merkleclaimbudget)                     | Budget   | What the caller is owed under a cumulative Merkle root                          |
+| [`OpenFillAction`](docs/components.md#openfillaction)                           | Action   | Sells its input for a flat demand: a Dutch auction when a stream feeds it       |
+| [`TransferAction`](docs/components.md#transferaction)                           | Leaf     | Sends its input to a fixed recipient                                            |
+| [`TransferToBeneficiaryAction`](docs/components.md#transfertobeneficiaryaction) | Leaf     | Sends its input to an address the caller picks                                  |
+| [`BurnAction`](docs/components.md#burnaction)                                   | Leaf     | Burns its input                                                                 |
+| [`KeepAction`](docs/components.md#keepaction)                                   | Leaf     | Leaves its input in the DAO                                                     |
+| [`VaultDonateAction`](docs/components.md#vaultdonateaction)                     | Leaf     | Donates its input to a vault's holders                                          |
+| [`WeightSplitter`](docs/components.md#weightsplitter)                           | Splitter | Splits a branch's output by fixed weights                                       |
+
 ### Budgets
 
 A budget implements `IBudget`: `token()`; `available(caller, data)`, the root's input; and
 `commitActions(caller, data)`, the DAO actions that record the spend after the whole tree ran.
-
-| Budget               | `available()`                                                              | Commit             |
-| -------------------- | -------------------------------------------------------------------------- | ------------------ |
-| `StreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
-| `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
-| `MerkleClaimBudget`  | What the caller is owed                                                    | Records the claim  |
-
-#### StreamBudget
-
-A stream that never jumps, built for Dutch auctions where a jump in the offer would be taken by
-a filler in the same block.
-
-```
-available = min(baseAmount + rate × (now − baseTimestamp), lastSeenBalance, daoBalance, maxBudget)
-```
-
-The amount is capped at `lastSeenBalance`, the DAO balance seen at the last checkpoint or
-`sync()`, and a deposit doesn't move that until someone syncs. While the DAO is short, the amount
-stops growing instead of building up a backlog, and after a deposit and a `sync()` it resumes from
-where it stopped.
-
-The chart streams 10 per day from a DAO holding 30, with a deposit of 100 and a `sync()` on day 6.
-The amount stops at 30 while the DAO is short and resumes from 30 after the sync.
-
-```mermaid
-xychart-beta
-    title "Available amount, 10 per day, DAO holds 30 until day 6"
-    x-axis "day" [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    y-axis "available" 0 --> 60
-    line [0, 10, 20, 30, 30, 30, 30, 40, 50]
-```
-
-| Call                                                    | Who                        | Effect                                                                                   |
-| ------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
-| `sync()`                                                | anyone                     | Carries the current amount forward and records the DAO balance. Never raises the amount. |
-| `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The first call, in the install proposal, starts the stream. The plugin runs it through the DAO after every trigger. |
-| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `SET_SETTINGS_PERMISSION_ID` | Sync first, so time already elapsed keeps the old values.                                |
-
-After a deposit the amount stays frozen until someone calls `sync()`: run a keeper, or add a
-`sync()` action wherever revenue enters the DAO.
-
-**Start.** Nothing accrues until the first checkpoint, so the stream doesn't grow while the
-installation is voted on. The install proposal starts it with `writeCheckpoint()` right after
-applying the installation. A proposal without that action installs a flow that pays nothing until
-a later checkpoint, never one with a backlog.
-
-**Pause.** Pausing the plugin doesn't stop the stream's clock. On unpause, what accrued while
-paused is available at once, up to the cap: in an auction, a filler takes it at the worst price.
-To resume from zero, unpause and call `writeCheckpoint()` in the same DAO proposal (the DAO holds
-CHECKPOINT, and can grant itself PAUSE).
-
-**Outflows by another path.** Only a `sync()` records a fall in the DAO balance. If another
-proposal or flow moves the token out and no sync follows, the curve keeps growing behind the live
-balance, and when funds come back the amount jumps to what accrued meanwhile, bounded by the
-balance seen at the last sync and by the cap. In an auction, a filler takes that jump at the worst
-price; an uncapped stream pays it at once. A sync when the funds come back doesn't undo it, so
-**every proposal that moves the stream's token out of the DAO must end with a `sync()` action.**
-The reverse is safe for the DAO: a sync while the balance is briefly low restarts the curve
-lower, which anyone can time to slow the stream but never to speed it up.
-
-#### BalanceBudget
-
-The DAO's whole balance of a token, with nothing to commit. The root receives all of it, so the
-tree decides where every token goes.
-
-#### MerkleClaimBudget
-
-Cumulative Merkle distribution. Each leaf is `(account, cumulative amount)`, in OpenZeppelin's
-StandardMerkleTree format, and an account can claim `cumulative − claimed` at any time. A new root
-raises the cumulative amounts for the next round.
-
-- **Budget data**: `abi.encode(account, cumulative, proof)`. Only the account itself can claim,
-  and it picks where the payout goes in the data of the `TransferToBeneficiaryAction` node.
-- **Available**: what the account is owed, so the tree can split it, swap it or take a fee before a
-  `TransferToBeneficiaryAction` pays it out.
-- **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
-  rolls back with the flow. The budget requires `RECORD_CLAIM_PERMISSION_ID` for the DAO, which the
-  setup grants.
-- **Settings**: `setRoot` (`SET_SETTINGS_PERMISSION_ID`). Whoever holds it can direct payouts up to the
-  DAO's balance of the token.
-- **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
-  callback before the first one records it.
-
-One claim per trigger.
 
 ### Actions
 
@@ -242,73 +258,8 @@ action's safety checks can't be skipped. The hooks run in the order of the table
 | `postconditions(caller, input, output, snapshot)` | Nothing; reverts when the work went wrong by the action's own standard. Runs right after the work, before the plugin's balance checks |
 
 Actions extend `BaseAction`, which defaults to no budget and empty preconditions and
-postconditions, so an action only writes `build` and the hooks it uses.
-
-#### OpenFillAction
-
-A take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input of token A, and
-the DAO demands a flat `demandPerFill` of token B for it. Fed by a stream that grows from zero, the
-price obtained, `demandPerFill / offered`, worsens as the offer grows. The action has no cap of its
-own: the stream's `maxBudget`, times the node's share of it, is the most it can offer, so it sets
-the worst price. `script/Recipes.sol` refuses an OpenFill recipe whose stream has no cap. Whoever
-finds the trade worth it first calls `trigger()` and fills it.
-
-- **Moves**: offers its whole input of A and outputs `demandPerFill` of B to its children.
-  On a node marked `forwardSurplus`, the children get all the B the filler sent instead.
-- **Placement**: anywhere. Below a branch, its input is its share of the budget (see "Grants and
-  an auction" below); below an action, whatever that action passes on. Every node of the flow then
-  waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
-- **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
-- **Settings**: `setDemandPerFill` (`SET_SETTINGS_PERMISSION_ID`) restarts the auction, so the action
-  requires `CHECKPOINT_PERMISSION_ID` on its budget, which the setup grants. The stream's `setMaxBudget` moves the worst price:
-  raising the cap lowers it.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Filler
-    participant Plugin as CapitalTreePlugin
-    participant DAO
-    participant TokenA as Token A
-    participant Fill as OpenFillAction
-
-    Filler->>Plugin: trigger("", [fillerData, ...])
-    Plugin->>Fill: build(filler, fillerData, input)
-    Fill-->>Plugin: offer X of A for D of B
-    Plugin->>Fill: preconditions(filler, fillerData, input, output)
-    Fill-->>Plugin: DAO's balance of B before
-    Plugin->>DAO: execute
-    DAO->>TokenA: approve(filler, X)
-    DAO->>Filler: fillOffer(A, X, B, D, fillerData)
-    Filler->>TokenA: transferFrom(DAO, filler, X)
-    Filler->>DAO: send D of token B
-    DAO->>TokenA: approve(filler, 0)
-    Plugin->>Fill: postconditions: DAO holds ≥ balance before + D
-    Note over Plugin: balance check, then the children share D (all the B that arrived, with forwardSurplus)
-```
-
-The filler implements `IFiller.fillOffer`. The trigger takes empty budget data and a per-node `bytes[]`.
-The [generic solver guide](docs/generic-solver.md) covers the executor, quote helpers,
-local and fork tests, and how to construct and submit a fill.
-
-#### Leaves
-
-Leaves extend `LeafAction`: they spend their whole input and output nothing.
-
-| Leaf                          | Does                                                                        | Check                                      |
-| ----------------------------- | --------------------------------------------------------------------------- | ------------------------------------------ |
-| `TransferAction`              | Sends the input to a fixed recipient                                        | The recipient's balance rose by the amount |
-| `TransferToBeneficiaryAction` | Sends the input to the address in its node data, picked by the caller       | Same as above                              |
-| `BurnAction`                  | Calls `burn(amount)` on an `ERC20Burnable` token                            | The DAO's balance dropped by the amount    |
-| `KeepAction`                  | Nothing: the input stays in the DAO, so keeping funds is an explicit choice | —                                          |
-
-Since the caller picks `TransferToBeneficiaryAction`'s payout address, use it only where the caller
-may direct the funds: under a `MerkleClaimBudget` (only the claiming account can trigger) or on a
-flow whose trigger is restricted. On a flow anyone can trigger with a stream or balance budget,
-anyone could pay themselves.
-
-The transfer check catches tokens that return `false` instead of reverting. Fee-on-transfer and
-rebasing tokens fail it by design.
+postconditions, so an action only writes `build` and the hooks it uses. Leaves extend `LeafAction`:
+they spend their whole input and output nothing.
 
 ### Splitters
 
@@ -332,92 +283,17 @@ interface ISplitter {
 - **Checked by the plugin:** the amounts must add up to `output.amount`: the node's declared output,
   or everything that arrived on a node marked `forwardSurplus` (`InvalidSplit`).
 - **Empty shares:** a child that gets 0 reverts the trigger, unless it's marked `skipWhenEmpty`:
-  then it and everything below it are skipped, as with a weight that rounds down.
+  then it and everything below it are skipped.
 - **View only:** a split changes no state.
 - **Setters:** a splitter with its own setters gives its shares to whoever the recipe grants that
-  permission. A `WeightSplitter`'s `setWeights` needs `SET_SETTINGS_PERMISSION_ID`, which the recipes
-  grant to the manager.
-
-`WeightSplitter` takes one weight per child, in the node's child order, each non-zero, summing to
-1,000,000, and gives the rounding remainder to the largest weight (the first one on a tie). Its
-`childCount()` is the number of weights, so weights for another number of children fail `setFlow`
-(`InvalidSplitter`). `setWeights` keeps their number (`WeightCountChanged`): the children only
-change with `setFlow`.
-
-A splitter is a component like any other (a clone bound to the DAO, registered in the
-`ComponentRegistry`, declared directly on the node that uses it).
-
-## Example flows
-
-`script/Recipes.sol` builds four flows. The buyback is the diagram at the top. The other three:
-
-**Buy and burn**: the buyback without a fee, burning everything the swap brings in.
-
-```mermaid
-flowchart LR
-    budget[("StreamBudget<br/>token A")]
-    fill["OpenFillAction<br/>sells A for B"]
-    burn["BurnAction"]
-
-    budget -- "available() A" --> fill
-    fill -- "all the B received" --> burn
-```
-
-**Merkle claim**: an account claims what it's owed and gets paid at the address it names in the
-leaf's node data.
-
-```mermaid
-flowchart LR
-    budget[("MerkleClaimBudget<br/>token A, proof for the caller")]
-    pay["TransferToBeneficiaryAction<br/>to the address in its node data"]
-    who(("payout address"))
-
-    budget -- "amount owed" --> pay
-    pay -- "A" --> who
-```
-
-**Payroll**: a stream split among fixed recipients by a branch with no action.
-
-```mermaid
-flowchart LR
-    budget[("StreamBudget<br/>token A")]
-    split{"branch<br/>(no action)"}
-    one["TransferAction<br/>recipient 1"]
-    two["TransferAction<br/>recipient 2"]
-    three["TransferAction<br/>recipient 3"]
-
-    budget -- "available() A" --> split
-    split -- "60%" --> one
-    split -- "30%" --> two
-    split -- "10%" --> three
-```
-
-**Grants and an auction** (no recipe): a branch with no action splits a stream between a grants
-transfer and an auction, so the auction's offer grows at half the stream's rate, up to half the
-stream's cap. Grants are paid only when someone fills the auction, and the stream then restarts
-from zero for both. Changing the auction's demand restarts it too, so the grants lose what accrued
-since the last fill (it stays in the DAO).
-
-```mermaid
-flowchart LR
-    budget[("StreamBudget<br/>token A")]
-    split{"branch<br/>(no action)"}
-    grants["TransferAction<br/>to grantsSafe"]
-    fill["OpenFillAction<br/>sells A for B"]
-    keep["KeepAction"]
-
-    budget -- "available() A" --> split
-    split -- "50%" --> grants
-    split -- "50%" --> fill
-    fill -- "all the B received" --> keep
-```
+  permission.
 
 ## Installation
 
-A recipe declares one budget and a tree. Each node contains its own action and splitter
-(registry ID and ABI-encoded settings), plus child **node** indexes. Each declaration deploys a
-fresh clone: identical declarations never share state. ID zero means no action or splitter, and
-an absent declaration must have empty settings and permissions.
+A recipe declares one budget and a tree. Each node declares its own action and splitter (registry
+ID and ABI-encoded settings, as its metadata file lists them) and its children, by node index. Each
+declaration deploys a fresh clone: identical declarations never share state. ID zero means no action
+or splitter, and an absent declaration must have empty settings and permissions.
 
 Permissions sit beside the contract they target as `(who, permissionId)` pairs. Recipients are
 actual addresses; `pluginPermissions` targets the plugin. A recipe only grants who governs the
@@ -474,14 +350,7 @@ Every component is a fresh clone bound to the installing DAO. The setup returns 
 `helpers` array in deployment order: budget first, then each node's action and splitter, skipping
 absent declarations. Recipe authors do not maintain helper indexes.
 
-Uninstallation takes `abi.encode(originalPermissions)`: the complete concrete
-`PermissionLib.MultiTargetPermission[]` returned at preparation (also emitted by the processor),
-including EXECUTE and CONFIGURE. Setup verifies its stored hash and returns the same entries with
-operation Revoke. It does not reconstruct permissions from the recipe or the current tree.
-
-This recipe ABI replaces the component-array format: old encoded recipes must be rebuilt. Old
-installations retain their original setup and uninstall format. Since CREATE2 includes the recipe
-bytes, the new encoding also changes predicted deployment addresses.
+### Clone addresses
 
 Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times that DAO
 has prepared that recipe. The plugin address in a proposal therefore pins the recipe: someone who
@@ -490,6 +359,8 @@ the one the proposal names. Voters can check a proposal's plugin against the pub
 the setup's `pluginAddress(dao, abi.encode(recipe), index)`, where `index` is 0 unless that DAO
 prepared the same recipe before.
 
+### The install proposal
+
 Preparing is permissionless and installs nothing. The DAO installs the flow by executing these
 actions in one proposal, which `script/Install.s.sol` prints:
 
@@ -497,75 +368,17 @@ actions in one proposal, which `script/Install.s.sol` prints:
 2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions and the
    ones the components require.
 3. Revoke that `ROOT_PERMISSION_ID`.
-4. When the budget is a `StreamBudget`, `writeCheckpoint()` on it, which starts the stream.
+4. When the budget is a `StreamBudget`, `writeCheckpoint()` on it, which starts the stream (see
+   [StreamBudget: Start](docs/components.md#start)).
 
 Only the DAO itself can apply the installation.
 
-## Permissions
+### Uninstalling
 
-| Permission                   | Holder                     | Allows                                                        |
-| ---------------------------- | -------------------------- | ------------------------------------------------------------- |
-| `TRIGGER_PERMISSION_ID`      | anyone                     | `trigger()`                                                   |
-| `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
-| `PAUSE_PERMISSION_ID`        | guardian                   | `pause()`, `unpause()`                                        |
-| `SET_SETTINGS_PERMISSION_ID` | manager                    | stream setters, OpenFill `setDemandPerFill()`, Merkle `setRoot()`, weight splitter `setWeights()` |
-| `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | starting and restarting the stream budget                     |
-| `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
-| `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
-
-The setup always grants `EXECUTE` and `CONFIGURE`; a recipe lists the rest, and its grants may
-only target the plugin or the recipe's components. The buyback and buy-and-burn recipes grant
-these (an arrow goes from the holder to the contract it may call):
-
-```mermaid
-flowchart LR
-    anyone(("anyone"))
-    manager(("manager"))
-    guardian(("guardian"))
-    dao["DAO"]
-    plugin["Plugin"]
-    budget["StreamBudget"]
-    fill["OpenFillAction"]
-    splitter["WeightSplitter<br/>(buyback only)"]
-
-    anyone -- "TRIGGER" --> plugin
-    dao -- "CONFIGURE" --> plugin
-    plugin -- "EXECUTE" --> dao
-    guardian -- "PAUSE" --> plugin
-    manager -- "SET_SETTINGS" --> budget
-    manager -- "SET_SETTINGS" --> fill
-    dao -- "CHECKPOINT" --> budget
-    fill -- "CHECKPOINT" --> budget
-    manager -- "SET_SETTINGS" --> splitter
-```
-
-## Layout
-
-| Path                                           | What                                                                                                       |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `src/CapitalTreePlugin.sol`                    | Runs the tree, checks balances after every node                                                            |
-| `src/budgets/StreamBudget.sol`                 | Streaming pot that never jumps                                                                             |
-| `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
-| `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims; the account picks the payout address                                             |
-| `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |
-| `src/base/BaseComponent.sol`                   | Base for every component: locked implementation, no required permissions by default                        |
-| `src/actions/base/BaseAction.sol`              | Base for actions: no budget, empty preconditions and postconditions by default                             |
-| `src/actions/base/LeafAction.sol`              | Base for leaves: spends the whole input, outputs nothing                                                   |
-| `src/actions/base/TransferBase.sol`            | Base for transfer leaves: one transfer plus a receipt check                                                |
-| `src/actions/TransferAction.sol`               | Leaf: sends its input to a fixed recipient                                                                 |
-| `src/actions/TransferToBeneficiaryAction.sol`  | Leaf: sends its input to the address in its node data                                                      |
-| `src/actions/BurnAction.sol`                   | Leaf: burns its input                                                                                      |
-| `src/actions/KeepAction.sol`                   | Leaf: leaves its input in the DAO                                                                          |
-| `src/splitters/WeightSplitter.sol`             | Splits a branch's output by fixed weights                                                                  |
-| `src/registry/ComponentRegistry.sol`           | Write-once ids for the implementations recipes can clone                                                   |
-| `src/setup/CapitalTreePluginSetup.sol`         | Installs any flow from a recipe                                                                            |
-| `script/Recipes.sol`                           | Recipes for buy and burn, buyback, Merkle claim and payroll                                                |
-| `script/Deploy.s.sol`                          | Deploys every implementation, the registry and the setup, and publishes the setup to an Aragon plugin repo |
-| `script/Install.s.sol`                         | Prepares an installation from a config and prints the proposal's actions                                   |
-| `installs/`                                    | One example config per recipe                                                                              |
-| `metadata/release.json`, `metadata/build.json` | The plugin repo's release and build metadata                                                               |
-| `metadata/components/`                         | One JSON per component: name, description, dependencies and settings                                       |
-| `metadata/uris.json`                           | The IPFS link of each metadata file, read by the deploy script                                             |
+Uninstallation takes `abi.encode(originalPermissions)`: the complete concrete
+`PermissionLib.MultiTargetPermission[]` returned at preparation (also emitted by the processor),
+including EXECUTE and CONFIGURE. Setup verifies its stored hash and returns the same entries with
+operation Revoke. It does not reconstruct permissions from the recipe or the current tree.
 
 ## Develop
 
@@ -623,22 +436,22 @@ just deploy
 `just predeploy` simulates `script/Deploy.s.sol:Deploy` without broadcasting. `just deploy` runs
 the unit tests, broadcasts the deployment, verifies contracts and writes a log under `logs/`.
 
-| Variable                     | Meaning                                                               |
-| ---------------------------- | --------------------------------------------------------------------- |
+| Variable                      | Meaning                                                                |
+| ----------------------------- | ---------------------------------------------------------------------- |
 | `MANAGEMENT_DAO_ADDRESS`      | Maintains the component registry; supplied by the selected network     |
-| `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon's factory; supplied by the selected network                      |
-| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-tree` by default     |
-| `PLUGIN_REPO_MAINTAINER`      | Optional: who can publish later versions, the managing DAO by default   |
-| `DEPLOYER_KEY`               | Required signing key for both deployment and installation preparation  |
+| `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon's factory; supplied by the selected network                     |
+| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-tree` by default   |
+| `PLUGIN_REPO_MAINTAINER`      | Optional: who can publish later versions, the managing DAO by default  |
+| `DEPLOYER_KEY`                | Required signing key for both deployment and installation preparation |
 
 Override network addresses in `.env` or an editable `.env.<network>` using the same variable names.
 
 ## Install a flow
 
-1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `merkle-claim`, `payroll`) and fill
-   in the DAO, the manager, the guardian, the tokens and the amounts (in the token's smallest unit).
-   The manager changes the components' settings; the guardian pauses and unpauses the flow. They
-   can be the same address.
+1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `buyback-and-donate`,
+   `merkle-claim`, `payroll`) and fill in the DAO, the manager, the guardian, the tokens and the
+   amounts (in the token's smallest unit). The manager changes the components' settings; the
+   guardian pauses and unpauses the flow. They can be the same address.
 2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=installs/<yours>.json`
    and `PLUGIN_REPO=0x...` in `.env`, and configure `DEPLOYER_KEY` in `.env` or `vars`.
    `PLUGIN_SETUP_PROCESSOR_ADDRESS` comes from the selected network; override it using the same name.

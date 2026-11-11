@@ -48,10 +48,11 @@ The shares under a box become a WeightSplitter component for it.
 The preview shows the tree and permissions. The budget is explicit, and each node declares its
 own action and splitter. Every declaration produces a fresh clone. Children are node indexes in
 breadth-first order. Permissions are attached to their target declaration: TRIGGER for anyone and
-PAUSE for you on the plugin; SET_SETTINGS for you on components with setters. The components add
-what they need to work themselves (CHECKPOINT for the DAO on a stream, RECORD_CLAIM for the DAO on a
-Merkle budget, CHECKPOINT for OpenFill on the stream), so the preview doesn't list those. Addresses
-such as the manager are actual addresses, not refs.
+PAUSE for you on the plugin; SET_SETTINGS for you on components with setters (StreamBudget,
+OpenFillAction, MerkleClaimBudget, WeightSplitter). The components add what they need to work
+themselves (CHECKPOINT for the DAO on a stream, RECORD_CLAIM for the DAO on a Merkle budget,
+CHECKPOINT for OpenFill on the stream), so the preview doesn't list those. Addresses such as the
+manager are actual addresses, not refs.
 
 Installing runs the real Aragon path: `PluginSetupProcessor.prepareInstallation`, then the DAO
 executes the proposal's actions (grant ROOT, `applyInstallation`, revoke ROOT, then `writeCheckpoint()`

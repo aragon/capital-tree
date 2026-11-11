@@ -13,6 +13,7 @@ contract TransferAction is TransferBase {
     /// @notice Thrown when the recipient is address(0)
     error NoRecipient();
 
+    /// @notice Initializes the action with its fixed recipient
     /// @param _dao The DAO paying
     /// @param _settings `abi.encode(address to)`: the recipient
     function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {

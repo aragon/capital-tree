@@ -1,7 +1,7 @@
 {
   "name": "VaultDonateAction",
   "version": 1,
-  "description": "Donates its input to an asset-backed vault, increasing total assets without minting shares.",
+  "description": "Leaf action. Donates its whole input to an asset-backed vault, increasing total assets without minting shares.",
   "dependencies": [],
   "settings": [
     {

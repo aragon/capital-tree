@@ -14,13 +14,17 @@ import {IFiller} from "../interfaces/IFiller.sol";
 contract GenericFillSolver is IFiller {
     using SafeERC20 for IERC20;
 
+    /// @notice Thrown when a call in the `fillOffer` batch reverts
     error CallFailed(uint256 idx);
+    /// @notice Thrown when the caller is neither `authorized` (`trigger`, `sweep`) nor the plugin's DAO (`fillOffer`)
     error Unauthorized();
+    /// @notice Thrown when `authorized` is address(0)
     error InvalidAuthorized();
 
     /// @notice Restricts the caller of trigger and sweep functions.
     address public immutable authorized;
 
+    /// @notice The plugin this solver triggers. Only its DAO can call `fillOffer`.
     CapitalTreePlugin public immutable plugin;
 
     constructor(address _authorized, CapitalTreePlugin _plugin) {
@@ -34,6 +38,8 @@ contract GenericFillSolver is IFiller {
     }
 
     /// @notice Entrypoint for passing generic calldata for atomic swaps.
+    /// @param data The node data, one entry per node. The OpenFill node's entry is `abi.encode(Action[])`,
+    ///        the batch `fillOffer` runs.
     function trigger(bytes[] calldata data) external {
         _checkAuth(msg.sender);
         plugin.trigger("", data);
@@ -48,7 +54,8 @@ contract GenericFillSolver is IFiller {
         token.safeTransfer(recipient, balance);
     }
 
-    /// @notice Executes the supplied batch in the DAO callback during OpenFill.
+    /// @inheritdoc IFiller
+    /// @dev Runs the batch in `data` (`abi.encode(Action[])`). An ERC20 executor: its calls carry no ether.
     function fillOffer(IERC20, uint256, IERC20, uint256, bytes calldata data) external override {
         if (msg.sender != address(plugin.dao())) revert Unauthorized();
         Action[] memory calls = abi.decode(data, (Action[]));

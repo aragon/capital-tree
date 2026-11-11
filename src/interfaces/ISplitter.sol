@@ -12,8 +12,10 @@ interface ISplitter {
     /// @notice One amount per child, in the order of the node's children, summing to
     ///         `output.amount`. A child that gets 0 reverts the trigger, unless it's marked
     ///         `skipWhenEmpty`.
+    /// @param caller Who triggered the flow
     /// @param output What the node passes to its children: the declared output, or everything that
     ///        arrived when the node forwards its surplus
+    /// @param childCount The node's number of children
     function split(address caller, Asset calldata output, uint256 childCount)
         external
         view
