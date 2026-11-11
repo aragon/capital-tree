@@ -21,33 +21,33 @@ Read these first:
 
 ## In scope
 
-| File | nSLOC | Purpose |
-| --- | ---: | --- |
-| `src/CapitalTreePlugin.sol` | 271 | The plugin. Validates the tree (`setFlow`), walks it on `trigger`, executes each node through the DAO and checks balances after each node and after the whole run |
-| `src/setup/CapitalTreePluginSetup.sol` | 236 | `PluginSetup`. Deploys the plugin and every component as CREATE2 clones salted with the DAO and the recipe, and builds the permission list; verifies it on uninstall |
-| `src/registry/ComponentRegistry.sol` | 38 | Write-once registry of component implementations, maintained by a managing DAO |
-| `src/budgets/StreamBudget.sol` | 119 | Budget that grows at a fixed rate, capped by the DAO balance seen at the last sync, the live balance and an optional cap. Must never jump |
-| `src/actions/OpenFillAction.sol` | 98 | Offers its whole input for a flat demand of another token; a Dutch auction when a stream feeds it |
-| `src/actions/BurnAction.sol` | 43 | Leaf: burns its input (`ERC20Burnable.burn`) |
-| `src/actions/VaultDonateAction.sol` | 45 | Leaf: donates its input to an ERC4626 vault without minting shares |
-| `src/actions/TransferAction.sol` | 16 | Leaf: sends its input to a fixed recipient |
-| `src/actions/KeepAction.sol` | 18 | Leaf: leaves its input in the DAO |
-| `src/actions/base/TransferBase.sol` | 42 | Shared transfer leaf logic and the recipient-balance postcondition |
-| `src/actions/base/BaseAction.sol` | 15 | Default (empty) hooks for actions |
-| `src/actions/base/LeafAction.sol` | 8 | Base for leaves: output nothing |
-| `src/splitters/WeightSplitter.sol` | 50 | Splits a branch's output by fixed weights |
-| `src/solvers/GenericFillSolver.sol` | 40 | Minimal filler for `OpenFillAction`: triggers the plugin and runs a batch of calls in the `fillOffer` callback |
-| `src/base/BaseComponent.sol` | 11 | Base for every component: a clone bound to one DAO |
-| `src/interfaces/IBudget.sol` | 11 | Budget interface |
-| `src/interfaces/INodeAction.sol` | 18 | Action interface: `build`, `preconditions`, `postconditions` |
-| `src/interfaces/ISplitter.sol` | 9 | Splitter interface |
-| `src/interfaces/IComponent.sol` | 15 | Common initializer and `requiredPermissions` |
-| `src/interfaces/IFiller.sol` | 11 | `fillOffer` callback |
-| `src/interfaces/IDonationVault.sol` | 5 | ERC4626 with `donate` |
-| `src/lib/types.sol` | 15 | `Asset` and `Node` |
-| `src/lib/constants.sol` | 8 | Permission IDs and `RATIO_BASE` |
-| `src/lib/tokens.sol` | 6 | ERC20 transfer action helper |
-| **Total** | **1,148** | |
+| File                                   |     nSLOC | Purpose                                                                                                                                                              |
+| -------------------------------------- | --------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/CapitalTreePlugin.sol`            |       271 | The plugin. Validates the tree (`setFlow`), walks it on `trigger`, executes each node through the DAO and checks balances after each node and after the whole run    |
+| `src/setup/CapitalTreePluginSetup.sol` |       236 | `PluginSetup`. Deploys the plugin and every component as CREATE2 clones salted with the DAO and the recipe, and builds the permission list; verifies it on uninstall |
+| `src/registry/ComponentRegistry.sol`   |        38 | Write-once registry of component implementations, maintained by a managing DAO                                                                                       |
+| `src/budgets/StreamBudget.sol`         |       119 | Budget that grows at a fixed rate, capped by the DAO balance seen at the last sync, the live balance and an optional cap. Must never jump                            |
+| `src/actions/OpenFillAction.sol`       |        98 | Offers its whole input for a flat demand of another token; a Dutch auction when a stream feeds it                                                                    |
+| `src/actions/BurnAction.sol`           |        43 | Leaf: burns its input (`ERC20Burnable.burn`)                                                                                                                         |
+| `src/actions/VaultDonateAction.sol`    |        45 | Leaf: donates its input to an ERC4626 vault without minting shares                                                                                                   |
+| `src/actions/TransferAction.sol`       |        16 | Leaf: sends its input to a fixed recipient                                                                                                                           |
+| `src/actions/KeepAction.sol`           |        18 | Leaf: leaves its input in the DAO                                                                                                                                    |
+| `src/actions/base/TransferBase.sol`    |        42 | Shared transfer leaf logic and the recipient-balance postcondition                                                                                                   |
+| `src/actions/base/BaseAction.sol`      |        15 | Default (empty) hooks for actions                                                                                                                                    |
+| `src/actions/base/LeafAction.sol`      |         8 | Base for leaves: output nothing                                                                                                                                      |
+| `src/splitters/WeightSplitter.sol`     |        50 | Splits a branch's output by fixed weights                                                                                                                            |
+| `src/solvers/GenericFillSolver.sol`    |        40 | Minimal filler for `OpenFillAction`: triggers the plugin and runs a batch of calls in the `fillOffer` callback                                                       |
+| `src/base/BaseComponent.sol`           |        11 | Base for every component: a clone bound to one DAO                                                                                                                   |
+| `src/interfaces/IBudget.sol`           |        11 | Budget interface                                                                                                                                                     |
+| `src/interfaces/INodeAction.sol`       |        18 | Action interface: `build`, `preconditions`, `postconditions`                                                                                                         |
+| `src/interfaces/ISplitter.sol`         |         9 | Splitter interface                                                                                                                                                   |
+| `src/interfaces/IComponent.sol`        |        15 | Common initializer and `requiredPermissions`                                                                                                                         |
+| `src/interfaces/IFiller.sol`           |        11 | `fillOffer` callback                                                                                                                                                 |
+| `src/interfaces/IDonationVault.sol`    |         5 | ERC4626 with `donate`                                                                                                                                                |
+| `src/lib/types.sol`                    |        15 | `Asset` and `Node`                                                                                                                                                   |
+| `src/lib/constants.sol`                |         8 | Permission IDs and `RATIO_BASE`                                                                                                                                      |
+| `src/lib/tokens.sol`                   |         6 | ERC20 transfer action helper                                                                                                                                         |
+| **Total**                              | **1,148** |                                                                                                                                                                      |
 
 ## Out of scope
 
@@ -60,16 +60,16 @@ Read these first:
 
 ## Roles and permissions
 
-| Role | Holds | Can |
-| --- | --- | --- |
-| DAO | `CONFIGURE` on the plugin; `CHECKPOINT` on the stream | Replace the flow (`setFlow`); restart the stream. Fully trusted |
-| Plugin | `EXECUTE` on the DAO | Run the actions that the flow's components build |
-| Triggerer | `TRIGGER` on the plugin | Run the flow. Usually anyone (`ANY_ADDR`), so untrusted |
-| Manager | `SET_SETTINGS` on components | Change a stream's rate and cap, an open fill's demand, a splitter's weights |
-| Guardian | `PAUSE` on the plugin | Pause and unpause the flow |
-| `OpenFillAction` | `CHECKPOINT` on its stream | Restart the stream when its demand changes |
-| Registry maintainer | `REGISTER` on `ComponentRegistry` (granted by the managing DAO) | Register new implementations; entries are write-once |
-| Solver operator | `authorized` on a `GenericFillSolver` | Trigger through the solver and sweep its balance |
+| Role                | Holds                                                           | Can                                                                         |
+| ------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| DAO                 | `CONFIGURE` on the plugin; `CHECKPOINT` on the stream           | Replace the flow (`setFlow`); restart the stream. Fully trusted             |
+| Plugin              | `EXECUTE` on the DAO                                            | Run the actions that the flow's components build                            |
+| Triggerer           | `TRIGGER` on the plugin                                         | Run the flow. Usually anyone (`ANY_ADDR`), so untrusted                     |
+| Manager             | `SET_SETTINGS` on components                                    | Change a stream's rate and cap, an open fill's demand, a splitter's weights |
+| Guardian            | `PAUSE` on the plugin                                           | Pause and unpause the flow                                                  |
+| `OpenFillAction`    | `CHECKPOINT` on its stream                                      | Restart the stream when its demand changes                                  |
+| Registry maintainer | `REGISTER` on `ComponentRegistry` (granted by the managing DAO) | Register new implementations; entries are write-once                        |
+| Solver operator     | `authorized` on a `GenericFillSolver`                           | Trigger through the solver and sweep its balance                            |
 
 ## Trust assumptions
 
@@ -98,12 +98,12 @@ These are described in the README and `docs/components.md` and are not new findi
 
 ## Dependencies
 
-| Library | Version |
-| --- | --- |
-| Aragon OSx | `audit/20241118` (`fc7403f`) |
-| Aragon OSx Commons | `869045b` (after `v1.4.0-alpha.6-contracts`) |
-| OpenZeppelin Contracts | 4.9.6 (`dc44c9f`) |
-| OpenZeppelin Contracts Upgradeable | 4.9.6 (`2d081f2`) |
+| Library                            | Version                                      |
+| ---------------------------------- | -------------------------------------------- |
+| Aragon OSx                         | `audit/20241118` (`fc7403f`)                 |
+| Aragon OSx Commons                 | `869045b` (after `v1.4.0-alpha.6-contracts`) |
+| OpenZeppelin Contracts             | 4.9.6 (`dc44c9f`)                            |
+| OpenZeppelin Contracts Upgradeable | 4.9.6 (`2d081f2`)                            |
 
 ## Build and test
 
