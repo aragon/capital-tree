@@ -10,6 +10,7 @@
     "TransferToBeneficiaryAction": "",
     "BurnAction": "",
     "KeepAction": "",
-    "WeightSplitter": ""
+    "WeightSplitter": "",
+    "VaultDonateAction": ""
   }
 }

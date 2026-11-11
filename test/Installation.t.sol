@@ -126,6 +126,13 @@ contract InstallationTest is Fixture {
     function test_EveryExampleConfigBuildsItsRecipe() public view {
         assertEq(installer.recipe(_example("buy-and-burn")).components.length, 3);
         assertEq(installer.recipe(_example("buyback")).components.length, 5);
+        CapitalTreePluginSetup.InstallParams memory _donate = installer.recipe(_example("buyback-and-donate"));
+        assertEq(_donate.components.length, 5);
+        assertEq(_donate.components[2].id, Recipes.VAULT_DONATE);
+        assertEq(_donate.components[3].id, Recipes.TRANSFER);
+        assertEq(_donate.components[4].id, Recipes.WEIGHT_SPLITTER);
+        assertEq(_donate.nodes.length, 3);
+        assertTrue(_donate.nodes[0].forwardSurplus);
         assertEq(installer.recipe(_example("merkle-claim")).components.length, 2);
         assertEq(installer.recipe(_example("payroll")).components.length, 4);
     }

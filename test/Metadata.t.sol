@@ -21,13 +21,14 @@ contract MetadataTest is Test {
         _assertMatches("BurnAction", 0, "");
         _assertMatches("KeepAction", 0, "");
         _assertMatches("WeightSplitter", 0, "uint32[]");
+        _assertMatches("VaultDonateAction", 0, "address");
     }
 
     function test_UrisFileListsEveryComponent() public view {
         string memory _uris = vm.readFile("metadata/uris.json");
         string[] memory _names = vm.parseJsonKeys(_uris, ".components");
 
-        assertEq(_names.length, 9);
+        assertEq(_names.length, 10);
         for (uint256 i; i < _names.length; ++i) {
             assertTrue(vm.exists(string.concat("metadata/components/", _names[i], ".json")), _names[i]);
         }
@@ -40,6 +41,8 @@ contract MetadataTest is Test {
         assertEq(_metadata, "ipfs://OpenFillAction");
         (, _metadata) = _registry.entries(Recipes.KEEP);
         assertEq(_metadata, "ipfs://KeepAction");
+        (, _metadata) = _registry.entries(Recipes.VAULT_DONATE);
+        assertEq(_metadata, "ipfs://VaultDonateAction");
     }
 
     function test_RevertWhen_AComponentHasNoLink() public {
