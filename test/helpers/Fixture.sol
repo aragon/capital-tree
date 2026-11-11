@@ -33,7 +33,7 @@ string constant METADATA_URIS = '{"release":"ipfs://release","build":"ipfs://bui
     '"FundedStreamBudget":"ipfs://FundedStreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
     '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimBudget":"ipfs://MerkleClaimBudget",'
     '"TransferAction":"ipfs://TransferAction","TransferToBeneficiaryAction":"ipfs://TransferToBeneficiaryAction",'
-    '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction","WeightSplitter":"ipfs://WeightSplitter"}}';
+    '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction","WeightSplitter":"ipfs://WeightSplitter","VaultDonateAction":"ipfs://VaultDonateAction"}}';
 
 /// @notice A DAO holding the offered token A and some pre-existing demanded token B.
 ///         The test contract is the DAO's ROOT, so it can grant permissions directly.
