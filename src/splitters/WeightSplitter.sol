@@ -10,15 +10,20 @@ import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 /// @title WeightSplitter
 /// @notice Splits a branch's output by weights: one per child, in the node's child order, each
 ///         non-zero, summing to RATIO_BASE. The rounding remainder goes to the largest weight.
-///         Holders of SET_SETTINGS_PERMISSION_ID can change them.
+///         The manager (SET_SETTINGS_PERMISSION_ID) can change them.
 contract WeightSplitter is ISplitter, BaseComponent {
     uint32[] internal _weights;
 
+    /// @notice Emitted when the weights are set or replaced
     event WeightsUpdated(uint32[] weights);
 
+    /// @notice Thrown when there are fewer than 2 weights, one is zero or they don't sum to RATIO_BASE
     error InvalidWeights();
+
+    /// @notice Thrown when `setWeights` changes the number of weights
     error WeightCountChanged(uint256 count, uint256 newCount);
 
+    /// @notice Initializes the splitter with its weights
     /// @param _dao The DAO the splitter works for
     /// @param _settings `abi.encode(uint32[] weights)`: one non-zero weight per child, summing to RATIO_BASE
     function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
@@ -33,6 +38,7 @@ contract WeightSplitter is ISplitter, BaseComponent {
         _setWeights(_newWeights);
     }
 
+    /// @notice The weights, one per child, in the node's child order
     function weights() external view returns (uint32[] memory) {
         return _weights;
     }

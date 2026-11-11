@@ -16,6 +16,7 @@ contract BalanceBudget is IBudget, BaseComponent {
     /// @notice Thrown when the token is not a contract
     error InvalidToken();
 
+    /// @notice Initializes the budget
     /// @param _dao The DAO holding the funds
     /// @param _settings `abi.encode(IERC20 token)`: the ERC20 token the budget gives
     function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {

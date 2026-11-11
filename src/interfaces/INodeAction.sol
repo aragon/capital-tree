@@ -22,6 +22,11 @@ interface INodeAction {
     /// @dev `output` is the least the action accepts: the plugin checks that it arrived after the
     ///      node runs. The children get it, or everything that arrived when the node is marked
     ///      `forwardSurplus`.
+    /// @param caller Who triggered the flow
+    /// @param data The node's entry in the trigger's node data, empty when the trigger passed none
+    /// @param input What the node receives: the budget at the root, a share of its parent's output elsewhere
+    /// @return output What the node declares for its children
+    /// @return actions The DAO actions the plugin executes for the node, in one `dao.execute`
     function build(address caller, bytes calldata data, Asset calldata input)
         external
         view

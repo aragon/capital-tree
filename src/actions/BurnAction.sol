@@ -20,6 +20,7 @@ contract BurnAction is LeafAction {
     /// @notice Thrown when the DAO lost more than the input
     error Overspent(IERC20 token, uint256 minBalance, uint256 balance);
 
+    /// @notice Initializes the action
     /// @param _dao The DAO the action works for. It takes no dependencies or settings.
     function initialize(IDAO _dao, address[] calldata, bytes calldata) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);

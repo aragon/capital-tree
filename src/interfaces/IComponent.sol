@@ -18,6 +18,7 @@ interface IComponent {
     /// @notice Thrown when a component gets a number of dependencies it doesn't expect
     error WrongDependencyCount(uint256 expected, uint256 actual);
 
+    /// @notice Initializes the clone, once, when the setup prepares the installation
     /// @param dao The DAO the component works for
     /// @param deps Setup supplies [flowBudget] to every action and [] to budgets and splitters.
     ///             Actions that do not use the budget ignore this argument.

@@ -9,8 +9,11 @@ import {DaoAuthorizable} from "@aragon/osx-commons-contracts/src/permission/auth
 ///         so an id always means the same code and a recipe can't change under a vote.
 /// @dev Maintained through a managing DAO's permissions (`REGISTER_PERMISSION_ID`)
 contract ComponentRegistry is DaoAuthorizable {
+    /// @notice Allows `register`. The managing DAO picks who holds it.
     bytes32 public constant REGISTER_PERMISSION_ID = keccak256("REGISTER_PERMISSION");
 
+    /// @notice A new entry
+    /// @param metadata The link to the component's metadata file (name, description, dependencies, settings)
     struct Registration {
         bytes32 id;
         address implementation;
@@ -25,10 +28,16 @@ contract ComponentRegistry is DaoAuthorizable {
     /// @notice Registered components by id, e.g. "OpenFillAction@1"
     mapping(bytes32 id => Entry) public entries;
 
+    /// @notice Emitted when a component implementation is registered
     event ComponentRegistered(bytes32 indexed id, address implementation, bytes metadata);
 
+    /// @notice Thrown when the id already has an entry
     error AlreadyRegistered(bytes32 id);
+
+    /// @notice Thrown when the implementation has no code
     error NotAContract(address implementation);
+
+    /// @notice Thrown when no implementation is registered as the id
     error UnknownComponent(bytes32 id);
 
     /// @param _initial Registered at deployment, so the first set needs no proposal
@@ -38,6 +47,7 @@ contract ComponentRegistry is DaoAuthorizable {
         }
     }
 
+    /// @notice Registers an implementation under a new id. An id can't be registered twice.
     function register(Registration calldata _registration) external auth(REGISTER_PERMISSION_ID) {
         _register(_registration);
     }

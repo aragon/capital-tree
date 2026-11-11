@@ -10,6 +10,7 @@ import {LeafAction} from "./base/LeafAction.sol";
 /// @title KeepAction
 /// @notice Leaf that leaves its whole input in the DAO, so keeping funds is an explicit choice
 contract KeepAction is LeafAction {
+    /// @notice Initializes the action
     /// @param _dao The DAO the action works for. It takes no dependencies or settings.
     function initialize(IDAO _dao, address[] calldata, bytes calldata) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);

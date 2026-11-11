@@ -38,14 +38,26 @@ contract MerkleClaimBudget is IBudget, BaseComponent {
     /// @notice Cumulative amount already claimed per account
     mapping(address => uint256) public claimed;
 
+    /// @notice Emitted when the root is set or replaced
     event RootUpdated(bytes32 root);
+
+    /// @notice Emitted when a claim is recorded
+    /// @param amount What the account claimed this time, not its cumulative total
     event Claimed(address indexed account, uint256 amount);
 
+    /// @notice Thrown when the token is not a contract
     error InvalidToken();
+
+    /// @notice Thrown when the proof doesn't prove `(account, cumulative)` against the current root
     error InvalidProof();
+
+    /// @notice Thrown when the caller isn't the account it claims for
     error NotTheAccount();
+
+    /// @notice Thrown when the account already claimed its whole cumulative amount
     error NothingToClaim();
 
+    /// @notice Initializes the budget with the root of the first round
     /// @param _dao The DAO holding the funds
     /// @param _settings `abi.encode(IERC20 token, bytes32 root)`: the ERC20 token claimed, and the
     ///        Merkle root of the first round

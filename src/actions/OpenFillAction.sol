@@ -55,8 +55,9 @@ contract OpenFillAction is BaseAction {
     /// @notice Thrown when the DAO gave away more of the offered token than the offer
     error OfferExceeded(uint256 minBalance, uint256 actual);
 
+    /// @notice Initializes the action, bound to the flow's budget
     /// @param _dao The DAO executing the fills
-    /// @param _deps `[budget]`: the flow's budget, which this action restarts when the demand changes
+    /// @param _deps `[budget]`: the flow's `StreamBudget`, which this action restarts when the demand changes
     /// @param _settings `abi.encode(IERC20 demandedToken, uint256 demandPerFill)`: the ERC20 token the
     ///        DAO must receive back, and how much of it must come back per fill
     function initialize(IDAO _dao, address[] calldata _deps, bytes calldata _settings) external initializer {
@@ -135,7 +136,9 @@ contract OpenFillAction is BaseAction {
 
     // Manager settings
 
-    /// @notice Updates how much must come back per fill, and restarts the auction
+    /// @notice Updates how much must come back per fill, and restarts the budget from zero
+    /// @dev Restarts the whole budget, not just this node's share of it. The action needs
+    ///      CHECKPOINT_PERMISSION_ID on its budget.
     function setDemandPerFill(uint256 _demandPerFill) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _setDemandPerFill(_demandPerFill);
         _restartAuction();
@@ -156,7 +159,7 @@ contract OpenFillAction is BaseAction {
 
     // Internal
 
-    /// @dev Bound at init to an ICheckpointedBudget, so the cast is safe
+    /// @dev The budget is an `ICheckpointedBudget`: OpenFill is built for a `StreamBudget`
     function _restartAuction() internal virtual {
         ICheckpointedBudget(address(budget)).writeCheckpoint();
     }

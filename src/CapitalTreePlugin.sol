@@ -40,7 +40,9 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
 
     Node[] internal _nodes;
 
+    /// @notice Emitted when the flow is set, at `initialize` or by `setFlow`
     event FlowUpdated(IBudget budget, Node[] nodes);
+    /// @notice Emitted when a node with an action ran and passed its balance checks
     /// @param output What the children got: the declared output, or everything that arrived when the
     ///        node forwards its surplus
     /// @param surplus What arrived above the declared output, whether the children got it or not.
@@ -54,39 +56,61 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         Asset output,
         uint256 surplus
     );
+    /// @notice Emitted when the plugin executed the budget's commit actions, after the whole tree ran
     event BudgetCommitted(bytes32 executionId);
-    /// @notice A trigger ran the whole flow and the budget committed
+    /// @notice Emitted when a trigger ran the whole flow and the budget committed
     /// @param nonce The trigger's nonce, the same as in its execution IDs
     /// @param input What the budget gave the root, not what the flow spent
     event FlowExecuted(address indexed caller, uint64 indexed nonce, Asset input);
 
     // Configuration errors
+    /// @notice Thrown when the flow's budget is address(0)
     error NoBudget();
+    /// @notice Thrown when the budget, an action or a splitter isn't bound to this plugin's DAO
     error ForeignComponent(address component);
+    /// @notice Thrown when the flow has no nodes
     error InvalidNodeCount(uint256 count);
+    /// @notice Thrown when the root is marked `skipWhenEmpty`
     error SkippableRoot();
+    /// @notice Thrown when a node without an action has fewer than 2 children
     error MissingAction(uint256 nodeIndex);
+    /// @notice Thrown when a child doesn't come after its parent, doesn't exist or already has a parent
     error InvalidChild(uint256 nodeIndex, uint256 child);
+    /// @notice Thrown when a node other than the root has no parent
     error UnreachableNode(uint256 nodeIndex);
+    /// @notice Thrown when a node with 2+ children has no splitter or one made for another number of
+    ///         children, or a node with fewer children has a splitter
     error InvalidSplitter(uint256 nodeIndex);
+    /// @notice Thrown when a node's action is bound to a budget other than the flow's
     error BudgetMismatch(uint256 nodeIndex);
+    /// @notice Thrown when a node marked `forwardSurplus` has no action or no children
     error InvalidForwardSurplus(uint256 nodeIndex);
 
     // Trigger errors
+    /// @notice Thrown when the node data is neither empty nor one entry per node
     error DataLengthMismatch(uint256 expected, uint256 actual);
+    /// @notice Thrown when a node receives nothing and isn't marked `skipWhenEmpty`
     error EmptyInput(uint256 nodeIndex);
+    /// @notice Thrown when a splitter doesn't return one amount per child, adding up to the output it divides
     error InvalidSplit(uint256 nodeIndex);
-    /// @notice A leaf's action produced an output, but a leaf has no children to pass it to
+    /// @notice Thrown when a leaf's action declares an output: a leaf has no children to pass it to
     error OutputWithoutChildren(uint256 nodeIndex, uint256 amount);
     // `executionIndex`: i for node i, nodes.length for the budget's commit
+    /// @notice Thrown when a DAO action sends value without a function selector
     error MissingFunctionSelector(uint256 executionIndex, uint256 actionIndex);
+    /// @notice Thrown when a DAO action targets the DAO itself
     error ActionTargetsDao(uint256 executionIndex, uint256 actionIndex);
+    /// @notice Thrown when a DAO action targets the plugin
     error ActionTargetsPlugin(uint256 executionIndex, uint256 actionIndex);
+    /// @notice Thrown when, after a node ran, the DAO holds less of a token than allowed: the node spent
+    ///         more than its input, or less than its declared output arrived
+    /// @param expected The least the DAO may hold
     error UnexpectedBalance(uint256 nodeIndex, address token, uint256 expected, uint256 actual);
-    /// @notice The trigger cost the DAO more of the budget's token than the budget made
+    /// @notice Thrown when the trigger cost the DAO more of the budget's token than the budget made
     ///         available
     error BudgetExceeded(uint256 maxSpend, uint256 spent);
 
+    /// @notice Initializes the plugin with the DAO it executes on and its first flow, checked as in `setFlow`
     function initialize(IDAO _dao, IBudget _budget, Node[] calldata _newNodes) external initializer {
         __PluginCloneable_init(_dao);
         __Pausable_init();
@@ -134,14 +158,15 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         _setFlow(_budget, _newNodes);
     }
 
-    /// @notice Stops the flow until `unpause`
+    /// @notice Stops the flow until `unpause`. Called by the guardian.
     function pause() external auth(PAUSE_PERMISSION_ID) {
         _pause();
     }
 
-    /// @notice Resumes the flow
-    /// @dev A stream budget keeps accruing while paused and releases it here, up to its cap. To
-    ///      resume from zero, call its `writeCheckpoint()` in the same transaction.
+    /// @notice Resumes the flow. Called by the guardian.
+    /// @dev A stream budget keeps accruing while paused, so the next trigger can spend all of it at
+    ///      once, up to its caps. To resume from zero, the DAO unpauses and calls the stream's
+    ///      `writeCheckpoint()` in the same proposal (it holds CHECKPOINT, and can grant itself PAUSE).
     function unpause() external auth(PAUSE_PERMISSION_ID) {
         _unpause();
     }
@@ -171,7 +196,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         _runChildren(_index, _node, _output, _nodeData);
     }
 
-    /// @dev The children share `_output.amount`, each getting it as its input
+    /// @dev The children share `_output.amount`, each getting its share as its input
     function _runChildren(uint256 _index, Node storage _node, Asset memory _output, bytes[] calldata _nodeData)
         internal
     {
@@ -213,7 +238,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     }
 
     /// @dev Builds the node, then calls the action's preconditions on its output.
-    ///      The node spends its whole input; the action's postconditions check that it did.
+    ///      The node is given its whole input; `_verifyBalances` checks that it spent no more.
     function _buildAction(uint256 _index, INodeAction _action, Asset memory _input, bytes memory _data, bool _isLeaf)
         internal
         view
@@ -312,7 +337,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     }
 
     /// @dev Whatever the nodes did, the DAO lost at most `_maxSpend` of the budget's token since
-    ///      `_before`. Each action checks its own node; this catches anything that slips between them.
+    ///      `_before`. Each node is checked on its own; this catches anything that slips between them.
     function _checkBudgetSpend(IERC20 _token, uint256 _maxSpend, uint256 _before) internal view {
         uint256 _after = _token.balanceOf(address(dao()));
         if (_after + _maxSpend < _before) {
@@ -382,7 +407,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     }
 
     /// @dev Children come after their parent and have exactly one parent, so the nodes form a tree
-    ///      rooted at node 0 with no cycles. A branch (2+ children) splits by a splitter of this DAO
+    ///      rooted at node 0 with no cycles. A node with 2+ children splits by a splitter of this DAO
     ///      made for its number of children, or for any; other nodes have none. A bound action must
     ///      be bound to the flow's budget.
     function _checkNode(uint256 _index, Node calldata _node, IBudget _budget, bool[] memory _hasParent) internal view {
@@ -416,8 +441,8 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         }
     }
 
-    /// @dev Every component is a clone initialized for this plugin's DAO. Implementations (bound to
-    ///      no DAO) and other DAOs' components are rejected.
+    /// @dev Rejects a component whose `dao()` isn't this plugin's DAO: implementations (bound to no
+    ///      DAO) and other DAOs' components. It doesn't check that the component is a registered clone.
     function _checkOwnDao(address _component) internal view {
         if (DaoAuthorizableUpgradeable(_component).dao() != dao()) revert ForeignComponent(_component);
     }

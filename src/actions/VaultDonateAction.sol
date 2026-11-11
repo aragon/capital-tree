@@ -8,14 +8,21 @@ import {IDonationVault} from "../interfaces/IDonationVault.sol";
 import {LeafAction} from "./base/LeafAction.sol";
 import {Asset} from "../lib/types.sol";
 
-/// @notice Compounds the entire input for existing vault holders without minting shares.
+/// @title VaultDonateAction
+/// @notice Leaf that donates its whole input to a vault, raising the backing of existing shares
+///         without minting new ones
 /// @dev The configured vault is trusted; only vaults accounting donations immediately are supported.
 contract VaultDonateAction is LeafAction {
+    /// @notice The vault the input is donated to. Its asset must be the input token.
     IDonationVault public vault;
 
+    /// @notice Thrown when the input token isn't the vault's asset
     error WrongAsset();
+
+    /// @notice Thrown when the vault's total assets rose by less than the input
     error AssetsNotIncreased(uint256 expected, uint256 actual);
 
+    /// @notice Initializes the action with its vault
     /// @param _dao The DAO donating
     /// @param _settings `abi.encode(IDonationVault vault)`: the trusted vault, whose asset must match the input token
     function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
@@ -23,6 +30,8 @@ contract VaultDonateAction is LeafAction {
         vault = abi.decode(_settings, (IDonationVault));
     }
 
+    /// @notice Reverts unless the input token is the vault's asset
+    /// @return snapshot The vault's total assets before the donation
     function preconditions(address, bytes calldata, Asset calldata _input, Asset calldata)
         external
         view
@@ -33,6 +42,8 @@ contract VaultDonateAction is LeafAction {
         return abi.encode(vault.totalAssets());
     }
 
+    /// @notice Donates the whole input to the vault: approve it, donate it, clear the approval.
+    ///         Outputs nothing.
     function build(address, bytes calldata, Asset calldata _input)
         external
         view
@@ -45,6 +56,7 @@ contract VaultDonateAction is LeafAction {
         return (_consume(_input), _actions);
     }
 
+    /// @notice Reverts unless the vault's total assets rose by at least the input
     function postconditions(address, Asset calldata _input, Asset calldata, bytes calldata _snapshot)
         external
         view

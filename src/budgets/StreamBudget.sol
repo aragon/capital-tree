@@ -45,8 +45,8 @@ import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/const
 ///
 ///      **Pause.** Pausing the plugin doesn't stop the clock. On unpause, what accrued while paused
 ///      is available at once, bounded by `lastSeenBalance`, the DAO balance and `maxBudget`: in an
-///      auction, a filler takes it at the worst price. To resume from zero, call `writeCheckpoint()`
-///      (the DAO holds CHECKPOINT) in the same transaction as `unpause()`.
+///      auction, a filler takes it at the worst price. To resume from zero, the DAO unpauses and
+///      calls `writeCheckpoint()` in the same proposal (it holds CHECKPOINT, and can grant itself PAUSE).
 ///
 ///      **Liveness.** After a deposit the amount stays frozen until someone calls `sync()`. That
 ///      is safe (the amount never rises) but stalls the stream, so operators should run a keeper
@@ -97,11 +97,11 @@ contract StreamBudget is ICheckpointedBudget, BaseComponent {
     /// @notice Emitted when the cap is updated
     event MaxBudgetUpdated(uint256 maxBudget);
 
-    /// @notice Emitted when the epoch interval is updated
+    /// @notice Emitted when the epoch interval is set or updated
     event EpochIntervalUpdated(uint256 epochInterval);
 
-    /// @notice Emitted when the amount restarts from zero after a spend
-    /// @param lastSeenBalance The DAO balance left after the spend
+    /// @notice Emitted when a checkpoint restarts the amount from zero. The first one starts the stream.
+    /// @param lastSeenBalance The DAO balance recorded
     event CheckpointWritten(uint256 lastSeenBalance);
 
     /// @notice Emitted when the amount is carried forward and the DAO balance recorded
@@ -146,7 +146,8 @@ contract StreamBudget is ICheckpointedBudget, BaseComponent {
         return _available(_daoBalance());
     }
 
-    /// @notice Restarts the stream after the spend: the plugin executes this once, after the whole flow
+    /// @inheritdoc IBudget
+    /// @dev One `writeCheckpoint()`, which restarts the stream from zero after the spend
     function commitActions(address, bytes calldata) external view virtual returns (Action[] memory _actions) {
         _actions = new Action[](1);
         _actions[0] = Action({to: address(this), value: 0, data: abi.encodeCall(this.writeCheckpoint, ())});
