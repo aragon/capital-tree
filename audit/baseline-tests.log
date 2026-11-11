@@ -1,0 +1,369 @@
+Compiling 25 files with Solc 0.8.28
+Solc 0.8.28 finished in 5.86s
+Compiler run successful with warnings:
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:20:5:
+   |
+20 |     function setRecord(bytes32 node, address owner, address resolver, uint64 ttl) external virtual;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:21:5:
+   |
+21 |     function setSubnodeRecord(bytes32 node, bytes32 label, address owner, address resolver, uint64 ttl) external virtual;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:22:5:
+   |
+22 |     function setSubnodeOwner(bytes32 node, bytes32 label, address owner) external virtual returns(bytes32);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:23:5:
+   |
+23 |     function setResolver(bytes32 node, address resolver) external virtual;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:24:5:
+   |
+24 |     function setOwner(bytes32 node, address owner) external virtual;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:25:5:
+   |
+25 |     function setTTL(bytes32 node, uint64 ttl) external virtual;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:26:5:
+   |
+26 |     function setApprovalForAll(address operator, bool approved) external virtual;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:27:5:
+   |
+27 |     function owner(bytes32 node) external virtual view returns (address);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:28:5:
+   |
+28 |     function resolver(bytes32 node) external virtual view returns (address);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:29:5:
+   |
+29 |     function ttl(bytes32 node) external virtual view returns (uint64);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:30:5:
+   |
+30 |     function recordExists(bytes32 node) external virtual view returns (bool);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5815): Interface functions are implicitly "virtual"
+  --> lib/ens-contracts/contracts/registry/ENS.sol:31:5:
+   |
+31 |     function isApprovedForAll(address owner, address operator) external virtual view returns (bool);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5740): Unreachable code.
+   --> lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol:124:9:
+    |
+124 |         _initializing = false;
+    |         ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  --> lib/osx-commons/contracts/src/plugin/setup/PluginSetup.sol:32:5:
+   |
+32 |     function prepareUpdate(
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+Ran 10 tests for test/FundedStreamBudget.t.sol:FundedStreamBudgetTest
+[PASS] test_CommitActionsWriteCheckpoint() (gas: 13977)
+[PASS] test_DepositDoesNotLiftTheCapUntilSync() (gas: 90770)
+[PASS] test_GrowsAtRatePerEpoch() (gas: 41466)
+[PASS] test_RaisingMaxBudgetDoesNotJump() (gas: 94800)
+[PASS] test_RevertWhen_SetterUnauthorized() (gas: 32762)
+[PASS] test_RevertWhen_TokenHasNoCode() (gas: 758590)
+[PASS] test_RevertWhen_WriteCheckpointUnauthorized() (gas: 32669)
+[PASS] test_SetAmountPerEpochKeepsWhatAccrued() (gas: 84392)
+[PASS] test_SetEpochIntervalKeepsWhatAccrued() (gas: 84394)
+[PASS] test_WriteCheckpointRestartsFromZero() (gas: 52604)
+Suite result: ok. 10 passed; 0 failed; 0 skipped; finished in 1.49ms (807.99µs CPU time)
+
+Ran 6 tests for test/solvers/OpenFillFork.t.sol:GenericOpenFillForkTest
+[SKIP] test_Fork_KyberSwapLiveQuote() (gas: 0)
+[SKIP] test_Fork_MisdirectedOutputRollsBack() (gas: 0)
+[SKIP] test_Fork_OneInchLiveQuote() (gas: 0)
+[SKIP] test_Fork_UniswapWethToUsdc() (gas: 0)
+[SKIP] test_Fork_VeloraLiveQuote() (gas: 0)
+[SKIP] test_Fork_ZeroExLiveQuote() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 6 skipped; finished in 1.45ms (136.21µs CPU time)
+
+Ran 13 tests for test/OpenFillAction.t.sol:OpenFillActionTest
+[PASS] test_BuildApprovesCallsBackAndClearsApproval() (gas: 39489)
+[PASS] test_BuildCapsTheOfferAtMaxOffered() (gas: 32925)
+[PASS] test_MaxOfferedHoldsTheMinimumPrice() (gas: 12563)
+[PASS] test_PostconditionsAssertTheDaoReceivedTheDemand() (gas: 48217)
+[PASS] test_RevertWhen_DemandNotReceived() (gas: 21600)
+[PASS] test_RevertWhen_DemandedTokenHasNoCode() (gas: 1043195)
+[PASS] test_RevertWhen_DemandedTokenIsOfferedToken() (gas: 1053326)
+[PASS] test_RevertWhen_MinimumPriceTooHigh() (gas: 29937)
+[PASS] test_RevertWhen_SetterUnauthorized() (gas: 32851)
+[PASS] test_RevertWhen_ZeroDemand() (gas: 29641)
+[PASS] test_RevertWhen_ZeroMinimumPrice() (gas: 29675)
+[PASS] test_SetDemandPerFillRestartsTheAuction() (gas: 84815)
+[PASS] test_SetMinDemandedPerOfferedRestartsTheAuction() (gas: 81938)
+Suite result: ok. 13 passed; 0 failed; 0 skipped; finished in 1.45ms (959.20µs CPU time)
+
+Ran 6 tests for test/ComponentRegistry.t.sol:ComponentRegistryTest
+[PASS] test_ManagingDaoRegistersMore() (gas: 79994)
+[PASS] test_RegistersTheInitialComponents() (gas: 10478)
+[PASS] test_RevertWhen_RegisterUnauthorized() (gas: 31237)
+[PASS] test_RevertWhen_TheIdIsTaken() (gas: 28395)
+[PASS] test_RevertWhen_TheIdIsUnknown() (gas: 10989)
+[PASS] test_RevertWhen_TheImplementationHasNoCode() (gas: 28922)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 2.58ms (238.22µs CPU time)
+
+Ran 6 tests for test/Installation.t.sol:InstallationTest
+[PASS] test_ConfigBuildsTheSameRecipe() (gas: 67898)
+[PASS] test_DaoInstallsBuyAndBurnWithTheProposalActions() (gas: 2454080)
+[PASS] test_EveryExampleConfigBuildsItsRecipe() (gas: 140994)
+[PASS] test_PublishesTheSetupAsVersionOneDotOne() (gas: 35656)
+[PASS] test_RevertWhen_SomeoneElseAppliesTheInstallation() (gas: 1068816)
+[PASS] test_RevertWhen_TheRecipeIsUnknown() (gas: 15355)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 4.38ms (2.72ms CPU time)
+
+Ran 4 tests for test/LeafActions.t.sol:BalanceBudgetTest
+[PASS] test_AvailableIsTheDaoBalance() (gas: 437574)
+[PASS] test_CommitsNothing() (gas: 433495)
+[PASS] test_RevertWhen_TokenHasNoCode() (gas: 386743)
+[PASS] test_RevertWhen_TokenIsUnset() (gas: 384252)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 4.32ms (455.14µs CPU time)
+
+Ran 12 tests for test/LeafActions.t.sol:LeafActionsTest
+[PASS] test_BurnLowersTheSupply() (gas: 3094246)
+[PASS] test_BurnPostconditionMeasuresTheDao() (gas: 25198)
+[PASS] test_KeepLeavesTheInputInTheDao() (gas: 3063640)
+[PASS] test_RevertWhen_ARepeatedRecipientMissesATransfer() (gas: 5803883)
+[PASS] test_RevertWhen_ATransferSilentlyFails() (gas: 4828238)
+[PASS] test_RevertWhen_BurningNativeEth() (gas: 11541)
+[PASS] test_RevertWhen_InitializingAnImplementation() (gas: 1562963)
+[PASS] test_RevertWhen_TheTokenIgnoresBurn() (gas: 4072295)
+[PASS] test_RevertWhen_ThereIsNoBeneficiary() (gas: 3051143)
+[PASS] test_RevertWhen_TransferRecipientIsUnset() (gas: 693355)
+[PASS] test_TransferPostconditionMeasuresTheRecipient() (gas: 754914)
+[PASS] test_TransferSendsTheWholeInput() (gas: 3846002)
+Suite result: ok. 12 passed; 0 failed; 0 skipped; finished in 4.38ms (4.04ms CPU time)
+
+Ran 8 tests for test/solvers/OpenFillLocal.t.sol:OpenFillLocalTest
+[PASS] test_forNodeRejectsInvalidIndex() (gas: 11063)
+[PASS] test_misdirectedQuoteRollsBackSwapAndCheckpoint() (gas: 413001)
+[PASS] test_oneInchResponseToFill() (gas: 416856)
+[PASS] test_quoteRejectsNativeInput() (gas: 37843)
+[PASS] test_quoteValueFundsTheCallbackWithoutPayingThePlugin() (gas: 402189)
+[PASS] test_sweepSkipsZeroTransfer() (gas: 14467)
+[PASS] test_sweepSurplusAfterPayingDAO() (gas: 437114)
+[PASS] test_zeroExResponseToFill() (gas: 416452)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 4.42ms (11.47ms CPU time)
+
+Ran 13 tests for test/CapitalPipelinePluginSetup.t.sol:CapitalPipelinePluginSetupTest
+[PASS] test_BuyAndBurnBurnsEverything() (gas: 2152179)
+[PASS] test_BuybackBurnsAndPaysTheFee() (gas: 2442876)
+[PASS] test_EveryComponentIsAFreshCloneOfTheDao() (gas: 2611771)
+[PASS] test_GrantsTheRecipePermissions() (gas: 1364080)
+[PASS] test_MerkleClaimPaysTheAccount() (gas: 1090330)
+[PASS] test_PayrollPaysEachRecipient() (gas: 1286540)
+[PASS] test_RevertWhen_AComponentIsNotRegistered() (gas: 95712)
+[PASS] test_RevertWhen_AGrantGivesConfigure() (gas: 1094903)
+[PASS] test_RevertWhen_AGrantTargetsAnOutsideContract() (gas: 1094098)
+[PASS] test_RevertWhen_AGrantTargetsTheDao() (gas: 1093926)
+[PASS] test_RevertWhen_AReferenceIsUnknown() (gas: 721089)
+[PASS] test_RevertWhen_UninstallGrantsDiffer() (gas: 1337933)
+[PASS] test_UninstallRevokesEverything() (gas: 1289982)
+Suite result: ok. 13 passed; 0 failed; 0 skipped; finished in 6.88ms (8.73ms CPU time)
+
+Ran 7 tests for test/NativeEth.t.sol:NativeEthTest
+[PASS] test_BudgetPaysOutEth() (gas: 5218645)
+[PASS] test_MerkleClaimPaysEth() (gas: 4676626)
+[PASS] test_NativeOfferNeedsNoApproval() (gas: 2180952)
+[PASS] test_RevertWhen_RecipientRejectsEth() (gas: 4217463)
+[PASS] test_RevertWhen_TokenIsUnset() (gas: 756082)
+[PASS] test_StreamedEthIsSoldForTokens() (gas: 7829184)
+[PASS] test_TokensAreSoldForEth() (gas: 7882169)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 206.98ms (4.07ms CPU time)
+
+Ran 21 tests for test/solvers/GenericSwapSolver.t.sol:GenericSwapSolverTest
+[PASS] test_CallbackDataAtNonRootNode() (gas: 4314769)
+[PASS] test_DirectCallbackRemainsPermissionless() (gas: 49462)
+[PASS] test_FillPaysDaoClearsAllowanceAndCommitsStream() (gas: 334399)
+[PASS] test_FillRunsDownstreamBurnAndFeeNodes() (gas: 5037897)
+[PASS] test_MultipleOpenFillNodesKeepSeparatePayloads() (gas: 3708941)
+[PASS] test_NativeDemandPaidFromTriggerValue() (gas: 4546360)
+[PASS] test_NativeOfferFundsBatchAndSweep() (gas: 5468974)
+[PASS] test_RevertWhen_ACallbackCallFailsRollsBackEarlierCalls() (gas: 295054)
+[PASS] test_RevertWhen_BatchReentersPipeline() (gas: 258991)
+[PASS] test_RevertWhen_CallbackContainsOuterArrayEncoding() (gas: 217850)
+[PASS] test_RevertWhen_CallbackDataIsEmpty() (gas: 185514)
+[PASS] test_RevertWhen_DirectCallFails() (gas: 24107)
+[PASS] test_RevertWhen_NativeSweepRecipientRejectsEth() (gas: 18934)
+[PASS] test_RevertWhen_NativeUnderpaymentRestoresCallValue() (gas: 4523825)
+[PASS] test_RevertWhen_PayloadOmitsLeafNode() (gas: 53745)
+[PASS] test_RevertWhen_PipelinePaused() (gas: 97219)
+[PASS] test_RevertWhen_SolverLacksTriggerPermission() (gas: 112114)
+[PASS] test_RevertWhen_StaleQuotePullsMoreThanTheOffer() (gas: 262026)
+[PASS] test_RevertWhen_UnderpaidRestoresBalancesAndStream() (gas: 310042)
+[PASS] test_SweepAcceptsNoReturnToken() (gas: 18770)
+[PASS] test_SweepRejectsFalseReturningToken() (gas: 18492)
+Suite result: ok. 21 passed; 0 failed; 0 skipped; finished in 207.07ms (8.08ms CPU time)
+
+Ran 4 tests for test/Metadata.t.sol:MetadataTest
+[PASS] test_DeployRegistersEachComponentWithItsLink() (gas: 20315573)
+[PASS] test_EachFileMatchesItsInitializer() (gas: 155549)
+[PASS] test_RevertWhen_AComponentHasNoLink() (gas: 15432681)
+[PASS] test_UrisFileListsEveryComponent() (gas: 17289)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 207.03ms (3.78ms CPU time)
+
+Ran 15 tests for test/MerkleClaimAction.t.sol:MerkleClaimActionTest
+[PASS] test_AccountClaimsItsAmount() (gas: 267045)
+[PASS] test_AccountRedirectsToAnotherBeneficiary() (gas: 265757)
+[PASS] test_ClaimStaysOpenWhenALaterNodeCannotRun() (gas: 3866097)
+[PASS] test_ClaimThenSwap() (gas: 4112503)
+[PASS] test_ClaimWithAFeeBranch() (gas: 5005048)
+[PASS] test_NewRootPaysTheDifference() (gas: 385512)
+[PASS] test_RevertWhen_BelowABranch() (gas: 4037025)
+[PASS] test_RevertWhen_BeneficiaryIsTheDao() (gas: 112839)
+[PASS] test_RevertWhen_ClaimingAgain() (gas: 280883)
+[PASS] test_RevertWhen_ProofIsInvalid() (gas: 108577)
+[PASS] test_RevertWhen_RecordClaimUnauthorized() (gas: 35089)
+[PASS] test_RevertWhen_SetRootUnauthorized() (gas: 32747)
+[PASS] test_RevertWhen_SomeoneElseClaims() (gas: 107722)
+[PASS] test_RevertWhen_TheDaoCannotPay() (gas: 138408)
+[PASS] test_RevertWhen_TheDaoIsEmpty() (gas: 5180032)
+Suite result: ok. 15 passed; 0 failed; 0 skipped; finished in 207.03ms (5.32ms CPU time)
+
+Ran 3 tests for test/invariant/PipelineInvariant.t.sol:PipelineInvariantTest
+[PASS] invariant_DaoNeverSpendsItsPreexistingB() (runs: 64, calls: 2048, reverts: 0)
+
+╭----------+--------------------------+-------+---------+----------╮
+| Contract | Selector                 | Calls | Reverts | Discards |
++==================================================================+
+| Handler  | deposit                  | 265   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | fill                     | 240   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setAmountPerEpoch        | 232   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setDemandPerFill         | 276   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setMaxBudget             | 253   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setMinDemandedPerOffered | 292   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | sync                     | 234   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | warp                     | 256   | 0       | 0        |
+╰----------+--------------------------+-------+---------+----------╯
+
+[PASS] invariant_NoApprovalSurvives() (runs: 64, calls: 2048, reverts: 0)
+
+╭----------+--------------------------+-------+---------+----------╮
+| Contract | Selector                 | Calls | Reverts | Discards |
++==================================================================+
+| Handler  | deposit                  | 265   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | fill                     | 240   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setAmountPerEpoch        | 232   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setDemandPerFill         | 276   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setMaxBudget             | 253   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setMinDemandedPerOffered | 292   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | sync                     | 234   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | warp                     | 256   | 0       | 0        |
+╰----------+--------------------------+-------+---------+----------╯
+
+[PASS] invariant_ProceedsAreSplitExactly() (runs: 64, calls: 2048, reverts: 0)
+
+╭----------+--------------------------+-------+---------+----------╮
+| Contract | Selector                 | Calls | Reverts | Discards |
++==================================================================+
+| Handler  | deposit                  | 265   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | fill                     | 240   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setAmountPerEpoch        | 232   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setDemandPerFill         | 276   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setMaxBudget             | 253   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | setMinDemandedPerOffered | 292   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | sync                     | 234   | 0       | 0        |
+|----------+--------------------------+-------+---------+----------|
+| Handler  | warp                     | 256   | 0       | 0        |
+╰----------+--------------------------+-------+---------+----------╯
+
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 207.03ms (572.72ms CPU time)
+
+Ran 44 tests for test/CapitalPipelinePlugin.t.sol:CapitalPipelinePluginTest
+[PASS] test_ABoundActionCanSitBelowNestedBranchesWithoutAction() (gas: 3405248)
+[PASS] test_ABranchSplitsTheStreamBetweenGrantsAndAnAuction() (gas: 5069029)
+[PASS] test_ABranchWithoutActionSplitsTheBudget() (gas: 5217282)
+[PASS] test_AnAuctionBelowABranchMayTakePartOfItsShare() (gas: 5073329)
+[PASS] test_BudgetCommitsOnceAfterTheWholeTree() (gas: 5775387)
+[PASS] test_BuybackBurnsAndPaysAFee() (gas: 5030120)
+[PASS] test_DaoReplacesTheFlow() (gas: 96068)
+[PASS] test_FillSwapsAndSplitsTheProceeds() (gas: 499705)
+[PASS] test_FillerCannotReenterTrigger() (gas: 621307)
+[PASS] test_KeepIsAnExplicitLeaf() (gas: 4104402)
+[PASS] test_ManagerPausesAndUnpauses() (gas: 42373)
+[PASS] test_PreconditionsCanBlockANode() (gas: 3699059)
+[PASS] test_RevertWhen_ABoundActionIsBelowAnAction() (gas: 3548451)
+[PASS] test_RevertWhen_AChildDoesNotComeAfterItsParent() (gas: 2783820)
+[PASS] test_RevertWhen_AChildSkips() (gas: 4758010)
+[PASS] test_RevertWhen_AChildTakesPartOfItsInput() (gas: 4759526)
+[PASS] test_RevertWhen_ALaterNodeChangesTheBeneficiary() (gas: 5261272)
+[PASS] test_RevertWhen_ALeafHasNoAction() (gas: 2771458)
+[PASS] test_RevertWhen_ALeafLeavesOutputBehind() (gas: 4081235)
+[PASS] test_RevertWhen_ANodeBelongsToAnotherDao() (gas: 3246388)
+[PASS] test_RevertWhen_ANodeChangesTheInputToken() (gas: 3703794)
+[PASS] test_RevertWhen_ANodeHasTwoParents() (gas: 2909473)
+[PASS] test_RevertWhen_ANodeIsAnImplementation() (gas: 3157625)
+[PASS] test_RevertWhen_ANodeIsUnreachable() (gas: 2864392)
+[PASS] test_RevertWhen_ANodeTakesMoreThanItsInput() (gas: 3703834)
+[PASS] test_RevertWhen_AShareRoundsToZero() (gas: 5821882)
+[PASS] test_RevertWhen_AnActionDeclaresOutputItNeverProduced() (gas: 3716922)
+[PASS] test_RevertWhen_AnActionSpendsMoreThanItDeclared() (gas: 3669912)
+[PASS] test_RevertWhen_AnActionTargetsTheDao() (gas: 3710120)
+[PASS] test_RevertWhen_AnActionTargetsThePlugin() (gas: 3710236)
+[PASS] test_RevertWhen_DataLengthMismatch() (gas: 38143)
+[PASS] test_RevertWhen_FillerUnderDelivers() (gas: 342283)
+[PASS] test_RevertWhen_ManagerSetsTheFlow() (gas: 46525)
+[PASS] test_RevertWhen_NoBudget() (gas: 2759713)
+[PASS] test_RevertWhen_NoNodes() (gas: 2767092)
+[PASS] test_RevertWhen_PauseUnauthorized() (gas: 32729)
+[PASS] test_RevertWhen_Paused() (gas: 99874)
+[PASS] test_RevertWhen_TheBudgetBelongsToAnotherDao() (gas: 3192286)
+[PASS] test_RevertWhen_TheBudgetIsEmpty() (gas: 477364)
+[PASS] test_RevertWhen_TheRootIsBoundToAnotherBudget() (gas: 3747853)
+[PASS] test_RevertWhen_TheRootTakesNothing() (gas: 3702648)
+[PASS] test_RevertWhen_TooManyNodes() (gas: 2793836)
+[PASS] test_RevertWhen_WeightsDoNotSumTo100() (gas: 2780107)
+[PASS] test_StoresTheFlow() (gas: 51033)
+Suite result: ok. 44 passed; 0 failed; 0 skipped; finished in 207.13ms (17.45ms CPU time)
+
+Ran 15 test suites in 208.02ms (1.27s CPU time): 166 tests passed, 0 failed, 6 skipped (172 total tests)

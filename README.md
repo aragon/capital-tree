@@ -651,3 +651,7 @@ just run script/Install.s.sol:Install
 
 4. Put the actions printed by the broadcast run in a DAO proposal. Once it executes, the
    flow is live: fillers can call `trigger()`, the manager can tune it and the guardian can pause it.
+
+## License
+
+[MIT](LICENSE)
