@@ -26,7 +26,6 @@ import {MockExchange, MockSwapAction} from "./mocks/MockSwap.sol";
 import {BadAction, WritingCheckAction} from "./mocks/BadComponents.sol";
 import {CapSplitter, FixedSplitter} from "./mocks/MockSplitter.sol";
 import {IncomeAction, IncomeSource} from "./mocks/MockIncome.sol";
-import {MockHolderBudget} from "./mocks/MockHolderBudget.sol";
 
 contract CapitalTreePluginTest is Fixture {
     IERC20 internal constant NO_TOKEN = IERC20(address(0));
@@ -329,75 +328,6 @@ contract CapitalTreePluginTest is Fixture {
         filler.fill("");
 
         assertEq(_available(budget), RATE, "offer not consumed");
-    }
-
-    // =========================================================================================
-    // Funding the budget
-    // =========================================================================================
-
-    /// The DAO holds none of the token: the budget brings it in before the root pays it out
-    function test_TheBudgetFundsTheDaoBeforeTheRoot() public {
-        (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
-        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-
-        vm.expectEmit(address(_plugin));
-        // The first trigger counts the nonce up to 1; fund actions run at execution index 0
-        emit CapitalTreePlugin.BudgetFunded(_executionIdOf(address(_plugin), 1, 0));
-        _plugin.trigger("", noData);
-
-        assertEq(_held.balanceOf(alice), 10 ether);
-        assertEq(_held.balanceOf(address(_budget)), 0);
-        assertEq(_held.balanceOf(address(dao)), 0);
-    }
-
-    /// The DAO holds none of the token: the root's transfer of what never arrived fails
-    function test_RevertWhen_TheBudgetFundsLessThanItReleases() public {
-        (MockHolderBudget _budget,) = _holderBudget(10 ether);
-        _budget.setDelivered(9 ether);
-        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-
-        vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
-        _plugin.trigger("", noData);
-    }
-
-    /// The DAO already holds 10: the 1 the budget didn't bring can't come out of them
-    function test_RevertWhen_AShortfallWouldSpendTheDaosOwnTokens() public {
-        (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
-        _held.mint(address(dao), 10 ether);
-        _budget.setDelivered(9 ether);
-        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.BudgetExceeded.selector, 0, 1 ether));
-        _plugin.trigger("", noData);
-    }
-
-    /// The root still gets what `available` returned; the rest stays in the DAO
-    function test_FundingAboveTheAmountStaysInTheDao() public {
-        (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
-        _held.mint(address(_budget), 2 ether);
-        _budget.setDelivered(12 ether);
-        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-
-        _plugin.trigger("", noData);
-
-        assertEq(_held.balanceOf(alice), 10 ether);
-        assertEq(_held.balanceOf(address(dao)), 2 ether);
-    }
-
-    /// Fund actions go through the same guards as a node's, reported at execution index 0
-    function test_RevertWhen_AFundActionTargetsTheDao() public {
-        (MockHolderBudget _budget,) = _holderBudget(10 ether);
-        _budget.setFundTarget(address(dao));
-        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsDao.selector, 0, 0));
-        _plugin.trigger("", noData);
-    }
-
-    function test_TheBudgetsThatPayFromTheDaoFundNothing() public {
-        assertEq(budget.fundActions(alice, "").length, 0);
-        assertEq(_deployBalanceBudget(tokenA).fundActions(alice, "").length, 0);
-        assertEq(_deployMerkle(tokenA, bytes32(0)).fundActions(alice, "").length, 0);
     }
 
     // =========================================================================================
@@ -841,7 +771,7 @@ contract CapitalTreePluginTest is Fixture {
     /// The last event of a run, after the budget's commit
     function test_FlowExecutedFollowsTheBudgetCommit() public {
         vm.expectEmit(address(plugin));
-        emit CapitalTreePlugin.BudgetCommitted(_executionIdOf(address(plugin), 1, 4));
+        emit CapitalTreePlugin.BudgetCommitted(_executionIdOf(address(plugin), 1, 3));
         vm.expectEmit(address(plugin));
         emit CapitalTreePlugin.FlowExecuted(address(filler), 1, Asset(tokenA, RATE));
         filler.fillWithoutData();
@@ -884,15 +814,14 @@ contract CapitalTreePluginTest is Fixture {
     function test_RevertWhen_AnActionTargetsTheDao() public {
         CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetDao), keep));
 
-        // Node 0 runs at execution index 1
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsDao.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsDao.selector, 0, 0));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_AnActionTargetsThePlugin() public {
         CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetPlugin), keep));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsPlugin.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsPlugin.selector, 0, 0));
         _plugin.trigger("", noData);
     }
 
@@ -948,13 +877,6 @@ contract CapitalTreePluginTest is Fixture {
         return new BadAction(_mode, address(dao), tokenB);
     }
 
-    /// @dev A budget holding `_amount` of a new token the DAO doesn't hold
-    function _holderBudget(uint256 _amount) internal returns (MockHolderBudget _budget, ERC20Mock _held) {
-        _held = new ERC20Mock("Held", "H");
-        _budget = new MockHolderBudget(address(dao), _held, _amount);
-        _held.mint(address(_budget), _amount);
-    }
-
     /// @dev A filler for a new plugin running `_tree` on the stream budget, paying `_extra` B above the demand
     function _overpayingFiller(Node[] memory _tree, uint256 _extra) internal returns (MockFiller _filler) {
         _filler = new MockFiller(_deployPlugin(budget, _tree));
@@ -985,7 +907,7 @@ contract CapitalTreePluginTest is Fixture {
         uint256 _surplus
     ) internal {
         vm.expectEmit(_plugin);
-        emit CapitalTreePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 1), _input, _output, _surplus);
+        emit CapitalTreePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 0), _input, _output, _surplus);
     }
 
     /// @dev The plugin's address, the trigger's nonce and the execution index, packed in 32 bytes

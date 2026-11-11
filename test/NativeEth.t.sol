@@ -49,7 +49,7 @@ contract NativeEthTest is Fixture {
         vm.deal(address(dao), 1 ether);
         NativeAction _action = new NativeAction(address(dao), _mode);
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 0, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
@@ -59,8 +59,8 @@ contract NativeEthTest is Fixture {
         vm.deal(address(dao), 1 ether);
         NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
         CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
-        // The commit of a 1-node flow runs at execution index 2
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 2, 0));
+        // The commit of a 1-node flow runs at execution index 1
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 1, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
@@ -74,7 +74,7 @@ contract NativeEthTest is Fixture {
         NativeAction _action = new NativeAction(address(dao), NativeAction.Mode.Work);
         _action.setCall(address(_target), new bytes(_length));
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.MissingFunctionSelector.selector, 0, 0));
         _plugin.trigger("", noData);
         assertEq(address(dao).balance, 1 ether);
         assertEq(address(_target).balance, 0);
@@ -194,8 +194,6 @@ contract NativeCommitBudget is IBudget {
     function available(address, bytes calldata) external view returns (uint256) {
         return token.balanceOf(dao);
     }
-
-    function fundActions(address, bytes calldata) external pure returns (Action[] memory) {}
 
     function commitActions(address, bytes calldata) external view returns (Action[] memory _actions) {
         _actions = new Action[](1);

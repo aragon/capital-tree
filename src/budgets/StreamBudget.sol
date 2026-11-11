@@ -153,10 +153,6 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         return _available(_daoBalance());
     }
 
-    /// @inheritdoc IBudget
-    /// @dev The stream pays from the DAO's own balance: nothing to bring in
-    function fundActions(address, bytes calldata) external pure virtual returns (Action[] memory) {}
-
     /// @notice Restarts the stream after the spend: the plugin executes this once, after the whole flow
     function commitActions(address, bytes calldata) external view virtual returns (Action[] memory _actions) {
         _actions = new Action[](1);
