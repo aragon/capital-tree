@@ -1,8 +1,6 @@
 out/
 cache/
 broadcast/
-playground/deployment.json
-playground/abis.json
 
 # Local secrets and network overrides; keep the configuration template tracked.
 /.env
@@ -15,5 +13,3 @@ playground/abis.json
 /report/
 /lcov.info*
 /zkout/
-
-/playground/node_modules/

@@ -56,7 +56,7 @@ Aragon receives approximately 2.995361 KAT and the vault receives the remaining
 `Recipes.buybackAndDonate(manager, guardian, stream, swap, vault, feeRecipient, feeBps)` builds the
 installation recipe. `Install.s.sol` accepts `"recipe": "buybackAndDonate"` and
 prints the proposal's four actions; the last, `writeCheckpoint()` on the stream,
-starts it. `installs/buyback-and-donate.example.json` demonstrates the Katana configuration.
+starts it. `config/buyback-and-donate.example.json` demonstrates the Katana configuration.
 Replace the DAO/manager/guardian/fee-recipient placeholders and choose fresh auction terms
 before use. The fee recipient `0x0000000000000000000000000000000000000003` is
 explicitly a placeholder; Aragon's production Katana address has not been supplied.
