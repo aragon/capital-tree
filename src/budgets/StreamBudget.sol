@@ -109,7 +109,8 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @notice Emitted when the amount is carried forward and the DAO balance recorded
     /// @param baseAmount The amount available at the time of the sync
     /// @param lastSeenBalance The DAO balance seen by the sync
-    event Synced(uint256 baseAmount, uint256 lastSeenBalance);
+    /// @param rebased Whether the base amount and timestamp were rewritten
+    event Synced(uint256 baseAmount, uint256 lastSeenBalance, bool indexed rebased);
 
     /// @notice Thrown when the token is not a contract
     error InvalidToken();
@@ -148,7 +149,6 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     // IBudget
 
     /// @inheritdoc IBudget
-    /// @dev min(baseAmount + rate x (now - baseTimestamp), lastSeenBalance, daoBalance, maxBudget)
     function available(address, bytes calldata) external view virtual returns (uint256) {
         return _available(_daoBalance());
     }
@@ -169,7 +169,7 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @dev Permissionless: it never raises the current amount, it only lets the amount resume
     ///      growing after a deposit (or follow the balance down after an outflow).
     function sync() external virtual {
-        _sync();
+        _sync(false);
     }
 
     /// @notice Restarts the amount from zero and records the DAO balance. The first call starts the stream.
@@ -182,23 +182,24 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
 
     // Manager settings. Each one syncs first, so time already elapsed keeps the old values.
 
-    /// @notice Updates how much the available amount grows per epoch
-    function setAmountPerEpoch(uint256 _amountPerEpoch) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
-        _rebase();
-        _setAmountPerEpoch(_amountPerEpoch);
-        emit AmountPerEpochUpdated(_amountPerEpoch);
-    }
-
     /// @notice Updates the cap on the available amount (0 for no cap)
+    /// @dev Does not force a rebase; syncing still rebases when a cap hides growth
     function setMaxBudget(uint256 _maxBudget) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
-        _sync();
+        _sync(false);
         maxBudget = _maxBudget;
         emit MaxBudgetUpdated(_maxBudget);
     }
 
+    /// @notice Updates how much the available amount grows per epoch
+    function setAmountPerEpoch(uint256 _amountPerEpoch) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
+        _sync(true);
+        _setAmountPerEpoch(_amountPerEpoch);
+        emit AmountPerEpochUpdated(_amountPerEpoch);
+    }
+
     /// @notice Updates the epoch interval, which changes the growth rate
     function setEpochInterval(uint256 _epochInterval) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
-        _rebase();
+        _sync(true);
         _setEpochInterval(_epochInterval);
     }
 
@@ -207,7 +208,6 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
     /// @dev The amount available for a given DAO balance
     function _available(uint256 _balance) internal view virtual returns (uint256 _amount) {
         _amount = _accrued();
-
         _amount = Math.min(_amount, lastSeenBalance);
         _amount = Math.min(_amount, _balance);
         if (maxBudget != 0) _amount = Math.min(_amount, maxBudget);
@@ -219,27 +219,20 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         return baseAmount + (amountPerEpoch * (block.timestamp - baseTimestamp)) / epochInterval;
     }
 
-    /// @dev Records the balance, and restarts the curve only when a cap hides growth. An uncapped
-    ///      curve is left untouched, so repeated syncs lose no rounding.
-    function _sync() internal virtual {
+    /// @dev Records the balance and restarts the curve when a cap hides growth or `_rebase` is true.
+    ///      Rate setters force a rebase; public syncs leave uncapped curves untouched to preserve rounding.
+    function _sync(bool _rebase) internal virtual {
         uint256 _balance = _daoBalance();
         uint256 _amount = _available(_balance);
+        bool _rebased = _started() && (_rebase || _amount < _accrued());
 
-        if (_amount < _accrued()) {
+        if (_rebased) {
             baseAmount = _amount;
             baseTimestamp = block.timestamp;
         }
         lastSeenBalance = _balance;
 
-        emit Synced(_amount, _balance);
-    }
-
-    /// @dev Restarts the curve from the current amount, so a new rate applies from now on
-    function _rebase() internal virtual {
-        _sync();
-        if (!_started()) return;
-        baseAmount = _accrued();
-        baseTimestamp = block.timestamp;
+        emit Synced(_amount, _balance, _rebased);
     }
 
     function _started() internal view returns (bool) {
@@ -248,25 +241,20 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
 
     function _writeCheckpoint() internal virtual {
         uint256 _balance = _daoBalance();
-
         baseAmount = 0;
         baseTimestamp = block.timestamp;
         lastSeenBalance = _balance;
-
         emit CheckpointWritten(_balance);
     }
 
     function _setAmountPerEpoch(uint256 _amountPerEpoch) internal virtual {
         if (_amountPerEpoch > MAX_AMOUNT_PER_EPOCH) revert InvalidAmountPerEpoch();
-
         amountPerEpoch = _amountPerEpoch;
     }
 
     function _setEpochInterval(uint256 _epochInterval) internal virtual {
         if (_epochInterval == 0) revert InvalidEpochInterval();
-
         epochInterval = _epochInterval;
-
         emit EpochIntervalUpdated(_epochInterval);
     }
 

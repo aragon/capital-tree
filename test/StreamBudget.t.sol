@@ -34,6 +34,8 @@ contract StreamBudgetTest is Fixture {
         tokenA.mint(address(dao), 50 ether);
         assertEq(_available(budget), DAO_A, "deposit must not lift the cap");
 
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(DAO_A, DAO_A + 50 ether, true);
         budget.sync();
         assertEq(_available(budget), DAO_A, "sync must not jump");
 
@@ -51,6 +53,20 @@ contract StreamBudgetTest is Fixture {
         }
 
         assertEq(_available(_slow), (7000 * 3600) / EPOCH, "an hour of growth");
+    }
+
+    function test_UncappedSyncReportsNoRebase() public {
+        uint256 _start = budget.baseTimestamp();
+        vm.warp(block.timestamp + EPOCH / 2);
+
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(RATE / 2, DAO_A, false);
+        vm.prank(alice);
+        budget.sync();
+
+        assertEq(budget.baseAmount(), 0);
+        assertEq(budget.baseTimestamp(), _start);
+        assertEq(_available(budget), RATE / 2);
     }
 
     function test_AvailableIgnoresTheCaller() public {
@@ -80,9 +96,13 @@ contract StreamBudgetTest is Fixture {
     function test_SetAmountPerEpochKeepsWhatAccrued() public {
         vm.warp(block.timestamp + EPOCH);
 
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(RATE, DAO_A, true);
         vm.prank(manager);
         budget.setAmountPerEpoch(2 * RATE);
         assertEq(_available(budget), RATE, "no change in the same block");
+        assertEq(budget.baseAmount(), RATE);
+        assertEq(budget.baseTimestamp(), block.timestamp);
 
         vm.warp(block.timestamp + EPOCH);
         assertEq(_available(budget), RATE + 2 * RATE, "new rate from now on");
@@ -95,6 +115,8 @@ contract StreamBudgetTest is Fixture {
         vm.warp(block.timestamp + 2 * EPOCH); // 20 accrued, capped at 5
         assertEq(_available(budget), 5 ether);
 
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(5 ether, DAO_A, true);
         vm.prank(manager);
         budget.setMaxBudget(0);
         assertEq(_available(budget), 5 ether, "hidden accrual must not be released");
@@ -106,9 +128,13 @@ contract StreamBudgetTest is Fixture {
     function test_SetEpochIntervalKeepsWhatAccrued() public {
         vm.warp(block.timestamp + EPOCH);
 
+        vm.expectEmit(address(budget));
+        emit StreamBudget.Synced(RATE, DAO_A, true);
         vm.prank(manager);
         budget.setEpochInterval(2 * EPOCH);
         assertEq(_available(budget), RATE);
+        assertEq(budget.baseAmount(), RATE);
+        assertEq(budget.baseTimestamp(), block.timestamp);
 
         vm.warp(block.timestamp + 2 * EPOCH);
         assertEq(_available(budget), 2 * RATE);
@@ -167,9 +193,18 @@ contract StreamBudgetTest is Fixture {
         vm.warp(block.timestamp + 7 days); // the vote
         assertEq(_available(_budget), 0, "nothing accrued during the vote");
 
+        vm.expectEmit(address(_budget));
+        emit StreamBudget.Synced(0, DAO_A, false);
         _budget.sync();
+        vm.expectEmit(address(_budget));
+        emit StreamBudget.Synced(0, DAO_A, false);
         vm.prank(manager);
         _budget.setAmountPerEpoch(2 * RATE);
+        vm.expectEmit(address(_budget));
+        emit StreamBudget.Synced(0, DAO_A, false);
+        vm.prank(manager);
+        _budget.setEpochInterval(EPOCH);
+        assertEq(_budget.baseTimestamp(), 0, "setters must not start the clock");
         vm.warp(block.timestamp + EPOCH);
         assertEq(_available(_budget), 0, "neither a sync nor a setter starts it");
 
