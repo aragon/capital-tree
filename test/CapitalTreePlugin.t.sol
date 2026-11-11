@@ -199,7 +199,7 @@ contract CapitalTreePluginTest is Fixture {
         BalanceBudget _foreign = BalanceBudget(
             ProxyLib.deployMinimalProxy(
                 address(new BalanceBudget()),
-                abi.encodeCall(BalanceBudget.initialize, (IDAO(makeAddr("otherDao")), tokenA))
+                abi.encodeCall(BalanceBudget.initialize, (IDAO(makeAddr("otherDao")), _noDeps(), abi.encode(tokenA)))
             )
         );
 
@@ -1022,7 +1022,7 @@ contract CapitalTreePluginTest is Fixture {
     function _capSplitter(IDAO _dao, uint256 _cap) internal returns (ISplitter) {
         return ISplitter(
             ProxyLib.deployMinimalProxy(
-                address(new CapSplitter()), abi.encodeCall(CapSplitter.initialize, (_dao, _cap))
+                address(new CapSplitter()), abi.encodeCall(CapSplitter.initialize, (_dao, _noDeps(), abi.encode(_cap)))
             )
         );
     }

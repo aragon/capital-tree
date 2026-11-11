@@ -12,7 +12,6 @@ import {
   http,
   isAddress,
   keccak256,
-  pad,
   stringToHex,
   toHex,
   zeroAddress,
@@ -30,25 +29,13 @@ export const permissionId = (name) => keccak256(toHex(`${name}_PERMISSION`));
 const ALICE = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const BOB = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
-// Placeholders, as in src/lib/placeholders.sol
-const TAG = BigInt(keccak256(toHex("capital-tree.placeholder"))) & ((1n << 160n) - 1n) & ~0xffffn;
-const placeholder = (index) => getAddress(pad(toHex(TAG | BigInt(index)), { size: 20 }));
-export const DAO_REF = placeholder(0xffff);
-export const PLUGIN_REF = placeholder(0xfffe);
-export const ref = (index) => placeholder(index);
-
 // Parsing what people type
 
-/** "DAO", "PLUGIN", "ANY", "ref(2)" or an address → the address the recipe carries */
-export function target(text) {
+/** An address someone typed */
+export function parseAddress(text) {
   const t = String(text ?? "").trim();
-  if (t === "DAO") return DAO_REF;
-  if (t === "PLUGIN") return PLUGIN_REF;
-  if (t === "ANY") return ANY_ADDR;
-  const m = t.match(/^ref\((\d+)\)$/);
-  if (m) return ref(Number(m[1]));
-  if (isAddress(t)) return getAddress(t);
-  throw new Error(`"${t}" is not an address, DAO, PLUGIN, ANY or ref(i)`);
+  if (!isAddress(t)) throw new Error(`"${t}" is not an address`);
+  return getAddress(t);
 }
 
 /** "1000", "10e18" or "1.5e18" → bigint */
@@ -77,7 +64,7 @@ export const numbers = (text) =>
 
 function arg(type, value, where) {
   try {
-    if (type === "address") return target(value);
+    if (type === "address") return parseAddress(value);
     if (type === "uint32[]") return numbers(value);
     if (type.startsWith("uint")) return amount(value);
     if (type === "bytes32") {
@@ -142,74 +129,55 @@ function uniqueErrors(abi) {
 
 // Recipes
 
-const component = (id, args) => ({ id, args: { dao: "DAO", ...args } });
-const stream = (token, maxBudget = "0") =>
-  component("StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
-// 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
-const openFill = (tokenB) =>
-  component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
-const weightSplitter = (weights) => component("WeightSplitter@1", { weights });
-const leaf = (action) => ({ action, children: "", splitter: null });
-const swapGrants = (manager) => [
-  { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-  { where: "PLUGIN", who: manager, permission: "PAUSE" },
-  { where: "ref(0)", who: manager, permission: "SET_SETTINGS" },
-  { where: "ref(1)", who: manager, permission: "SET_SETTINGS" },
-  { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
-  { where: "ref(0)", who: "ref(1)", permission: "CHECKPOINT" },
+const component = (id, args, permissions = []) => ({ id, args, permissions });
+const managed = (account) => [{ who: account, permission: "SET_SETTINGS" }];
+const pluginPermissions = (account) => [
+  { who: ANY_ADDR, permission: "TRIGGER" },
+  { who: account, permission: "PAUSE" },
 ];
+const stream = (token, account, maxBudget = "0") => component(
+  "StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" }, managed(account),
+);
+const openFill = (tokenB, account) =>
+  component("OpenFillAction@1", { demandedToken: tokenB, demandPerFill: "1000e18" }, managed(account));
+const weightSplitter = (weights, account) => component("WeightSplitter@1", { weights }, managed(account));
+const leaf = (action) => ({ action, children: "", splitter: null });
 
 /** The recipes in script/Recipes.sol, as editable state */
 export function templates({ tokenA, tokenB, account }) {
   return {
     "Buy and burn": {
-      components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {})],
-      budget: 0,
-      nodes: [{ action: 1, children: "1", splitter: null }, leaf(2)],
-      grants: swapGrants(account),
+      budget: stream(tokenA, account, "20e18"),
+      nodes: [
+        { action: openFill(tokenB, account), children: "1", splitter: null },
+        leaf(component("BurnAction@1", {})),
+      ],
+      pluginPermissions: pluginPermissions(account),
     },
     "Buyback with a fee": {
-      components: [
-        stream(tokenA, "20e18"),
-        openFill(tokenB),
-        component("BurnAction@1", {}),
-        component("TransferAction@1", { to: BOB }),
-        weightSplitter("950000, 50000"),
+      budget: stream(tokenA, account, "20e18"),
+      nodes: [
+        { action: openFill(tokenB, account), children: "1, 2", splitter: weightSplitter("950000, 50000", account) },
+        leaf(component("BurnAction@1", {})),
+        leaf(component("TransferAction@1", { to: BOB })),
       ],
-      budget: 0,
-      nodes: [{ action: 1, children: "1, 2", splitter: 4 }, leaf(2), leaf(3)],
-      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "SET_SETTINGS" }],
+      pluginPermissions: pluginPermissions(account),
     },
     Payroll: {
-      components: [
-        stream(tokenA),
-        component("TransferAction@1", { to: ALICE }),
-        component("TransferAction@1", { to: BOB }),
-        weightSplitter("700000, 300000"),
+      budget: stream(tokenA, account),
+      nodes: [
+        { action: null, children: "1, 2", splitter: weightSplitter("700000, 300000", account) },
+        leaf(component("TransferAction@1", { to: ALICE })),
+        leaf(component("TransferAction@1", { to: BOB })),
       ],
-      budget: 0,
-      nodes: [{ action: null, children: "1, 2", splitter: 3 }, leaf(1), leaf(2)],
-      grants: [
-        { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-        { where: "PLUGIN", who: account, permission: "PAUSE" },
-        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
-        { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
-        { where: "ref(3)", who: account, permission: "SET_SETTINGS" },
-      ],
+      pluginPermissions: pluginPermissions(account),
     },
     "Merkle claim": {
-      components: [
-        component("MerkleClaimBudget@1", { token: tokenA, root: merkleLeaf(account, 100n * 10n ** 18n) }),
-        component("TransferToBeneficiaryAction@1", {}),
-      ],
-      budget: 0,
-      nodes: [leaf(1)],
-      grants: [
-        { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-        { where: "PLUGIN", who: account, permission: "PAUSE" },
-        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
-        { where: "ref(0)", who: "DAO", permission: "RECORD_CLAIM" },
-      ],
+      budget: component("MerkleClaimBudget@1", {
+        token: tokenA, root: merkleLeaf(account, 100n * 10n ** 18n),
+      }, managed(account)),
+      nodes: [leaf(component("TransferToBeneficiaryAction@1", {}))],
+      pluginPermissions: pluginPermissions(account),
     },
   };
 }
@@ -220,27 +188,29 @@ export const merkleLeaf = (account, cumulative) =>
 
 /** The recipe as `abi.encode(InstallParams)`; throws a readable error for anything mistyped */
 export function encodeRecipe(ctx, recipe) {
-  const components = recipe.components.map((c, i) => {
-    const inputs = ctx.meta[c.id].initialize.inputs;
-    const args = inputs.map((input) => arg(input.type, c.args[input.name], `ref(${i}) ${input.name}`));
-    const initData = encodeFunctionData({ abi: ctx.abis[c.id.split("@")[0]], functionName: "initialize", args });
-    return { id: stringToHex(c.id, { size: 32 }), initData };
-  });
+  const grants = (items = []) => items.map((g) => ({
+    who: parseAddress(g.who), permissionId: permissionId(g.permission),
+  }));
+  const encodeComponent = (c, where) => {
+    if (!c) return { id: zeroHash, settings: "0x", permissions: [] };
+    const { settings } = ctx.meta[c.id];
+    const values = settings.map((s) => arg(s.type, c.args[s.name], `${where} ${s.name}`));
+    return {
+      id: stringToHex(c.id, { size: 32 }),
+      settings: encodeAbiParameters(settings.map(({ type }) => ({ type })), values),
+      permissions: grants(c.permissions),
+    };
+  };
   const params = {
-    components,
-    budget: ref(recipe.budget),
+    budget: encodeComponent(recipe.budget, "budget"),
     nodes: recipe.nodes.map((n, i) => ({
-      action: n.action === null ? zeroAddress : ref(n.action),
+      action: encodeComponent(n.action, `node ${i} action`),
       children: wrap(`node ${i} children`, () => numbers(n.children)),
-      splitter: n.splitter === null ? zeroAddress : ref(n.splitter),
-      skipWhenEmpty: false,
-      forwardSurplus: false,
+      splitter: encodeComponent(n.splitter, `node ${i} splitter`),
+      skipWhenEmpty: n.skipWhenEmpty ?? false,
+      forwardSurplus: n.forwardSurplus ?? false,
     })),
-    grants: recipe.grants.map((g, i) => ({
-      where: wrap(`grant ${i} where`, () => target(g.where)),
-      who: wrap(`grant ${i} who`, () => target(g.who)),
-      permissionId: permissionId(g.permission),
-    })),
+    pluginPermissions: grants(recipe.pluginPermissions),
   };
   return encodeAbiParameters([ctx.installParams], [params]);
 }
@@ -306,8 +276,8 @@ export function describeError(e) {
   return e.message ?? String(e);
 }
 
-/** Prepares the installation through Aragon's PluginSetupProcessor, then executes the three
- *  proposal actions as the DAO (the playground account holds EXECUTE on it). */
+/** Prepares the installation through Aragon's PluginSetupProcessor, then executes the proposal's
+ *  actions as the DAO (the playground account holds EXECUTE on it). */
 export async function install(ctx, recipe) {
   const { dao, pluginRepo, pluginSetupProcessor: psp } = ctx.deployment;
   const data = encodeRecipe(ctx, recipe);
@@ -329,6 +299,11 @@ export async function install(ctx, recipe) {
     { to: psp, value: 0n, data: encodeFunctionData({ abi: ctx.abis.psp, functionName: "applyInstallation", args: [dao, apply] }) },
     { to: dao, value: 0n, data: encodeFunctionData({ abi: ctx.abis.dao, functionName: "revoke", args: [dao, psp, root] }) },
   ];
+  // A stream starts at its first checkpoint, so it didn't grow between preparing and applying
+  if (recipe.budget.id.startsWith("StreamBudget@")) {
+    const start = encodeFunctionData({ abi: ctx.abis.StreamBudget, functionName: "writeCheckpoint" });
+    actions.push({ to: prepared.helpers[0], value: 0n, data: start });
+  }
   await write(ctx, { address: dao, abi: ctx.abis.dao, functionName: "execute", args: [zeroHash, actions, 0n] });
   return plugin;
 }

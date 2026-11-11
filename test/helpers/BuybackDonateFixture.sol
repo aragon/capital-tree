@@ -29,6 +29,8 @@ abstract contract BuybackDonateFixture is Fixture {
         dao.applyMultiTargetPermissions(_prepared.permissions);
         plugin = CapitalTreePlugin(_plugin);
         budget = StreamBudget(_prepared.helpers[0]);
-        donation = VaultDonateAction(_prepared.helpers[2]);
+        vm.prank(address(dao));
+        budget.writeCheckpoint(); // the install proposal starts the stream
+        donation = VaultDonateAction(address(plugin.nodes()[2].action));
     }
 }

@@ -16,7 +16,6 @@ const KINDS = {
   KeepAction: "leaf",
 };
 const SETTERS = new Set(["StreamBudget", "OpenFillAction", "MerkleClaimBudget", "WeightSplitter"]);
-const HIDDEN = new Set(["dao", "budget"]); // always DAO_REF, and the flow's budget
 
 const nameOf = (id) => id.split("@")[0];
 const key = (inputName) => inputName.toLowerCase();
@@ -29,7 +28,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 /** The box's inner HTML. `df-<key>` inputs are bound by Drawflow to the box's data. */
 export function nodeHtml(id, meta) {
   const kind = kindOf(id);
-  const inputs = id === BRANCH ? [] : meta[id].initialize.inputs.filter((i) => !HIDDEN.has(i.name));
+  const inputs = id === BRANCH ? [] : meta[id].settings;
   const fields = inputs
     .map((i) => `<label title="${esc(i.description)}">${esc(i.name)}<input df-${key(i.name)}></label>`)
     .join("");
@@ -73,9 +72,9 @@ const connect = (boxes, from, to) => {
 
 /** A recipe (lib.templates format) as a laid-out graph */
 export function recipeToGraph(recipe, meta) {
-  const args = (c) => lowerKeys(Object.fromEntries(Object.entries(c.args).filter(([k]) => !HIDDEN.has(k))));
+  const args = (c) => lowerKeys(c.args);
   const children = recipe.nodes.map((n) => numbers(n.children));
-  const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(recipe.components[n.splitter].args.weights)));
+  const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(n.splitter.args.weights)));
 
   // Leaves take consecutive rows; a parent sits level with the middle of its children
   const row = [];
@@ -90,14 +89,14 @@ export function recipeToGraph(recipe, meta) {
   if (recipe.nodes.length) place(0, 0);
 
   const boxes = {};
-  const budget = recipe.components[recipe.budget];
+  const budget = recipe.budget;
   boxes[1] = box(1, budget.id, args(budget), meta, 40, 60 + (row[0] ?? 0) * 170);
   recipe.nodes.forEach((n, i) => {
-    const name = n.action === null ? BRANCH : recipe.components[n.action].id;
+    const name = n.action === null ? BRANCH : n.action.id;
     const parent = children.findIndex((list) => list.includes(i));
     const position = parent === -1 ? -1 : children[parent].indexOf(i);
     const share = parent !== -1 && weights[parent].length ? String(weights[parent][position]) : "1000000";
-    const data = { ...(n.action === null ? {} : args(recipe.components[n.action])), share };
+    const data = { ...(n.action === null ? {} : args(n.action)), share };
     boxes[i + 2] = box(i + 2, name, data, meta, 340 + depth[i] * 300, 60 + row[i] * 170);
   });
   if (recipe.nodes.length) connect(boxes, 1, 2);
@@ -136,62 +135,48 @@ export function graphToRecipe(graph, account, meta) {
 
   const position = new Map(order.map((b, i) => [b.id, i]));
   const component = (b) => {
-    const args = { dao: "DAO", budget: "ref(0)" };
-    for (const input of meta[b.name].initialize.inputs) {
-      if (!HIDDEN.has(input.name)) args[input.name] = b.data[key(input.name)] ?? "";
-    }
-    return { id: b.name, args };
+    const args = {};
+    for (const setting of meta[b.name].settings) args[setting.name] = b.data[key(setting.name)] ?? "";
+    return { id: b.name, args, permissions: [] };
   };
-  const components = [component(budget)];
-  const refs = new Map();
-  for (const b of order) {
-    if (b.name === BRANCH) continue;
-    refs.set(b.id, components.length);
-    components.push(component(b));
-  }
 
   const nodes = order.map((b) => {
     const list = kids(b);
     if (b.name === BRANCH && list.length < 2) throw new Error(`${label(b)} needs at least 2 children`);
-    // 2+ children split by their shares, through a WeightSplitter component listed after the actions
+    // Each branch declares its own WeightSplitter.
     let splitter = null;
     if (list.length >= 2) {
       const shares = list.map((k) => String(k.data.share ?? "").trim());
       const sum = shares.reduce((s, x) => s + (/^\d+$/.test(x) ? Number(x) : NaN), 0);
       if (sum !== 1_000_000) throw new Error(`The shares under ${label(b)} add up to ${shares.join(" + ")}, not 1,000,000`);
-      splitter = components.length;
-      components.push({ id: WEIGHT_SPLITTER, args: { dao: "DAO", weights: shares.join(", ") } });
+      splitter = { id: WEIGHT_SPLITTER, args: { weights: shares.join(", ") }, permissions: [] };
     }
     return {
-      action: b.name === BRANCH ? null : refs.get(b.id),
+      action: b.name === BRANCH ? null : component(b),
       children: list.map((k) => position.get(k.id)).join(", "),
       splitter,
     };
   });
 
-  return { components, budget: 0, nodes, grants: suggestGrants(components, account) };
+  const recipe = { budget: component(budget), nodes, pluginPermissions: [] };
+  suggestGrants(recipe, account);
+  return recipe;
 }
 
-/** The permissions a recipe of these components needs (the same rules as script/Recipes.sol) */
-export function suggestGrants(components, manager) {
-  const grants = [
-    { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-    { where: "PLUGIN", who: manager, permission: "PAUSE" },
+/** Attach the permissions used by the built-in recipes to their target declarations. */
+export function suggestGrants(recipe, manager) {
+  const manage = (c) => {
+    if (c) c.permissions = SETTERS.has(nameOf(c.id)) ? [{ who: manager, permission: "SET_SETTINGS" }] : [];
+  };
+  recipe.pluginPermissions = [
+    { who: "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF", permission: "TRIGGER" },
+    { who: manager, permission: "PAUSE" },
   ];
-  components.forEach((c, i) => {
-    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `ref(${i})`, who: manager, permission: "SET_SETTINGS" });
-  });
-  components.forEach((c, i) => {
-    const name = nameOf(c.id);
-    if (name === "StreamBudget") {
-      grants.push({ where: `ref(${i})`, who: "DAO", permission: "CHECKPOINT" });
-      components.forEach((other, j) => {
-        if (nameOf(other.id) === "OpenFillAction") grants.push({ where: `ref(${i})`, who: `ref(${j})`, permission: "CHECKPOINT" });
-      });
-    }
-    if (name === "MerkleClaimBudget") grants.push({ where: `ref(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
-  });
-  return grants;
+  manage(recipe.budget);
+  for (const node of recipe.nodes) {
+    manage(node.action);
+    manage(node.splitter);
+  }
 }
 
 const numbers = (text) =>

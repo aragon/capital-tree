@@ -16,9 +16,11 @@ contract VaultDonateAction is LeafAction {
     error WrongAsset();
     error AssetsNotIncreased(uint256 expected, uint256 actual);
 
-    function initialize(IDAO _dao, IDonationVault _vault) external initializer {
+    /// @param _dao The DAO donating
+    /// @param _settings `abi.encode(IDonationVault vault)`: the trusted vault, whose asset must match the input token
+    function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);
-        vault = _vault;
+        vault = abi.decode(_settings, (IDonationVault));
     }
 
     function preconditions(address, bytes calldata, Asset calldata _input, Asset calldata)

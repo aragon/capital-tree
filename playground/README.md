@@ -28,7 +28,7 @@ Stopping the script stops the Anvil it started, and the fork's state goes with i
 | Status | See the block time and balances; advance time by an hour, a day or a week |
 | Create a recipe | Build the flow as a graph (below); save graphs in this browser; install into the DAO |
 | Installed flows | See every flow's budget and tree; fill, trigger or claim |
-| Components | Every registered component, with its `initialize` inputs |
+| Components | Every registered component, with its dependencies and settings |
 
 ## The graph editor
 
@@ -45,15 +45,27 @@ The shares under a box become a WeightSplitter component for it.
 | Branch | input, output | No action: splits its input by the children's shares |
 | Leaf | input | TransferAction, TransferToBeneficiaryAction, BurnAction, KeepAction |
 
-The preview shows the tree the graph turns into, or what's wrong with it. Component order and
-`ref(i)` come from the graph (budget first, then actions breadth first, then one WeightSplitter
-per box with 2+ children), and the permissions are suggested
-from it with the same rules as `script/Recipes.sol`: TRIGGER for anyone, PAUSE for you on the
-plugin, SET_SETTINGS for you on components with settings, CHECKPOINT on a stream for the DAO and its OpenFill,
-RECORD_CLAIM on a Merkle claim for the DAO.
+The preview shows the tree and permissions. The budget is explicit, and each node declares its
+own action and splitter. Every declaration produces a fresh clone. Children are node indexes in
+breadth-first order. Permissions are attached to their target declaration: TRIGGER for anyone and
+PAUSE for you on the plugin; SET_SETTINGS for you on components with setters. The components add
+what they need to work themselves (CHECKPOINT for the DAO on a stream, RECORD_CLAIM for the DAO on a
+Merkle budget, CHECKPOINT for OpenFill on the stream), so the preview doesn't list those. Addresses
+such as the manager are actual addresses, not refs.
 
 Installing runs the real Aragon path: `PluginSetupProcessor.prepareInstallation`, then the DAO
-executes the proposal's three actions (grant ROOT, `applyInstallation`, revoke ROOT). The Merkle
-recipe uses a one-leaf tree for the first Anvil account, so claims need no proof.
+executes the proposal's actions (grant ROOT, `applyInstallation`, revoke ROOT, then `writeCheckpoint()`
+to start a stream budget). The Merkle recipe uses a one-leaf tree for the first Anvil account, so
+claims need no proof.
 
 The page loads viem from esm.sh and Drawflow from jsDelivr, so the browser needs internet access.
+
+## Recipe encoding checks
+
+```shell
+forge build
+npm --prefix playground ci
+npm --prefix playground test
+```
+
+These check the four templates, graph conversion, attached permission recipients, and the installation/uninstallation metadata against the compiled Solidity ABI.

@@ -10,8 +10,9 @@ import {
 import {INodeAction} from "../interfaces/INodeAction.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
+import {IComponent} from "../interfaces/IComponent.sol";
 import {Asset} from "../lib/types.sol";
-import {SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title OpenFillAction
 /// @notice Take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input; the DAO
@@ -24,7 +25,7 @@ import {SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 ///      accumulated under the old demand at the new one.
 ///      `demandPerFill` is a minimum. On a node marked `forwardSurplus`, the children get everything
 ///      the filler sent; otherwise they get `demandPerFill` and the rest stays in the DAO.
-contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
+contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
     /// @inheritdoc INodeAction
     /// @dev The budget restarted when `demandPerFill` changes
     IBudget public budget;
@@ -62,13 +63,13 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     }
 
     /// @param _dao The DAO executing the fills
-    /// @param _budget The flow's budget; this action restarts it when the demand changes
-    /// @param _demandedToken The ERC20 token the DAO must receive back
-    /// @param _demandPerFill How much of the demanded token must come back per fill
-    function initialize(IDAO _dao, ICheckpointedBudget _budget, IERC20 _demandedToken, uint256 _demandPerFill)
-        external
-        initializer
-    {
+    /// @param _deps `[budget]`: the flow's budget, which this action restarts when the demand changes
+    /// @param _settings `abi.encode(IERC20 demandedToken, uint256 demandPerFill)`: the ERC20 token the
+    ///        DAO must receive back, and how much of it must come back per fill
+    function initialize(IDAO _dao, address[] calldata _deps, bytes calldata _settings) external initializer {
+        if (_deps.length != 1) revert WrongDependencyCount(1, _deps.length);
+        ICheckpointedBudget _budget = ICheckpointedBudget(_deps[0]);
+        (IERC20 _demandedToken, uint256 _demandPerFill) = abi.decode(_settings, (IERC20, uint256));
         if (address(_budget) == address(0)) revert NoBudget();
         if (address(_demandedToken).code.length == 0) revert InvalidToken();
         if (_demandedToken == _budget.token()) revert SameToken();
@@ -143,6 +144,18 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     function setDemandPerFill(uint256 _demandPerFill) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _setDemandPerFill(_demandPerFill);
         _restartAuction();
+    }
+
+    /// @inheritdoc IComponent
+    /// @dev Changing the demand restarts the budget with a checkpoint
+    function requiredPermissions(address, address, address _budget)
+        external
+        view
+        virtual
+        returns (Permission[] memory _permissions)
+    {
+        _permissions = new Permission[](1);
+        _permissions[0] = Permission(_budget, address(this), CHECKPOINT_PERMISSION_ID);
     }
 
     // Internal

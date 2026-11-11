@@ -113,7 +113,7 @@ contract MerkleClaimBudgetTest is Fixture {
     function test_RevertWhen_TokenHasNoCode() public {
         MerkleClaimBudget _merkle = MerkleClaimBudget(ProxyLib.deployMinimalProxy(address(new MerkleClaimBudget()), ""));
         vm.expectRevert(MerkleClaimBudget.InvalidToken.selector);
-        _merkle.initialize(dao, IERC20(address(0xBEEF)), bytes32(0));
+        _merkle.initialize(dao, _noDeps(), abi.encode(IERC20(address(0xBEEF)), bytes32(0)));
     }
 
     /// The payout fails, so the whole claim reverts

@@ -15,7 +15,8 @@ contract TransferToBeneficiaryAction is TransferBase {
     /// @notice Thrown when the node data names no beneficiary
     error NoBeneficiary();
 
-    function initialize(IDAO _dao) external initializer {
+    /// @param _dao The DAO the action works for. It takes no dependencies or settings.
+    function initialize(IDAO _dao, address[] calldata, bytes calldata) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);
     }
 

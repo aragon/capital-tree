@@ -192,11 +192,30 @@ xychart-beta
 | Call                                                    | Who                        | Effect                                                                                   |
 | ------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
 | `sync()`                                                | anyone                     | Carries the current amount forward and records the DAO balance. Never raises the amount. |
-| `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The plugin runs it through the DAO after every trigger.              |
+| `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The first call, in the install proposal, starts the stream. The plugin runs it through the DAO after every trigger. |
 | `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `SET_SETTINGS_PERMISSION_ID` | Sync first, so time already elapsed keeps the old values.                                |
 
 After a deposit the amount stays frozen until someone calls `sync()`: run a keeper, or add a
 `sync()` action wherever revenue enters the DAO.
+
+**Start.** Nothing accrues until the first checkpoint, so the stream doesn't grow while the
+installation is voted on. The install proposal starts it with `writeCheckpoint()` right after
+applying the installation. A proposal without that action installs a flow that pays nothing until
+a later checkpoint, never one with a backlog.
+
+**Pause.** Pausing the plugin doesn't stop the stream's clock. On unpause, what accrued while
+paused is available at once, up to the cap: in an auction, a filler takes it at the worst price.
+To resume from zero, unpause and call `writeCheckpoint()` in the same DAO proposal (the DAO holds
+CHECKPOINT, and can grant itself PAUSE).
+
+**Outflows by another path.** Only a `sync()` records a fall in the DAO balance. If another
+proposal or flow moves the token out and no sync follows, the curve keeps growing behind the live
+balance, and when funds come back the amount jumps to what accrued meanwhile, bounded by the
+balance seen at the last sync and by the cap. In an auction, a filler takes that jump at the worst
+price; an uncapped stream pays it at once. A sync when the funds come back doesn't undo it, so
+**every proposal that moves the stream's token out of the DAO must end with a `sync()` action.**
+The reverse is safe for the DAO: a sync while the balance is briefly low restarts the curve
+lower, which anyone can time to slow the stream but never to speed it up.
 
 #### BalanceBudget
 
@@ -214,7 +233,8 @@ raises the cumulative amounts for the next round.
 - **Available**: what the account is owed, so the tree can split it, swap it or take a fee before a
   `TransferToBeneficiaryAction` pays it out.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
-  rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
+  rolls back with the flow. The budget requires `RECORD_CLAIM_PERMISSION_ID` for the DAO, which the
+  setup grants.
 - **Settings**: `setRoot` (`SET_SETTINGS_PERMISSION_ID`). Whoever holds it can direct payouts up to the
   DAO's balance of the token.
 - **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
@@ -250,7 +270,7 @@ finds the trade worth it first calls `trigger()` and fills it.
   waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
 - **Settings**: `setDemandPerFill` (`SET_SETTINGS_PERMISSION_ID`) restarts the auction, so the action
-  needs `CHECKPOINT_PERMISSION_ID` on its budget. The stream's `setMaxBudget` moves the worst price:
+  requires `CHECKPOINT_PERMISSION_ID` on its budget, which the setup grants. The stream's `setMaxBudget` moves the worst price:
   raising the cap lowers it.
 
 ```mermaid
@@ -335,7 +355,7 @@ interface ISplitter {
 change with `setFlow`.
 
 A splitter is a component like any other (a clone bound to the DAO, registered in the
-`ComponentRegistry`, referenced as `ref(i)` in a recipe).
+`ComponentRegistry`, declared directly on the node that uses it).
 
 ## Example flows
 
@@ -404,9 +424,36 @@ flowchart LR
 
 ## Installation
 
-A recipe lists the components to clone (by registry id), the budget, the tree and the extra
-permissions. It names contracts that don't exist yet with placeholders: `DAO_REF`, `PLUGIN_REF`
-and `ref(i)` for the recipe's component `i`. The setup replaces them wherever they appear.
+A recipe declares one budget and a tree. Each node contains its own action and splitter
+(registry ID and ABI-encoded settings), plus child **node** indexes. Each declaration deploys a
+fresh clone: identical declarations never share state. ID zero means no action or splitter, and
+an absent declaration must have empty settings and permissions.
+
+Permissions sit beside the contract they target as `(who, permissionId)` pairs. Recipients are
+actual addresses; `pluginPermissions` targets the plugin. A recipe only grants who governs the
+flow. What each component needs to work, it names itself through
+`IComponent.requiredPermissions(dao, plugin, budget)`, and the setup grants that as declared: it
+trusts the registry's components. For example:
+
+```text
+budget: StreamBudget(settings)
+  permissions: manager → SET_SETTINGS
+nodes:
+  0: OpenFill(settings), children [1]
+     permissions: manager → SET_SETTINGS
+  1: Burn()
+pluginPermissions: anyone → TRIGGER, guardian → PAUSE
+```
+
+On top of these, the stream requires CHECKPOINT on itself for the DAO, which commits it, and OpenFill
+requires CHECKPOINT on the stream for itself, to restart it when the demand changes. A Merkle budget
+requires RECORD_CLAIM on itself for the DAO.
+
+The setup deploys the budget first, then each node's action and splitter. Every clone is initialized
+through `IComponent.initialize(dao, deps, settings)`. Actions receive `[flowBudget]`; actions that
+have no use for it ignore that argument. Budgets and splitters receive `[]`. Recipes cannot choose
+another initializer, an arbitrary dependency, or an existing action/splitter address. A newly
+registered implementation can be used without changing the setup if it follows these interfaces.
 
 ```mermaid
 sequenceDiagram
@@ -418,29 +465,47 @@ sequenceDiagram
     participant Plugin as Plugin clone
 
     PSP->>Setup: prepareInstallation(dao, recipe)
-    Setup->>Plugin: clone the plugin
-    loop every component
+    Setup->>Plugin: clone the plugin (CREATE2, salted with the DAO and the recipe)
+    Setup->>Registry: implementation(recipe.budget.id)
+    Setup->>Clones: clone and initialize budget(dao, [], settings)
+    loop each node's action and splitter
         Setup->>Registry: implementation(id)
-        Setup->>Clones: clone it
+        Setup->>Clones: clone and initialize (actions receive [budget])
     end
-    loop every component, in recipe order
-        Setup->>Clones: initialize(init data with placeholders replaced)
-    end
-    Setup->>Plugin: initialize(dao, budget, nodes)
-    Setup-->>PSP: plugin, helpers = clones, permissions
-    Note over PSP: the DAO applies the installation and grants the permissions
+    Setup->>Plugin: initialize(dao, deployed budget, nodes with deployed addresses)
+    Setup->>Clones: requiredPermissions(dao, plugin, budget)
+    Setup-->>PSP: plugin, helpers = clones, recipe and required permissions
+    Note over PSP: the DAO applies the installation, which grants the permissions, then starts a stream budget
 ```
 
-Every component is a fresh clone bound to the installing DAO; the plugin rejects any other.
-Initialize order matters: list a component after the ones its initializer checks (OpenFill reads
-its budget's token, so the budget comes first).
+Every component is a fresh clone bound to the installing DAO. The setup returns Aragon's flat
+`helpers` array in deployment order: budget first, then each node's action and splitter, skipping
+absent declarations. Recipe authors do not maintain helper indexes.
 
-Preparing is permissionless and installs nothing. The DAO installs the flow by executing three
+Uninstallation takes `abi.encode(originalPermissions)`: the complete concrete
+`PermissionLib.MultiTargetPermission[]` returned at preparation (also emitted by the processor),
+including EXECUTE and CONFIGURE. Setup verifies its stored hash and returns the same entries with
+operation Revoke. It does not reconstruct permissions from the recipe or the current tree.
+
+This recipe ABI replaces the component-array format: old encoded recipes must be rebuilt. Old
+installations retain their original setup and uninstall format. Since CREATE2 includes the recipe
+bytes, the new encoding also changes predicted deployment addresses.
+
+Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times that DAO
+has prepared that recipe. The plugin address in a proposal therefore pins the recipe: someone who
+prepares a different recipe first, to front-run the proposal, gets a different address instead of
+the one the proposal names. Voters can check a proposal's plugin against the published recipe with
+the setup's `pluginAddress(dao, abi.encode(recipe), index)`, where `index` is 0 unless that DAO
+prepared the same recipe before.
+
+Preparing is permissionless and installs nothing. The DAO installs the flow by executing these
 actions in one proposal, which `script/Install.s.sol` prints:
 
 1. Grant `ROOT_PERMISSION_ID` on the DAO to the PluginSetupProcessor.
-2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions.
+2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions and the
+   ones the components require.
 3. Revoke that `ROOT_PERMISSION_ID`.
+4. When the budget is a `StreamBudget`, `writeCheckpoint()` on it, which starts the stream.
 
 Only the DAO itself can apply the installation.
 
@@ -452,7 +517,7 @@ Only the DAO itself can apply the installation.
 | `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
 | `PAUSE_PERMISSION_ID`        | guardian                   | `pause()`, `unpause()`                                        |
 | `SET_SETTINGS_PERMISSION_ID` | manager                    | stream setters, OpenFill `setDemandPerFill()`, Merkle `setRoot()`, weight splitter `setWeights()` |
-| `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | restarting the stream budget                                  |
+| `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | starting and restarting the stream budget                     |
 | `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
 | `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
 
@@ -505,7 +570,7 @@ flowchart LR
 | `script/Install.s.sol`                         | Prepares an installation from a config and prints the proposal's actions                                   |
 | `installs/`                                    | One example config per recipe                                                                              |
 | `metadata/release.json`, `metadata/build.json` | The plugin repo's release and build metadata                                                               |
-| `metadata/components/`                         | One JSON per component: name, description, `initialize` inputs                                             |
+| `metadata/components/`                         | One JSON per component: name, description, dependencies and settings                                       |
 | `metadata/uris.json`                           | The IPFS link of each metadata file, read by the deploy script                                             |
 
 ## Develop
@@ -590,5 +655,5 @@ just dry-run script/Install.s.sol:Install
 just run script/Install.s.sol:Install
 ```
 
-4. Put the three actions printed by the broadcast run in a DAO proposal. Once it executes, the
+4. Put the actions printed by the broadcast run in a DAO proposal. Once it executes, the
    flow is live: fillers can call `trigger()`, the manager can tune it and the guardian can pause it.

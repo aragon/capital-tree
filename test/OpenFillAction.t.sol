@@ -82,13 +82,13 @@ contract OpenFillActionTest is Fixture {
     function test_RevertWhen_DemandedTokenIsOfferedToken() public {
         OpenFillAction _action = _clone();
         vm.expectRevert(OpenFillAction.SameToken.selector);
-        _action.initialize(dao, budget, tokenA, DEMAND);
+        _action.initialize(dao, _deps(address(budget)), abi.encode(tokenA, DEMAND));
     }
 
     function test_RevertWhen_DemandedTokenHasNoCode() public {
         OpenFillAction _action = _clone();
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
-        _action.initialize(dao, budget, IERC20(address(0xBEEF)), DEMAND);
+        _action.initialize(dao, _deps(address(budget)), abi.encode(IERC20(address(0xBEEF)), DEMAND));
     }
 
     function test_RevertWhen_ZeroDemand() public {

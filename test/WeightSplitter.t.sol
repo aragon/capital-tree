@@ -77,7 +77,7 @@ contract WeightSplitterTest is Fixture {
 
     function test_RevertWhen_TheImplementationIsInitialized() public {
         vm.expectRevert();
-        WeightSplitter(implementation).initialize(dao, _pair(500_000, 500_000));
+        WeightSplitter(implementation).initialize(dao, _noDeps(), abi.encode(_pair(500_000, 500_000)));
     }
 
     // Changing the weights
@@ -131,7 +131,7 @@ contract WeightSplitterTest is Fixture {
     function _expectInitRevert(uint32[] memory _weights) internal {
         WeightSplitter _splitter = WeightSplitter(ProxyLib.deployMinimalProxy(implementation, ""));
         vm.expectRevert(WeightSplitter.InvalidWeights.selector);
-        _splitter.initialize(dao, _weights);
+        _splitter.initialize(dao, _noDeps(), abi.encode(_weights));
     }
 
     function _pair(uint32 _a, uint32 _b) internal pure returns (uint32[] memory _weights) {

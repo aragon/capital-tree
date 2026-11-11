@@ -2,10 +2,14 @@
   "name": "VaultDonateAction",
   "version": 1,
   "description": "Donates its input to an asset-backed vault, increasing total assets without minting shares.",
-  "initialize": {
-    "inputs": [
-      { "name": "dao", "type": "address", "internalType": "contract IDAO", "description": "The installing DAO. In a recipe: DAO_REF." },
-      { "name": "vault", "type": "address", "internalType": "contract IDonationVault", "description": "Trusted vault implementing donate(uint256), such as AvKATVault. Its asset must match the input token." }
-    ]
-  }
+  "dependencies": [],
+  "settings": [
+    {
+      "name": "vault",
+      "type": "address",
+      "internalType": "contract IDonationVault",
+      "description": "Trusted vault implementing donate(uint256), such as AvKATVault. Its asset must match the input token."
+    }
+  ],
+  "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."
 }

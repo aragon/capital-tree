@@ -148,6 +148,8 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     }
 
     /// @notice Resumes the flow
+    /// @dev A stream budget keeps accruing while paused and releases it here, up to its cap. To
+    ///      resume from zero, call its `writeCheckpoint()` in the same transaction.
     function unpause() external auth(PAUSE_PERMISSION_ID) {
         _unpause();
     }

@@ -12,12 +12,13 @@ import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {PluginSetupRef, hashHelpers} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessorHelpers.sol";
 import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {IDonationVault} from "../src/interfaces/IDonationVault.sol";
 import {Recipes} from "./Recipes.sol";
 
-/// @notice Prepares the installation of a flow described by a config file, and prints the three
-///         actions the DAO's proposal must execute: grant ROOT to Aragon's PluginSetupProcessor,
-///         apply the installation, revoke ROOT.
+/// @notice Prepares the installation of a flow described by a config file, and prints the actions
+///         the DAO's proposal must execute: grant ROOT to Aragon's PluginSetupProcessor, apply the
+///         installation, revoke ROOT and, when the budget is a stream, start it.
 /// @dev Run: `forge script script/Install.s.sol --rpc-url <rpc> --broadcast` with
 ///      - `INSTALL_CONFIG`: a file in `installs/` (see the examples there)
 ///      - `PLUGIN_SETUP_PROCESSOR_ADDRESS`: Aragon's processor on that network
@@ -54,19 +55,22 @@ contract Install is Script {
         returns (address plugin, Action[] memory actions)
     {
         PluginSetupRef memory _ref = PluginSetupRef(PluginRepo.Tag(1, 1), _repo);
+        CapitalTreePluginSetup.InstallParams memory _recipe = recipe(_config);
         IPluginSetup.PreparedSetupData memory _prepared;
-        (plugin, _prepared) = _psp.prepareInstallation(
-            _dao, PluginSetupProcessor.PrepareInstallationParams(_ref, abi.encode(recipe(_config)))
-        );
+        (plugin, _prepared) =
+            _psp.prepareInstallation(_dao, PluginSetupProcessor.PrepareInstallationParams(_ref, abi.encode(_recipe)));
 
         PluginSetupProcessor.ApplyInstallationParams memory _apply = PluginSetupProcessor.ApplyInstallationParams(
             _ref, plugin, _prepared.permissions, hashHelpers(_prepared.helpers)
         );
-        actions = new Action[](3);
+        bool _stream = _recipe.budget.id == Recipes.STREAM_BUDGET;
+        actions = new Action[](_stream ? 4 : 3);
         actions[0] = Action(_dao, 0, abi.encodeCall(PermissionManager.grant, (_dao, address(_psp), ROOT_PERMISSION_ID)));
         actions[1] = Action(address(_psp), 0, abi.encodeCall(PluginSetupProcessor.applyInstallation, (_dao, _apply)));
         actions[2] =
             Action(_dao, 0, abi.encodeCall(PermissionManager.revoke, (_dao, address(_psp), ROOT_PERMISSION_ID)));
+        // A stream starts at its first checkpoint, so it didn't grow while the proposal was voted on
+        if (_stream) actions[3] = Action(_prepared.helpers[0], 0, abi.encodeCall(StreamBudget.writeCheckpoint, ()));
     }
 
     /// @notice The recipe a config describes: `.recipe` names it, the other keys are its parameters

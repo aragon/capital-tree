@@ -19,26 +19,26 @@ contract NativeEthTest is Fixture {
     function test_RevertWhen_BalanceBudgetUsesNative() public {
         BalanceBudget _budget = BalanceBudget(ProxyLib.deployMinimalProxy(address(new BalanceBudget()), ""));
         vm.expectRevert(BalanceBudget.InvalidToken.selector);
-        _budget.initialize(dao, NATIVE);
+        _budget.initialize(dao, _noDeps(), abi.encode(NATIVE));
     }
 
     function test_RevertWhen_StreamUsesNative() public {
         StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
         vm.expectRevert(StreamBudget.InvalidToken.selector);
-        _budget.initialize(dao, NATIVE, RATE, 0, EPOCH);
+        _budget.initialize(dao, _noDeps(), abi.encode(NATIVE, RATE, 0, EPOCH));
     }
 
     function test_RevertWhen_TokenIsUnset() public {
         StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
         vm.expectRevert(StreamBudget.InvalidToken.selector);
-        _budget.initialize(dao, IERC20(address(0)), RATE, 0, EPOCH);
+        _budget.initialize(dao, _noDeps(), abi.encode(IERC20(address(0)), RATE, 0, EPOCH));
     }
 
     function test_RevertWhen_OpenFillDemandsNative() public {
         StreamBudget _budget = _deployBudget(RATE, 0);
         OpenFillAction _action = OpenFillAction(ProxyLib.deployMinimalProxy(address(new OpenFillAction()), ""));
         vm.expectRevert(OpenFillAction.InvalidToken.selector);
-        _action.initialize(dao, _budget, NATIVE, DEMAND);
+        _action.initialize(dao, _deps(address(_budget)), abi.encode(NATIVE, DEMAND));
     }
 
     function test_RevertWhen_NodeSendsEthWithoutSelector() public {

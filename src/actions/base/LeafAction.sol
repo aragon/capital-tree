@@ -6,12 +6,13 @@ import {
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {INodeAction} from "../../interfaces/INodeAction.sol";
 import {IBudget} from "../../interfaces/IBudget.sol";
+import {IComponent} from "../../interfaces/IComponent.sol";
 import {Asset} from "../../lib/types.sol";
 
 /// @title LeafAction
 /// @notice Base for leaves: actions that consume their whole input and output nothing. Not bound to
 ///         a budget, and without preconditions or postconditions unless a leaf adds them.
-abstract contract LeafAction is INodeAction, DaoAuthorizableUpgradeable {
+abstract contract LeafAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -30,6 +31,9 @@ abstract contract LeafAction is INodeAction, DaoAuthorizableUpgradeable {
 
     /// @inheritdoc INodeAction
     function postconditions(address, Asset calldata, Asset calldata, bytes calldata) external view virtual {}
+
+    /// @inheritdoc IComponent
+    function requiredPermissions(address, address, address) external pure returns (Permission[] memory) {}
 
     /// @dev What every leaf produces: nothing. It spends its whole input.
     function _consume(Asset calldata _input) internal pure returns (Asset memory) {

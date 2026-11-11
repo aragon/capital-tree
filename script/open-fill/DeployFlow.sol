@@ -50,16 +50,23 @@ abstract contract DeployFlow is Script {
         d.budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
                 address(new StreamBudget()),
-                abi.encodeCall(StreamBudget.initialize, (d.dao, sell, amount, amount, EPOCH))
+                abi.encodeCall(
+                    StreamBudget.initialize, (d.dao, new address[](0), abi.encode(sell, amount, amount, EPOCH))
+                )
             )
         );
+        address[] memory deps = new address[](1);
+        deps[0] = address(d.budget);
         d.action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
-                address(new OpenFillAction()), abi.encodeCall(OpenFillAction.initialize, (d.dao, d.budget, buy, demand))
+                address(new OpenFillAction()),
+                abi.encodeCall(OpenFillAction.initialize, (d.dao, deps, abi.encode(buy, demand)))
             )
         );
         KeepAction keep = KeepAction(
-            ProxyLib.deployMinimalProxy(address(new KeepAction()), abi.encodeCall(KeepAction.initialize, (d.dao)))
+            ProxyLib.deployMinimalProxy(
+                address(new KeepAction()), abi.encodeCall(KeepAction.initialize, (d.dao, new address[](0), ""))
+            )
         );
         Node[] memory nodes = new Node[](2);
         nodes[0].action = d.action;
@@ -81,5 +88,8 @@ abstract contract DeployFlow is Script {
         d.solver = new GenericFillSolver(operator, d.plugin);
         d.dao.grant(address(d.plugin), address(d.solver), TRIGGER_PERMISSION_ID);
         vm.stopPrank();
+
+        vm.prank(address(d.dao));
+        d.budget.writeCheckpoint(); // a stream starts at its first checkpoint
     }
 }
