@@ -3,7 +3,7 @@
   "change": "First version.",
   "pluginSetup": {
     "prepareInstallation": {
-      "description": "Deploy the budget, then each node's own action and splitter. Every declaration is a fresh clone. Setup supplies the flow budget to action initializers. Permission recipients are actual addresses, including the installing DAO.",
+      "description": "Deploy the budget, then each node's own action and splitter. Every declaration is a fresh clone. Setup supplies the flow budget to action initializers. Permission recipients are actual addresses; each component adds the permissions it requires. When the budget is a StreamBudget, the install proposal must also call writeCheckpoint() on it (the first helper) after applyInstallation: the stream accrues nothing until then.",
       "inputs": [
         {
           "name": "params",

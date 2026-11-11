@@ -7,7 +7,7 @@
     {
       "name": "to",
       "type": "address",
-      "description": "The recipient."
+      "description": "The recipient. Not address(0)."
     }
   ],
   "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."

@@ -1,4 +1,5 @@
 {
+  "_note": "Katana's USDC, KAT and avKAT vault. Replace the DAO, manager, guardian and fee recipient, and choose the auction terms. Amounts are in the token's smallest unit.",
   "recipe": "buybackAndDonate",
   "dao": "0x0000000000000000000000000000000000000001",
   "manager": "0x0000000000000000000000000000000000000002",

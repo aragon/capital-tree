@@ -47,16 +47,17 @@ increase, no retained fill proceeds, cleared allowances, and a committed budget.
 and 10 bps are covered using a test recipient, not a production Aragon wallet. The negative test injects a vault revert and
 checks that the real swap, fee payment, and budget changes roll back.
 
-At the pinned block, 10 USDC buys 2,995.360862202 KAT. With a 10 bps fee,
+At the pinned block, 10 USDC buys 2,995.360862201 KAT. With a 10 bps fee,
 Aragon receives approximately 2.995361 KAT and the vault receives the remaining
 2,992.365501 KAT. These are historical test results, not a current executable quote.
 
 ## Installation and configuration
 
 `Recipes.buybackAndDonate(manager, guardian, stream, swap, vault, feeRecipient, feeBps)` builds the
-installation recipe. `Install.s.sol` accepts `"recipe": "buybackAndDonate"`;
-`installs/buyback-and-donate.example.json` demonstrates the Katana configuration.
-Replace the DAO/manager/fee-recipient placeholders and choose fresh auction terms
+installation recipe. `Install.s.sol` accepts `"recipe": "buybackAndDonate"` and
+prints the proposal's four actions; the last, `writeCheckpoint()` on the stream,
+starts it. `installs/buyback-and-donate.example.json` demonstrates the Katana configuration.
+Replace the DAO/manager/guardian/fee-recipient placeholders and choose fresh auction terms
 before use. The fee recipient `0x0000000000000000000000000000000000000003` is
 explicitly a placeholder; Aragon's production Katana address has not been supplied.
 `fee.bps` is mandatory and positive: 1 = 0.01%, 10 = 0.1%. Zero and values of
@@ -66,14 +67,14 @@ The example's 2,900 KAT demand for up to 10 USDC is illustrative only.
 `Deploy.s.sol` registers `VaultDonateAction@1` with the other components. Populate
 its metadata URI alongside the other entries in `metadata/uris.json` before
 publishing a registry. Existing registries need the new implementation registered
-by their authorized manager before installing this recipe.
+by their managing DAO (`REGISTER_PERMISSION_ID`) before installing this recipe.
 
 The recipe has three nodes: OpenFill, fee transfer, and donation. A `WeightSplitter`
 divides the fill output. With `forwardSurplus` enabled, all received KAT after the
 fee goes to the vault; there is no hold branch or donation
 ratio setting. Pre-existing treasury KAT is not spent.
 
-The router allocates rounding dust to the largest branch at each split. For 1 bp
+The `WeightSplitter` gives the rounding dust to the largest weight. For 1 bp
 and 10 bps, the fee rounds down and the donation receives the dust. Choose
 a demand large enough that every configured child (including the fee) receives
 at least one raw token unit; zero-sized child inputs revert.
