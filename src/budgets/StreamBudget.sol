@@ -163,6 +163,18 @@ contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgrade
         _actions[0] = Action({to: address(this), value: 0, data: abi.encodeCall(this.writeCheckpoint, ())});
     }
 
+    /// @inheritdoc IComponent
+    /// @dev The DAO executes the commit, which writes a checkpoint
+    function requiredPermissions(address _dao, address, address)
+        external
+        view
+        virtual
+        returns (Permission[] memory _permissions)
+    {
+        _permissions = new Permission[](1);
+        _permissions[0] = Permission(address(this), _dao, CHECKPOINT_PERMISSION_ID);
+    }
+
     // Lifecycle
 
     /// @notice Carries the current amount forward and records the DAO balance

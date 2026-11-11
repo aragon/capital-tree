@@ -12,7 +12,7 @@ import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
 import {IComponent} from "../interfaces/IComponent.sol";
 import {Asset} from "../lib/types.sol";
-import {SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title OpenFillAction
 /// @notice Take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input; the DAO
@@ -144,6 +144,18 @@ contract OpenFillAction is INodeAction, IComponent, DaoAuthorizableUpgradeable {
     function setDemandPerFill(uint256 _demandPerFill) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _setDemandPerFill(_demandPerFill);
         _restartAuction();
+    }
+
+    /// @inheritdoc IComponent
+    /// @dev Changing the demand restarts the budget with a checkpoint
+    function requiredPermissions(address, address, address _budget)
+        external
+        view
+        virtual
+        returns (Permission[] memory _permissions)
+    {
+        _permissions = new Permission[](1);
+        _permissions[0] = Permission(_budget, address(this), CHECKPOINT_PERMISSION_ID);
     }
 
     // Internal

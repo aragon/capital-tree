@@ -19,6 +19,8 @@ contract CapSplitter is ISplitter, IComponent, DaoAuthorizableUpgradeable {
         cap = abi.decode(_settings, (uint256));
     }
 
+    function requiredPermissions(address, address, address) external pure returns (Permission[] memory) {}
+
     function split(address, Asset calldata _output, uint256) external view returns (uint256[] memory _amounts) {
         _amounts = new uint256[](2);
         _amounts[0] = _output.amount < cap ? _output.amount : cap;

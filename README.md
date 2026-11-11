@@ -233,7 +233,8 @@ raises the cumulative amounts for the next round.
 - **Available**: what the account is owed, so the tree can split it, swap it or take a fee before a
   `TransferToBeneficiaryAction` pays it out.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
-  rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
+  rolls back with the flow. The budget requires `RECORD_CLAIM_PERMISSION_ID` for the DAO, which the
+  setup grants.
 - **Settings**: `setRoot` (`SET_SETTINGS_PERMISSION_ID`). Whoever holds it can direct payouts up to the
   DAO's balance of the token.
 - **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
@@ -269,7 +270,7 @@ finds the trade worth it first calls `trigger()` and fills it.
   waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
 - **Settings**: `setDemandPerFill` (`SET_SETTINGS_PERMISSION_ID`) restarts the auction, so the action
-  needs `CHECKPOINT_PERMISSION_ID` on its budget. The stream's `setMaxBudget` moves the worst price:
+  requires `CHECKPOINT_PERMISSION_ID` on its budget, which the setup grants. The stream's `setMaxBudget` moves the worst price:
   raising the cap lowers it.
 
 ```mermaid
@@ -426,22 +427,27 @@ flowchart LR
 A recipe declares one budget and a tree. Each node contains its own action and splitter
 (registry ID and ABI-encoded settings), plus child **node** indexes. Each declaration deploys a
 fresh clone: identical declarations never share state. ID zero means no action or splitter, and
-an absent declaration must have empty settings and permission arrays.
+an absent declaration must have empty settings and permissions.
 
 Permissions sit beside the contract they target as `(who, permissionId)` pairs. Recipients are
-actual addresses, including the installing DAO; `pluginPermissions` targets the plugin. An action's
-`budgetPermissions` lists permissions to grant that action on this flow's budget. For example:
+actual addresses; `pluginPermissions` targets the plugin. A recipe only grants who governs the
+flow. What each component needs to work, it names itself through
+`IComponent.requiredPermissions(dao, plugin, budget)`, and the setup grants that as declared: it
+trusts the registry's components. For example:
 
 ```text
 budget: StreamBudget(settings)
-  permissions: manager → SET_SETTINGS, DAO → CHECKPOINT
+  permissions: manager → SET_SETTINGS
 nodes:
   0: OpenFill(settings), children [1]
      permissions: manager → SET_SETTINGS
-     budgetPermissions: CHECKPOINT
   1: Burn()
 pluginPermissions: anyone → TRIGGER, guardian → PAUSE
 ```
+
+On top of these, the stream requires CHECKPOINT on itself for the DAO, which commits it, and OpenFill
+requires CHECKPOINT on the stream for itself, to restart it when the demand changes. A Merkle budget
+requires RECORD_CLAIM on itself for the DAO.
 
 The setup deploys the budget first, then each node's action and splitter. Every clone is initialized
 through `IComponent.initialize(dao, deps, settings)`. Actions receive `[flowBudget]`; actions that
@@ -467,7 +473,8 @@ sequenceDiagram
         Setup->>Clones: clone and initialize (actions receive [budget])
     end
     Setup->>Plugin: initialize(dao, deployed budget, nodes with deployed addresses)
-    Setup-->>PSP: plugin, helpers = clones, permissions
+    Setup->>Clones: requiredPermissions(dao, plugin, budget)
+    Setup-->>PSP: plugin, helpers = clones, recipe and required permissions
     Note over PSP: the DAO applies the installation, which grants the permissions, then starts a stream budget
 ```
 
@@ -495,7 +502,8 @@ Preparing is permissionless and installs nothing. The DAO installs the flow by e
 actions in one proposal, which `script/Install.s.sol` prints:
 
 1. Grant `ROOT_PERMISSION_ID` on the DAO to the PluginSetupProcessor.
-2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions.
+2. `PluginSetupProcessor.applyInstallation(dao, ...)`, which grants the recipe's permissions and the
+   ones the components require.
 3. Revoke that `ROOT_PERMISSION_ID`.
 4. When the budget is a `StreamBudget`, `writeCheckpoint()` on it, which starts the stream.
 

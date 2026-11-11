@@ -32,7 +32,7 @@ test("install and uninstall metadata match the compiled ABI", async () => {
 for (const [name, recipe] of Object.entries(recipes)) {
   test(`${name}: graph conversion preserves the complete encoded recipe`, () => {
     const graph = recipeToGraph(recipe, meta);
-    const restored = graphToRecipe(graph, deployment.account, meta, deployment.dao);
+    const restored = graphToRecipe(graph, deployment.account, meta);
     assert.equal(encodeRecipe(ctx, restored), encodeRecipe(ctx, recipe));
   });
   test(`${name}: settings and actual permission recipients survive encoding`, () => {
@@ -50,15 +50,13 @@ for (const [name, recipe] of Object.entries(recipes)) {
       const values = decodeAbiParameters(params, component.settings);
       assert.equal(encodeAbiParameters(params, values), component.settings);
       for (const grant of component.permissions) {
-        assert.ok([deployment.account, deployment.dao].includes(grant.who));
+        assert.equal(grant.who, deployment.account);
+        assert.equal(grant.permissionId, permissionId("SET_SETTINGS"));
       }
     }
     assert.equal(decoded.pluginPermissions[0].who.toLowerCase(), ANY_ADDR.toLowerCase());
     assert.equal(decoded.pluginPermissions[0].permissionId, permissionId("TRIGGER"));
-    const daoPermission = decoded.budget.permissions.find((g) => g.who === deployment.dao);
-    assert.equal(daoPermission.permissionId, permissionId(name === "Merkle claim" ? "RECORD_CLAIM" : "CHECKPOINT"));
     const isSwap = name.startsWith("Buy");
-    assert.deepEqual(decoded.nodes[0].action.budgetPermissions, isSwap ? [permissionId("CHECKPOINT")] : []);
     if (isSwap) {
       const [token, demand] = decodeAbiParameters(meta["OpenFillAction@1"].settings, decoded.nodes[0].action.settings);
       assert.equal(token, deployment.tokenB);
@@ -91,7 +89,7 @@ test("two identical leaf declarations remain separate graph nodes", () => {
   const recipe = structuredClone(recipes.Payroll);
   recipe.nodes[2].action = structuredClone(recipe.nodes[1].action);
   const graph = recipeToGraph(recipe, meta);
-  const restored = graphToRecipe(graph, deployment.account, meta, deployment.dao);
+  const restored = graphToRecipe(graph, deployment.account, meta);
   assert.equal(restored.nodes.length, 3);
   assert.notEqual(restored.nodes[1].action, restored.nodes[2].action);
   assert.deepEqual(restored.nodes[1].action, restored.nodes[2].action);

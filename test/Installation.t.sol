@@ -151,36 +151,34 @@ contract InstallationTest is Fixture {
         Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND);
 
         assertEq(
-            abi.encode(installer.recipe(address(dao), _buyAndBurnConfig(STREAM_CAP))),
-            abi.encode(Recipes.buyAndBurn(address(dao), manager, guardian, _stream, _swap))
+            abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP))),
+            abi.encode(Recipes.buyAndBurn(manager, guardian, _stream, _swap))
         );
     }
 
     function test_EveryExampleConfigBuildsItsRecipe() public view {
-        assertEq(installer.recipe(address(dao), _example("buy-and-burn")).nodes.length, 2);
-        assertEq(installer.recipe(address(dao), _example("buyback")).nodes.length, 3);
-        CapitalTreePluginSetup.InstallParams memory _donate =
-            installer.recipe(address(dao), _example("buyback-and-donate"));
+        assertEq(installer.recipe(_example("buy-and-burn")).nodes.length, 2);
+        assertEq(installer.recipe(_example("buyback")).nodes.length, 3);
+        CapitalTreePluginSetup.InstallParams memory _donate = installer.recipe(_example("buyback-and-donate"));
         assertEq(_donate.budget.id, Recipes.STREAM_BUDGET);
         assertEq(_donate.nodes[2].action.id, Recipes.VAULT_DONATE);
         assertEq(_donate.nodes[1].action.id, Recipes.TRANSFER);
         assertEq(_donate.nodes[0].splitter.id, Recipes.WEIGHT_SPLITTER);
         assertEq(_donate.nodes.length, 3);
         assertTrue(_donate.nodes[0].forwardSurplus);
-        assertEq(installer.recipe(address(dao), _example("merkle-claim")).nodes.length, 1);
-        assertEq(installer.recipe(address(dao), _example("payroll")).nodes.length, 3);
+        assertEq(installer.recipe(_example("merkle-claim")).nodes.length, 1);
+        assertEq(installer.recipe(_example("payroll")).nodes.length, 3);
     }
 
     /// OpenFill has no cap of its own: without the stream's, an auction has no worst price
     function test_RevertWhen_AnAuctionStreamHasNoCap() public {
         vm.expectRevert(Recipes.UncappedStream.selector);
-        installer.recipe(address(dao), _buyAndBurnConfig(0));
+        installer.recipe(_buyAndBurnConfig(0));
     }
 
     function test_RevertWhen_TheRecipeIsUnknown() public {
         vm.expectRevert(abi.encodeWithSelector(Install.UnknownRecipe.selector, "swapEverything"));
         installer.recipe(
-            address(dao),
             string.concat(
                 '{"recipe":"swapEverything","manager":"0x0000000000000000000000000000000000000001",',
                 '"guardian":"0x0000000000000000000000000000000000000002"}'
@@ -194,7 +192,7 @@ contract InstallationTest is Fixture {
         (address _plugin, IPluginSetup.PreparedSetupData memory _prepared) = psp.prepareInstallation(
             address(dao),
             PluginSetupProcessor.PrepareInstallationParams(
-                _ref, abi.encode(installer.recipe(address(dao), _buyAndBurnConfig(STREAM_CAP)))
+                _ref, abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP)))
             )
         );
         dao.grant(address(dao), address(psp), dao.ROOT_PERMISSION_ID());

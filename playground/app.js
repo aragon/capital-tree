@@ -98,7 +98,7 @@ function loadTemplate(name) {
 function updatePreview() {
   const preview = $("#preview");
   try {
-    recipe = graph.graphToRecipe(editor.export(), ctx.deployment.account, ctx.meta, ctx.deployment.dao);
+    recipe = graph.graphToRecipe(editor.export(), ctx.deployment.account, ctx.meta);
     const name = (c) => c.id.split("@")[0];
     const weights = (n) => (n.splitter === null ? [] : lib.numbers(n.splitter.args.weights));
     const nodes = recipe.nodes.map((n) => ({ ...n, children: lib.numbers(n.children), weights: weights(n) }));
@@ -111,15 +111,12 @@ function updatePreview() {
     grants("plugin", recipe.pluginPermissions);
     grants("budget", recipe.budget.permissions);
     recipe.nodes.forEach((n, i) => {
-      if (n.action) {
-        grants(`node ${i} action`, n.action.permissions);
-        for (const p of n.action.budgetPermissions ?? []) lines.push(`  ${p} on budget → node ${i} action`);
-      }
+      if (n.action) grants(`node ${i} action`, n.action.permissions);
       if (n.splitter) grants(`node ${i} splitter`, n.splitter.permissions);
     });
     const bytes = (lib.encodeRecipe(ctx, recipe).length - 2) / 2;
     preview.className = "";
-    preview.textContent = `budget  ${name(recipe.budget)}\n${tree}\n\nPermissions (besides EXECUTE and CONFIGURE)\n${lines.join("\n")}\n\n${bytes} bytes of install data`;
+    preview.textContent = `budget  ${name(recipe.budget)}\n${tree}\n\nPermissions (besides EXECUTE, CONFIGURE and what the components require)\n${lines.join("\n")}\n\n${bytes} bytes of install data`;
     $("#install").disabled = false;
   } catch (e) {
     recipe = null;
