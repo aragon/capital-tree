@@ -190,7 +190,9 @@ contract CapitalTreePluginSetup is PluginSetup {
         bytes32 _salt,
         address[] memory _deployedContracts
     ) internal returns (Node[] memory _nodes) {
-        address _budget = _deployedContracts[0];
+        // The common initializer expects an array; every action receives the same budget.
+        address[] memory _budgetDependency = new address[](1);
+        _budgetDependency[0] = _deployedContracts[0];
         uint256 _nextContract = 1;
         uint256 len = _recipeNodes.length;
 
@@ -198,8 +200,8 @@ contract CapitalTreePluginSetup is PluginSetup {
         for (uint256 i; i < len; ++i) {
             RecipeNode memory _recipeNode = _recipeNodes[i];
 
-            // @agent do all of these need to be run if the node doesn't have an action nor splitter
-            _nodes[i].action = _deployAction(_dao, _recipeNode.action, _budget, _salt, _nextContract);
+            // These helpers validate absent declarations too, then return zero without deploying.
+            _nodes[i].action = _deployAction(_dao, _recipeNode.action, _budgetDependency, _salt, _nextContract);
             if (address(_nodes[i].action) != address(0)) {
                 _deployedContracts[_nextContract++] = address(_nodes[i].action);
             }
@@ -209,6 +211,7 @@ contract CapitalTreePluginSetup is PluginSetup {
                 _deployedContracts[_nextContract++] = address(_nodes[i].splitter);
             }
 
+            // Even a node without an action or splitter retains its tree fields.
             _nodes[i].children = _recipeNode.children;
             _nodes[i].skipWhenEmpty = _recipeNode.skipWhenEmpty;
             _nodes[i].forwardSurplus = _recipeNode.forwardSurplus;
@@ -218,21 +221,21 @@ contract CapitalTreePluginSetup is PluginSetup {
     /// @dev Checks the declaration, then deploys and initializes a present action with [budget].
     /// @param _dao Installing DAO
     /// @param _action Action declaration belonging to one node
-    /// @param _budget The already initialized flow budget
+    /// @param _budgetDependency One-element array containing the already initialized flow budget
     /// @param _salt This preparation's salt
     /// @param _index Position this contract will occupy in the deployed-contract array
     /// @return The action clone, or address zero for a valid absent declaration
-    // @agent I think we already extract the budget so why not pass to avoid inline dependencies declaration
-    function _deployAction(address _dao, Action memory _action, address _budget, bytes32 _salt, uint256 _index)
-        internal
-        returns (INodeAction)
-    {
+    function _deployAction(
+        address _dao,
+        Action memory _action,
+        address[] memory _budgetDependency,
+        bytes32 _salt,
+        uint256 _index
+    ) internal returns (INodeAction) {
         _checkActionDeclaration(_action);
         if (_action.id == bytes32(0)) return INodeAction(address(0));
 
-        address[] memory _dependencies = new address[](1);
-        _dependencies[0] = _budget;
-        return INodeAction(_clone(_dao, _action.id, _action.settings, _dependencies, _salt, _index));
+        return INodeAction(_clone(_dao, _action.id, _action.settings, _budgetDependency, _salt, _index));
     }
 
     /// @dev Checks the declaration, then deploys and initializes a present splitter with no dependencies.
@@ -317,8 +320,12 @@ contract CapitalTreePluginSetup is PluginSetup {
         _perms[0] = _grant(_dao, _plugin, EXECUTE_PERMISSION_ID);
         _perms[1] = _grant(_plugin, _dao, CONFIGURE_PERMISSION_ID);
 
-        // @agent what's going on hhere? we call this twice?
-        uint256 _next = _writeGrants(_perms, 2, _plugin, _recipe.pluginPermissions);
+        uint256 _next = 2; // EXECUTE and CONFIGURE already occupy the first two entries.
+
+        // Permissions on the plugin, such as PAUSE.
+        _next = _writeGrants(_perms, _next, _plugin, _recipe.pluginPermissions);
+
+        // Permissions on the budget, such as updating its rate.
         _next = _writeGrants(_perms, _next, _budget, _recipe.budget.permissions);
 
         for (uint256 i; i < _recipe.nodes.length; ++i) {
@@ -337,8 +344,9 @@ contract CapitalTreePluginSetup is PluginSetup {
     /// @param _recipe Installation recipe whose permission list will be allocated
     /// @return _count Exact length required by _permissions
     function _countPermissions(InstallParams memory _recipe) internal pure returns (uint256 _count) {
-        // @agent comment on the magic #
-        _count = 2 + _recipe.pluginPermissions.length + _recipe.budget.permissions.length;
+        _count = 2; // Plugin receives EXECUTE on the DAO; DAO receives CONFIGURE on the plugin.
+        _count += _recipe.pluginPermissions.length;
+        _count += _recipe.budget.permissions.length;
         for (uint256 i; i < _recipe.nodes.length; ++i) {
             _count += _recipe.nodes[i].action.permissions.length;
             _count += _recipe.nodes[i].splitter.permissions.length;
@@ -361,7 +369,7 @@ contract CapitalTreePluginSetup is PluginSetup {
     ) internal pure returns (uint256) {
         for (uint256 i; i < _grants.length; ++i) {
             Grant memory _g = _grants[i];
-            // @agent do we need this?
+            // Keep CONFIGURE out of recipe grants; setup grants it to the DAO on the plugin above.
             if (_g.permissionId == CONFIGURE_PERMISSION_ID) revert ReservedPermission(_g.permissionId);
             _perms[_next++] = _grant(_where, _g.who, _g.permissionId);
         }
