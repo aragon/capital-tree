@@ -418,7 +418,7 @@ sequenceDiagram
     participant Plugin as Plugin clone
 
     PSP->>Setup: prepareInstallation(dao, recipe)
-    Setup->>Plugin: clone the plugin
+    Setup->>Plugin: clone the plugin (CREATE2, salted with the DAO and the recipe)
     loop every component
         Setup->>Registry: implementation(id)
         Setup->>Clones: clone it
@@ -434,6 +434,13 @@ sequenceDiagram
 Every component is a fresh clone bound to the installing DAO; the plugin rejects any other.
 Initialize order matters: list a component after the ones its initializer checks (OpenFill reads
 its budget's token, so the budget comes first).
+
+Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times that DAO
+has prepared that recipe. The plugin address in a proposal therefore pins the recipe: someone who
+prepares a different recipe first, to front-run the proposal, gets a different address instead of
+the one the proposal names. Voters can check a proposal's plugin against the published recipe with
+the setup's `pluginAddress(dao, abi.encode(recipe), index)`, where `index` is 0 unless that DAO
+prepared the same recipe before.
 
 Preparing is permissionless and installs nothing. The DAO installs the flow by executing three
 actions in one proposal, which `script/Install.s.sol` prints:

@@ -11,6 +11,7 @@ import {PluginRepoRegistry} from "@aragon/osx/framework/plugin/repo/PluginRepoRe
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {ENSSubdomainRegistrar} from "@aragon/osx/framework/utils/ens/ENSSubdomainRegistrar.sol";
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Install} from "../script/Install.s.sol";
@@ -73,6 +74,25 @@ contract InstallationTest is Fixture {
         assertEq(tokenB.totalSupply(), _supply - DEMAND, "proceeds burned");
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
         assertFalse(dao.hasPermission(address(dao), address(psp), dao.ROOT_PERMISSION_ID(), ""), "ROOT revoked");
+    }
+
+    /// Someone who prepares another recipe first can't take the plugin address the proposal names
+    function test_FrontRunningThePreparationDoesNotChangeWhatTheProposalInstalls() public {
+        string memory _honest = _buyAndBurnConfig(STREAM_CAP);
+        uint256 _beforeSending = vm.snapshotState();
+        (address _printed, Action[] memory _actions) = installer.install(psp, repo, address(dao), _honest);
+        vm.revertToState(_beforeSending);
+
+        (address _attacker,) = installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP * 1000));
+        (address _plugin,) = installer.install(psp, repo, address(dao), _honest);
+        dao.grant(address(dao), address(dao), dao.ROOT_PERMISSION_ID());
+        dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID());
+        dao.execute(bytes32(0), _actions, 0);
+
+        assertEq(_plugin, _printed, "the honest plugin is where the proposal says");
+        assertTrue(dao.hasPermission(address(dao), _printed, dao.EXECUTE_PERMISSION_ID(), ""), "honest installed");
+        assertFalse(dao.hasPermission(address(dao), _attacker, dao.EXECUTE_PERMISSION_ID(), ""), "attacker not");
+        assertEq(StreamBudget(address(CapitalTreePlugin(_printed).budget())).maxBudget(), STREAM_CAP);
     }
 
     function test_RevertWhen_SomeoneElseAppliesTheInstallation() public {

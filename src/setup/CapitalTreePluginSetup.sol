@@ -2,11 +2,11 @@
 pragma solidity ^0.8.28;
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {PermissionLib} from "@aragon/osx-commons-contracts/src/permission/PermissionLib.sol";
 import {IPluginSetup} from "@aragon/osx-commons-contracts/src/plugin/setup/IPluginSetup.sol";
 import {PluginSetup} from "@aragon/osx-commons-contracts/src/plugin/setup/PluginSetup.sol";
-import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalTreePlugin} from "../CapitalTreePlugin.sol";
 import {ComponentRegistry} from "../registry/ComponentRegistry.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
@@ -24,6 +24,12 @@ import {DAO_INDEX, PLUGIN_INDEX, isPlaceholder} from "../lib/placeholders.sol";
 ///      and initialized in recipe order, so list a component after the ones its initializer
 ///      checks. The setup always grants EXECUTE (the plugin on the DAO) and CONFIGURE (the DAO on
 ///      the plugin); recipe grants may only target the plugin or its components, and never CONFIGURE.
+///
+///      Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times
+///      that DAO has prepared that recipe. The plugin address a proposal applies therefore pins
+///      the recipe: a different recipe, prepared first to front-run the proposal, lands at a
+///      different address instead of taking the one the proposal names. `pluginAddress` lets
+///      voters check the address against the published recipe.
 contract CapitalTreePluginSetup is PluginSetup {
     struct Component {
         bytes32 id;
@@ -59,6 +65,10 @@ contract CapitalTreePluginSetup is PluginSetup {
     /// @notice Hash of each installed plugin's recipe grants, so uninstalling revokes exactly them
     mapping(address plugin => bytes32) public grantsHash;
 
+    /// @notice How many times each DAO has prepared each recipe, by `keccak256(abi.encode(dao, keccak256(data)))`.
+    ///         Keeps every preparation's addresses unique, so the same recipe can be prepared again.
+    mapping(bytes32 daoRecipe => uint256) public preparations;
+
     error UnknownReference(uint256 index);
     error GrantOutsideInstallation(address where);
     error ReservedPermission(bytes32 permissionId);
@@ -75,9 +85,11 @@ contract CapitalTreePluginSetup is PluginSetup {
         returns (address plugin, PreparedSetupData memory preparedSetupData)
     {
         InstallParams memory _params = abi.decode(_data, (InstallParams));
+        bytes32 _daoRecipe = _daoRecipeKey(_dao, _data);
+        bytes32 _salt = _pluginSalt(_daoRecipe, preparations[_daoRecipe]++);
 
-        plugin = ProxyLib.deployMinimalProxy(implementation(), "");
-        Context memory _ctx = Context(_dao, plugin, _clone(_params.components));
+        plugin = Clones.cloneDeterministic(implementation(), _salt);
+        Context memory _ctx = Context(_dao, plugin, _clone(_params.components, _salt));
         for (uint256 i; i < _params.components.length; ++i) {
             Address.functionCall(_ctx.components[i], _resolveCall(_params.components[i].initData, _ctx));
         }
@@ -105,13 +117,29 @@ contract CapitalTreePluginSetup is PluginSetup {
         return _permissions(PermissionLib.Operation.Revoke, _grants, _ctx);
     }
 
+    /// @notice The plugin address of `_dao`'s `_index`-th preparation of `_data`, counting from 0
+    /// @param _data The recipe as passed to `prepareInstallation`: `abi.encode(InstallParams)`
+    function pluginAddress(address _dao, bytes calldata _data, uint256 _index) external view returns (address) {
+        return Clones.predictDeterministicAddress(implementation(), _pluginSalt(_daoRecipeKey(_dao, _data), _index));
+    }
+
     // Internal
 
-    function _clone(Component[] memory _components) internal returns (address[] memory _clones) {
+    /// @dev Component `i` is salted with the plugin's salt and its index
+    function _clone(Component[] memory _components, bytes32 _salt) internal returns (address[] memory _clones) {
         _clones = new address[](_components.length);
         for (uint256 i; i < _components.length; ++i) {
-            _clones[i] = ProxyLib.deployMinimalProxy(registry.implementation(_components[i].id), "");
+            _clones[i] =
+                Clones.cloneDeterministic(registry.implementation(_components[i].id), keccak256(abi.encode(_salt, i)));
         }
+    }
+
+    function _daoRecipeKey(address _dao, bytes calldata _data) internal pure returns (bytes32) {
+        return keccak256(abi.encode(_dao, keccak256(_data)));
+    }
+
+    function _pluginSalt(bytes32 _daoRecipe, uint256 _index) internal pure returns (bytes32) {
+        return keccak256(abi.encode(_daoRecipe, _index));
     }
 
     function _resolveNodes(Node[] memory _nodes, Context memory _ctx) internal pure returns (Node[] memory _resolved) {

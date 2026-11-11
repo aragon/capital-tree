@@ -162,6 +162,31 @@ contract CapitalTreePluginSetupTest is Fixture {
         assertTrue(_first[1] != registry.implementation(Recipes.OPEN_FILL), "never the implementation");
     }
 
+    /// A proposal names the plugin by address, so the address must pin the recipe
+    function test_PluginAddressComesFromTheDaoAndTheRecipe() public {
+        bytes memory _data = abi.encode(_buyback());
+
+        (CapitalTreePlugin _first,) = _install(_buyback());
+        (CapitalTreePlugin _second,) = _install(_buyback());
+
+        assertEq(address(_first), setup.pluginAddress(address(dao), _data, 0), "first preparation");
+        assertEq(address(_second), setup.pluginAddress(address(dao), _data, 1), "second preparation");
+        assertEq(setup.preparations(keccak256(abi.encode(address(dao), keccak256(_data)))), 2);
+    }
+
+    /// A recipe of the same shape with another fee recipient, prepared first, lands elsewhere
+    function test_AnotherRecipeCantTakeTheRecipesAddress() public {
+        address _expected = setup.pluginAddress(address(dao), abi.encode(_buyback()), 0);
+
+        CapitalTreePluginSetup.InstallParams memory _other =
+            Recipes.buyback(manager, guardian, _stream(), _swap(), alice, 50_000);
+        (CapitalTreePlugin _attacker,) = _install(_other);
+        (CapitalTreePlugin _plugin,) = _install(_buyback());
+
+        assertTrue(address(_attacker) != _expected, "the other recipe lands elsewhere");
+        assertEq(address(_plugin), _expected, "the recipe keeps its address");
+    }
+
     function test_GrantsTheRecipePermissions() public {
         (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
 
