@@ -3,199 +3,226 @@
   "change": "First version.",
   "pluginSetup": {
     "prepareInstallation": {
-      "description": "A recipe (see script/Recipes.sol). It names its own components by their index in the components list.",
+      "description": "Deploy the budget, then each node's own action and splitter. Every declaration is a fresh clone. Setup supplies the flow budget to action initializers. Permission recipients are actual addresses, including the installing DAO.",
       "inputs": [
         {
           "name": "params",
           "type": "tuple",
           "internalType": "struct CapitalTreePluginSetup.InstallParams",
-          "description": "The recipe.",
           "components": [
             {
-              "name": "components",
-              "type": "tuple[]",
-              "internalType": "struct CapitalTreePluginSetup.Component[]",
-              "description": "Components to clone, initialized in this order with the installing DAO, their dependencies and their settings. The first one is the flow's budget.",
+              "name": "budget",
+              "type": "tuple",
+              "internalType": "struct CapitalTreePluginSetup.Component",
               "components": [
                 {
                   "name": "id",
                   "type": "bytes32",
-                  "description": "Registry id, e.g. \"OpenFillAction@1\"."
-                },
-                {
-                  "name": "deps",
-                  "type": "uint256[]",
-                  "description": "Indexes of the earlier components it depends on, in the order its metadata lists them."
+                  "internalType": "bytes32",
+                  "description": "Registered implementation ID; zero is allowed only for an absent action or splitter."
                 },
                 {
                   "name": "settings",
                   "type": "bytes",
-                  "description": "Its settings, ABI-encoded as its metadata lists them."
+                  "internalType": "bytes",
+                  "description": "ABI-encoded settings as described in this component's metadata."
+                },
+                {
+                  "name": "permissions",
+                  "type": "tuple[]",
+                  "internalType": "struct CapitalTreePluginSetup.Grant[]",
+                  "components": [
+                    {
+                      "name": "who",
+                      "type": "address",
+                      "internalType": "address",
+                      "description": "Actual recipient address, including the DAO or ANY_ADDR. No placeholders."
+                    },
+                    {
+                      "name": "permissionId",
+                      "type": "bytes32",
+                      "internalType": "bytes32",
+                      "description": "Permission to grant. CONFIGURE is reserved for the DAO on the plugin."
+                    }
+                  ],
+                  "description": "Grants on this declaration's deployed contract."
                 }
-              ]
+              ],
+              "description": "The flow's budget. Its registry ID must be nonzero."
             },
             {
               "name": "nodes",
               "type": "tuple[]",
               "internalType": "struct CapitalTreePluginSetup.RecipeNode[]",
-              "description": "The tree. Node 0 is the root.",
               "components": [
                 {
                   "name": "action",
-                  "type": "uint256",
-                  "description": "Index of an Action component, or type(uint256).max for a branch without an action."
+                  "type": "tuple",
+                  "internalType": "struct CapitalTreePluginSetup.Action",
+                  "components": [
+                    {
+                      "name": "id",
+                      "type": "bytes32",
+                      "internalType": "bytes32",
+                      "description": "Registered implementation ID; zero is allowed only for an absent action or splitter."
+                    },
+                    {
+                      "name": "settings",
+                      "type": "bytes",
+                      "internalType": "bytes",
+                      "description": "ABI-encoded settings as described in this component's metadata."
+                    },
+                    {
+                      "name": "permissions",
+                      "type": "tuple[]",
+                      "internalType": "struct CapitalTreePluginSetup.Grant[]",
+                      "components": [
+                        {
+                          "name": "who",
+                          "type": "address",
+                          "internalType": "address",
+                          "description": "Actual recipient address, including the DAO or ANY_ADDR. No placeholders."
+                        },
+                        {
+                          "name": "permissionId",
+                          "type": "bytes32",
+                          "internalType": "bytes32",
+                          "description": "Permission to grant. CONFIGURE is reserved for the DAO on the plugin."
+                        }
+                      ],
+                      "description": "Grants on this declaration's deployed contract."
+                    },
+                    {
+                      "name": "budgetPermissions",
+                      "type": "bytes32[]",
+                      "internalType": "bytes32[]",
+                      "description": "Permission IDs granted to this node's action on the flow budget."
+                    }
+                  ],
+                  "description": "Fresh action for this node. ID zero means absent; its settings and permission arrays must then be empty."
                 },
                 {
                   "name": "children",
                   "type": "uint32[]",
-                  "description": "Indexes of the child nodes, each greater than this node's."
+                  "internalType": "uint32[]",
+                  "description": "Child node indexes, each greater than its parent index."
                 },
                 {
                   "name": "splitter",
-                  "type": "uint256",
-                  "description": "Index of a Splitter component that divides the output among the children when there are 2+ (a WeightSplitter for fixed weights), or type(uint256).max otherwise."
+                  "type": "tuple",
+                  "internalType": "struct CapitalTreePluginSetup.Component",
+                  "components": [
+                    {
+                      "name": "id",
+                      "type": "bytes32",
+                      "internalType": "bytes32",
+                      "description": "Registered implementation ID; zero is allowed only for an absent action or splitter."
+                    },
+                    {
+                      "name": "settings",
+                      "type": "bytes",
+                      "internalType": "bytes",
+                      "description": "ABI-encoded settings as described in this component's metadata."
+                    },
+                    {
+                      "name": "permissions",
+                      "type": "tuple[]",
+                      "internalType": "struct CapitalTreePluginSetup.Grant[]",
+                      "components": [
+                        {
+                          "name": "who",
+                          "type": "address",
+                          "internalType": "address",
+                          "description": "Actual recipient address, including the DAO or ANY_ADDR. No placeholders."
+                        },
+                        {
+                          "name": "permissionId",
+                          "type": "bytes32",
+                          "internalType": "bytes32",
+                          "description": "Permission to grant. CONFIGURE is reserved for the DAO on the plugin."
+                        }
+                      ],
+                      "description": "Grants on this declaration's deployed contract."
+                    }
+                  ],
+                  "description": "Fresh splitter for this node. ID zero means absent; its settings and permission arrays must then be empty."
                 },
                 {
                   "name": "skipWhenEmpty",
                   "type": "bool",
-                  "description": "Skip this node and everything below it when it receives 0, instead of reverting. Never on the root."
+                  "internalType": "bool",
+                  "description": "Skip this node and its descendants when its input is zero. Never allowed on the root."
                 },
                 {
                   "name": "forwardSurplus",
                   "type": "bool",
-                  "description": "Give the children everything that arrived, not just the declared output. Off by default: anything above it stays in the DAO. Only on a node with an action and children. With one token, what arrived is the input plus the net change."
+                  "internalType": "bool",
+                  "description": "Forward all arriving output to children, including surplus."
                 }
-              ]
+              ],
+              "description": "Tree nodes. Each action and splitter declaration creates an isolated clone."
             },
             {
-              "name": "grants",
+              "name": "pluginPermissions",
               "type": "tuple[]",
               "internalType": "struct CapitalTreePluginSetup.Grant[]",
-              "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin or one of the recipe's components.",
               "components": [
                 {
-                  "name": "where",
-                  "type": "tuple",
-                  "internalType": "struct CapitalTreePluginSetup.Ref",
-                  "description": "The plugin or a component.",
-                  "components": [
-                    {
-                      "name": "kind",
-                      "type": "uint8",
-                      "internalType": "enum CapitalTreePluginSetup.RefKind",
-                      "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
-                    },
-                    {
-                      "name": "account",
-                      "type": "address",
-                      "description": "The address, for an Account."
-                    },
-                    {
-                      "name": "index",
-                      "type": "uint256",
-                      "description": "The recipe index, for a Component."
-                    }
-                  ]
-                },
-                {
                   "name": "who",
-                  "type": "tuple",
-                  "internalType": "struct CapitalTreePluginSetup.Ref",
-                  "description": "An account, the DAO, the plugin or a component.",
-                  "components": [
-                    {
-                      "name": "kind",
-                      "type": "uint8",
-                      "internalType": "enum CapitalTreePluginSetup.RefKind",
-                      "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
-                    },
-                    {
-                      "name": "account",
-                      "type": "address",
-                      "description": "The address, for an Account."
-                    },
-                    {
-                      "name": "index",
-                      "type": "uint256",
-                      "description": "The recipe index, for a Component."
-                    }
-                  ]
+                  "type": "address",
+                  "internalType": "address",
+                  "description": "Actual recipient address, including the DAO or ANY_ADDR. No placeholders."
                 },
                 {
                   "name": "permissionId",
                   "type": "bytes32",
-                  "description": "Any permission but CONFIGURE_PERMISSION_ID."
+                  "internalType": "bytes32",
+                  "description": "Permission to grant. CONFIGURE is reserved for the DAO on the plugin."
                 }
-              ]
+              ],
+              "description": "Grants on the deployed plugin, in addition to DAO-only CONFIGURE."
             }
-          ]
+          ],
+          "description": "One budget, nodes declaring fresh actions and splitters, and permissions attached to their targets. ID zero means no action or splitter."
         }
       ]
     },
     "prepareUpdate": {},
     "prepareUninstallation": {
-      "description": "The recipe's grants, exactly as installed. They are checked against a hash stored at installation.",
+      "description": "Revoke exactly the original concrete permissions, verified against the stored hash. No recipe references are resolved.",
       "inputs": [
         {
-          "name": "grants",
+          "name": "permissions",
           "type": "tuple[]",
-          "internalType": "struct CapitalTreePluginSetup.Grant[]",
-          "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin or one of the recipe's components.",
+          "internalType": "struct PermissionLib.MultiTargetPermission[]",
           "components": [
             {
+              "name": "operation",
+              "type": "uint8",
+              "internalType": "enum PermissionLib.Operation"
+            },
+            {
               "name": "where",
-              "type": "tuple",
-              "internalType": "struct CapitalTreePluginSetup.Ref",
-              "description": "The plugin or a component.",
-              "components": [
-                {
-                  "name": "kind",
-                  "type": "uint8",
-                  "internalType": "enum CapitalTreePluginSetup.RefKind",
-                  "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
-                },
-                {
-                  "name": "account",
-                  "type": "address",
-                  "description": "The address, for an Account."
-                },
-                {
-                  "name": "index",
-                  "type": "uint256",
-                  "description": "The recipe index, for a Component."
-                }
-              ]
+              "type": "address",
+              "internalType": "address"
             },
             {
               "name": "who",
-              "type": "tuple",
-              "internalType": "struct CapitalTreePluginSetup.Ref",
-              "description": "An account, the DAO, the plugin or a component.",
-              "components": [
-                {
-                  "name": "kind",
-                  "type": "uint8",
-                  "internalType": "enum CapitalTreePluginSetup.RefKind",
-                  "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
-                },
-                {
-                  "name": "account",
-                  "type": "address",
-                  "description": "The address, for an Account."
-                },
-                {
-                  "name": "index",
-                  "type": "uint256",
-                  "description": "The recipe index, for a Component."
-                }
-              ]
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "condition",
+              "type": "address",
+              "internalType": "address"
             },
             {
               "name": "permissionId",
               "type": "bytes32",
-              "description": "Any permission but CONFIGURE_PERMISSION_ID."
+              "internalType": "bytes32"
             }
-          ]
+          ],
+          "description": "The complete original Grant list returned during preparation, including EXECUTE and CONFIGURE. Supply it unchanged; setup verifies its hash then returns revocations."
         }
       ]
     }

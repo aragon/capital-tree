@@ -74,7 +74,7 @@ const connect = (boxes, from, to) => {
 export function recipeToGraph(recipe, meta) {
   const args = (c) => lowerKeys(c.args);
   const children = recipe.nodes.map((n) => numbers(n.children));
-  const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(recipe.components[n.splitter].args.weights)));
+  const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(n.splitter.args.weights)));
 
   // Leaves take consecutive rows; a parent sits level with the middle of its children
   const row = [];
@@ -89,14 +89,14 @@ export function recipeToGraph(recipe, meta) {
   if (recipe.nodes.length) place(0, 0);
 
   const boxes = {};
-  const budget = recipe.components[0];
+  const budget = recipe.budget;
   boxes[1] = box(1, budget.id, args(budget), meta, 40, 60 + (row[0] ?? 0) * 170);
   recipe.nodes.forEach((n, i) => {
-    const name = n.action === null ? BRANCH : recipe.components[n.action].id;
+    const name = n.action === null ? BRANCH : n.action.id;
     const parent = children.findIndex((list) => list.includes(i));
     const position = parent === -1 ? -1 : children[parent].indexOf(i);
     const share = parent !== -1 && weights[parent].length ? String(weights[parent][position]) : "1000000";
-    const data = { ...(n.action === null ? {} : args(recipe.components[n.action])), share };
+    const data = { ...(n.action === null ? {} : args(n.action)), share };
     boxes[i + 2] = box(i + 2, name, data, meta, 340 + depth[i] * 300, 60 + row[i] * 170);
   });
   if (recipe.nodes.length) connect(boxes, 1, 2);
@@ -105,7 +105,7 @@ export function recipeToGraph(recipe, meta) {
 }
 
 /** The recipe a graph describes; throws a readable error for anything that isn't a valid tree */
-export function graphToRecipe(graph, account, meta) {
+export function graphToRecipe(graph, account, meta, dao) {
   const data = graph.drawflow.Home.data;
   const all = Object.values(data);
   const label = (b) => `${b.name === BRANCH ? "Branch" : nameOf(b.name)} (box ${b.id})`;
@@ -137,65 +137,51 @@ export function graphToRecipe(graph, account, meta) {
   const component = (b) => {
     const args = {};
     for (const setting of meta[b.name].settings) args[setting.name] = b.data[key(setting.name)] ?? "";
-    // The only dependency any component has is the flow's budget, which is component 0
-    const deps = meta[b.name].dependencies.map((d) => {
-      if (d.kind !== "budget") throw new Error(`${label(b)} depends on a ${d.kind}, which the editor can't wire`);
-      return 0;
-    });
-    return { id: b.name, deps, args };
+    return { id: b.name, args, permissions: [] };
   };
-  const components = [component(budget)];
-  const refs = new Map();
-  for (const b of order) {
-    if (b.name === BRANCH) continue;
-    refs.set(b.id, components.length);
-    components.push(component(b));
-  }
 
   const nodes = order.map((b) => {
     const list = kids(b);
     if (b.name === BRANCH && list.length < 2) throw new Error(`${label(b)} needs at least 2 children`);
-    // 2+ children split by their shares, through a WeightSplitter component listed after the actions
+    // Each branch declares its own WeightSplitter.
     let splitter = null;
     if (list.length >= 2) {
       const shares = list.map((k) => String(k.data.share ?? "").trim());
       const sum = shares.reduce((s, x) => s + (/^\d+$/.test(x) ? Number(x) : NaN), 0);
       if (sum !== 1_000_000) throw new Error(`The shares under ${label(b)} add up to ${shares.join(" + ")}, not 1,000,000`);
-      splitter = components.length;
-      components.push({ id: WEIGHT_SPLITTER, deps: [], args: { weights: shares.join(", ") } });
+      splitter = { id: WEIGHT_SPLITTER, args: { weights: shares.join(", ") }, permissions: [] };
     }
     return {
-      action: b.name === BRANCH ? null : refs.get(b.id),
+      action: b.name === BRANCH ? null : component(b),
       children: list.map((k) => position.get(k.id)).join(", "),
       splitter,
     };
   });
 
-  return { components, nodes, grants: suggestGrants(components, account) };
+  const recipe = { budget: component(budget), nodes, pluginPermissions: [] };
+  suggestGrants(recipe, account, dao);
+  return recipe;
 }
 
-/** The permissions a recipe of these components needs (the same rules as script/Recipes.sol) */
-export function suggestGrants(components, manager) {
-  const grants = [
-    { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-    { where: "PLUGIN", who: manager, permission: "PAUSE" },
+/** Attach the permissions used by the built-in recipes to their target declarations. */
+export function suggestGrants(recipe, manager, dao) {
+  const manage = (c) => {
+    if (c) c.permissions = SETTERS.has(nameOf(c.id)) ? [{ who: manager, permission: "SET_SETTINGS" }] : [];
+  };
+  recipe.pluginPermissions = [
+    { who: "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF", permission: "TRIGGER" },
+    { who: manager, permission: "PAUSE" },
   ];
-  components.forEach((c, i) => {
-    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `component(${i})`, who: manager, permission: "SET_SETTINGS" });
-  });
-  components.forEach((c, i) => {
-    const name = nameOf(c.id);
-    if (name === "StreamBudget") {
-      grants.push({ where: `component(${i})`, who: "DAO", permission: "CHECKPOINT" });
-      components.forEach((other, j) => {
-        if (nameOf(other.id) === "OpenFillAction") {
-          grants.push({ where: `component(${i})`, who: `component(${j})`, permission: "CHECKPOINT" });
-        }
-      });
-    }
-    if (name === "MerkleClaimBudget") grants.push({ where: `component(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
-  });
-  return grants;
+  manage(recipe.budget);
+  const budgetName = nameOf(recipe.budget.id);
+  if (budgetName === "StreamBudget") recipe.budget.permissions.push({ who: dao, permission: "CHECKPOINT" });
+  if (budgetName === "MerkleClaimBudget") recipe.budget.permissions.push({ who: dao, permission: "RECORD_CLAIM" });
+  for (const node of recipe.nodes) {
+    manage(node.action);
+    manage(node.splitter);
+    if (node.action) node.action.budgetPermissions =
+      budgetName === "StreamBudget" && nameOf(node.action.id) === "OpenFillAction" ? ["CHECKPOINT"] : [];
+  }
 }
 
 const numbers = (text) =>

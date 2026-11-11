@@ -9,5 +9,6 @@
       "type": "address",
       "description": "The recipient."
     }
-  ]
+  ],
+  "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."
 }

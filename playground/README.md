@@ -45,12 +45,12 @@ The shares under a box become a WeightSplitter component for it.
 | Branch | input, output | No action: splits its input by the children's shares |
 | Leaf | input | TransferAction, TransferToBeneficiaryAction, BurnAction, KeepAction |
 
-The preview shows the tree the graph turns into, or what's wrong with it. Component order and
-indexes come from the graph (budget first, then actions breadth first, then one WeightSplitter
-per box with 2+ children; the permissions name them as `component(i)`), and the permissions are suggested
-from it with the same rules as `script/Recipes.sol`: TRIGGER for anyone, PAUSE for you on the
-plugin, SET_SETTINGS for you on components with settings, CHECKPOINT on a stream for the DAO and its OpenFill,
-RECORD_CLAIM on a Merkle claim for the DAO.
+The preview shows the tree and permissions. The budget is explicit, and each node declares its
+own action and splitter. Every declaration produces a fresh clone. Children are node indexes in
+breadth-first order. Permissions are attached to their target declaration: TRIGGER for anyone and
+PAUSE for you on the plugin; SET_SETTINGS for you on components with setters; CHECKPOINT for the
+DAO on a stream; RECORD_CLAIM for the DAO on a Merkle budget. OpenFill's `budgetPermissions` grants
+it CHECKPOINT on the stream. Addresses such as the DAO and manager are actual addresses, not refs.
 
 Installing runs the real Aragon path: `PluginSetupProcessor.prepareInstallation`, then the DAO
 executes the proposal's actions (grant ROOT, `applyInstallation`, revoke ROOT, then `writeCheckpoint()`
@@ -58,3 +58,14 @@ to start a stream budget). The Merkle recipe uses a one-leaf tree for the first 
 claims need no proof.
 
 The page loads viem from esm.sh and Drawflow from jsDelivr, so the browser needs internet access.
+
+## Recipe encoding checks
+
+```shell
+forge build
+npm --prefix playground ci
+npm --prefix playground test
+```
+
+These check the four templates, graph conversion, attached permission recipients, budget grants,
+and the installation/uninstallation metadata against the compiled Solidity ABI.

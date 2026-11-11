@@ -25,5 +25,6 @@
       "type": "uint256",
       "description": "Epoch duration in seconds."
     }
-  ]
+  ],
+  "initialization": "Setup supplies no dependencies."
 }

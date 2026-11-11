@@ -10,5 +10,6 @@
       "internalType": "contract IERC20",
       "description": "The token: an ERC20 (use WETH for ether). Native ETH isn't supported."
     }
-  ]
+  ],
+  "initialization": "Setup supplies no dependencies."
 }

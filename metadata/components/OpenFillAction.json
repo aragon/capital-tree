@@ -22,5 +22,6 @@
       "type": "uint256",
       "description": "How much of the demanded token must come back per fill."
     }
-  ]
+  ],
+  "initialization": "Setup supplies [flowBudget] as deps; this action uses it."
 }

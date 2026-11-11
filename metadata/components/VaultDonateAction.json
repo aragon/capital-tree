@@ -10,5 +10,6 @@
       "internalType": "contract IDonationVault",
       "description": "Trusted vault implementing donate(uint256), such as AvKATVault. Its asset must match the input token."
     }
-  ]
+  ],
+  "initialization": "Setup supplies [flowBudget] as deps; this action ignores it."
 }

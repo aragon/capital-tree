@@ -24,13 +24,14 @@ abstract contract BuybackDonateFixture is Fixture {
     ) internal {
         (, CapitalTreePluginSetup _setup) = new Deploy().deploy(dao, METADATA_URIS);
         (address _plugin, IPluginSetup.PreparedSetupData memory _prepared) = _setup.prepareInstallation(
-            address(dao), abi.encode(Recipes.buybackAndDonate(manager, guardian, _stream, _swap, _vault, fee, _feeBps))
+            address(dao),
+            abi.encode(Recipes.buybackAndDonate(address(dao), manager, guardian, _stream, _swap, _vault, fee, _feeBps))
         );
         dao.applyMultiTargetPermissions(_prepared.permissions);
         plugin = CapitalTreePlugin(_plugin);
         budget = StreamBudget(_prepared.helpers[0]);
         vm.prank(address(dao));
         budget.writeCheckpoint(); // the install proposal starts the stream
-        donation = VaultDonateAction(_prepared.helpers[2]);
+        donation = VaultDonateAction(address(plugin.nodes()[2].action));
     }
 }

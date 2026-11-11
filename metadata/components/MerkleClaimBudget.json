@@ -15,5 +15,6 @@
       "type": "bytes32",
       "description": "Merkle root of (account, cumulative amount) leaves, OpenZeppelin StandardMerkleTree format."
     }
-  ]
+  ],
+  "initialization": "Setup supplies no dependencies."
 }

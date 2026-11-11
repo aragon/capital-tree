@@ -10,6 +10,9 @@ import {PermissionLib} from "@aragon/osx-commons-contracts/src/permission/Permis
 import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {IComponent} from "../src/interfaces/IComponent.sol";
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
+import {IBudget} from "../src/interfaces/IBudget.sol";
+import {Node} from "../src/lib/types.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {ComponentRegistry} from "../src/registry/ComponentRegistry.sol";
 import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
@@ -27,6 +30,7 @@ import {MockFiller} from "./mocks/MockFiller.sol";
 import {CapSplitter} from "./mocks/MockSplitter.sol";
 
 contract CapitalTreePluginSetupTest is Fixture {
+    bytes internal installationPermissions;
     ComponentRegistry internal registry;
     CapitalTreePluginSetup internal setup;
 
@@ -40,7 +44,7 @@ contract CapitalTreePluginSetupTest is Fixture {
     // =========================================================================================
 
     function test_BuyAndBurnBurnsEverything() public {
-        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(manager, guardian, _stream(), _swap()));
+        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(address(dao), manager, guardian, _stream(), _swap()));
         MockFiller _filler = _newFiller(_plugin);
         uint256 _supply = tokenB.totalSupply();
 
@@ -82,8 +86,9 @@ contract CapitalTreePluginSetupTest is Fixture {
     function test_MerkleClaimPaysTheAccount() public {
         bytes32 _aliceLeaf = _leafHash(alice, 10 ether);
         bytes32 _bobLeaf = _leafHash(bob, 30 ether);
-        (CapitalTreePlugin _plugin,) =
-            _install(Recipes.merkleClaim(manager, guardian, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf)));
+        (CapitalTreePlugin _plugin,) = _install(
+            Recipes.merkleClaim(address(dao), manager, guardian, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf))
+        );
 
         bytes32[] memory _proof = new bytes32[](1);
         _proof[0] = _bobLeaf;
@@ -99,7 +104,7 @@ contract CapitalTreePluginSetupTest is Fixture {
 
     function test_PayrollPaysEachRecipient() public {
         (CapitalTreePlugin _plugin,) =
-            _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
+            _install(Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights()));
         vm.warp(block.timestamp + EPOCH);
 
         _plugin.trigger("", noData);
@@ -111,8 +116,8 @@ contract CapitalTreePluginSetupTest is Fixture {
     /// The recipe lets the manager change the shares
     function test_TheManagerChangesThePayrollWeights() public {
         (CapitalTreePlugin _plugin, address[] memory _helpers) =
-            _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
-        WeightSplitter _splitter = WeightSplitter(_helpers[3]);
+            _install(Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights()));
+        WeightSplitter _splitter = WeightSplitter(address(_plugin.nodes()[0].splitter));
         uint32[] memory _swapped = new uint32[](2);
         (_swapped[0], _swapped[1]) = (300_000, 700_000);
 
@@ -130,15 +135,17 @@ contract CapitalTreePluginSetupTest is Fixture {
         dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
         registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
         CapitalTreePluginSetup.InstallParams memory _params =
-            Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights());
-        _params.components[3] = CapitalTreePluginSetup.Component("CapSplitter@1", new uint256[](0), abi.encode(3 ether));
+            Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights());
+        _params.nodes[0].splitter = CapitalTreePluginSetup.Component(
+            "CapSplitter@1", abi.encode(3 ether), new CapitalTreePluginSetup.Grant[](0)
+        );
         _params.nodes[2].skipWhenEmpty = true;
 
         (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_params);
         vm.warp(block.timestamp + EPOCH);
         _plugin.trigger("", noData);
 
-        assertEq(address(_plugin.nodes()[0].splitter), _helpers[3]);
+        assertEq(address(_plugin.nodes()[0].splitter), _helpers[1]);
         assertTrue(_plugin.nodes()[2].skipWhenEmpty);
         assertEq(tokenA.balanceOf(alice), 3 ether);
         assertEq(tokenA.balanceOf(bob), RATE - 3 ether);
@@ -182,7 +189,7 @@ contract CapitalTreePluginSetupTest is Fixture {
         address _expected = setup.pluginAddress(address(dao), abi.encode(_buyback()), 0);
 
         CapitalTreePluginSetup.InstallParams memory _other =
-            Recipes.buyback(manager, guardian, _stream(), _swap(), alice, 50_000);
+            Recipes.buyback(address(dao), manager, guardian, _stream(), _swap(), alice, 50_000);
         (CapitalTreePlugin _attacker,) = _install(_other);
         (CapitalTreePlugin _plugin,) = _install(_buyback());
 
@@ -201,115 +208,167 @@ contract CapitalTreePluginSetupTest is Fixture {
     }
 
     function test_UninstallRevokesEverything() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_params);
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
+        PermissionLib.MultiTargetPermission[] memory _original =
+            abi.decode(installationPermissions, (PermissionLib.MultiTargetPermission[]));
+        assertEq(setup.permissionsHash(address(_plugin)), keccak256(installationPermissions));
+        dao.applyMultiTargetPermissions(_prepareUninstall(_plugin, _helpers, _original));
+        _assertPermissions(address(_plugin), _helpers, false);
+        assertFalse(dao.hasPermission(address(_plugin.nodes()[0].splitter), manager, SET_SETTINGS_PERMISSION_ID, ""));
+    }
 
-        dao.applyMultiTargetPermissions(_prepareUninstall(_plugin, _helpers, _params.grants));
-
+    function test_UninstallUsesOriginalPermissionsAfterFlowChanges() public {
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
+        Node[] memory _nodes = _plugin.nodes();
+        address _originalAction = address(_nodes[1].action);
+        _nodes[1].action = _deployKeep(dao);
+        IBudget _budget = _plugin.budget();
+        vm.prank(address(dao));
+        _plugin.setFlow(_budget, _nodes);
+        assertTrue(address(_plugin.nodes()[1].action) != _originalAction);
+        dao.applyMultiTargetPermissions(
+            _prepareUninstall(
+                _plugin, _helpers, abi.decode(installationPermissions, (PermissionLib.MultiTargetPermission[]))
+            )
+        );
         _assertPermissions(address(_plugin), _helpers, false);
     }
 
-    function test_RevertWhen_UninstallGrantsDiffer() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_params);
-        CapitalTreePluginSetup.Grant[] memory _fewer = new CapitalTreePluginSetup.Grant[](1);
-        _fewer[0] = _params.grants[0];
-
-        vm.expectRevert(CapitalTreePluginSetup.GrantsMismatch.selector);
-        _prepareUninstall(_plugin, _helpers, _fewer);
+    function test_RevertWhen_UninstallPermissionsAreAltered() public {
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
+        for (uint256 i; i < 7; ++i) {
+            PermissionLib.MultiTargetPermission[] memory _perms =
+                abi.decode(installationPermissions, (PermissionLib.MultiTargetPermission[]));
+            if (i == 0) _perms[0].where = alice;
+            if (i == 1) _perms[0].who = alice;
+            if (i == 2) _perms[0].permissionId = bytes32(0);
+            if (i == 3) _perms[0].operation = PermissionLib.Operation.Revoke;
+            if (i == 4) _perms[0].condition = alice;
+            if (i == 5) (_perms[0], _perms[1]) = (_perms[1], _perms[0]);
+            if (i == 6) _perms = new PermissionLib.MultiTargetPermission[](0);
+            vm.expectRevert(CapitalTreePluginSetup.PermissionsMismatch.selector);
+            _prepareUninstall(_plugin, _helpers, _perms);
+        }
     }
 
-    // =========================================================================================
+    function test_RevertWhen_UninstallNamesAnotherDao() public {
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
+        vm.expectRevert(CapitalTreePluginSetup.WrongDao.selector);
+        setup.prepareUninstallation(
+            alice, IPluginSetup.SetupPayload(address(_plugin), _helpers, installationPermissions)
+        );
+    }
+
+    function test_IdenticalDeclarationsCreateIsolatedActionsAndSplitters() public {
+        CapitalTreePluginSetup.InstallParams memory _params =
+            Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, alice), _weights());
+        CapitalTreePluginSetup.RecipeNode memory _leafNode = _params.nodes[1];
+        CapitalTreePluginSetup.Component memory _splitter = _params.nodes[0].splitter;
+        _params.nodes = new CapitalTreePluginSetup.RecipeNode[](7);
+        for (uint256 i; i < 3; ++i) {
+            _params.nodes[i].splitter = _splitter;
+            _params.nodes[i].children = new uint32[](2);
+            _params.nodes[i].children[0] = uint32(2 * i + 1);
+            _params.nodes[i].children[1] = uint32(2 * i + 2);
+        }
+        for (uint256 i = 3; i < 7; ++i) {
+            _params.nodes[i] = _leafNode;
+        }
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_params);
+        Node[] memory _nodes = _plugin.nodes();
+        assertEq(_helpers.length, 8);
+        assertTrue(address(_nodes[3].action) != address(_nodes[4].action));
+        assertTrue(address(_nodes[1].splitter) != address(_nodes[2].splitter));
+        uint32[] memory _changed = new uint32[](2);
+        (_changed[0], _changed[1]) = (500_000, 500_000);
+        vm.prank(manager);
+        WeightSplitter(address(_nodes[1].splitter)).setWeights(_changed);
+        assertEq(WeightSplitter(address(_nodes[2].splitter)).weights()[0], 950_000);
+        assertEq(WeightSplitter(address(_nodes[1].splitter)).weights()[0], 500_000);
+    }
+
+    function test_AllClonesAreInitializedAndOpenFillUsesTheFlowBudget() public {
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
+        assertEq(address(_plugin.nodes()[0].action.budget()), _helpers[0]);
+        for (uint256 i; i < _helpers.length; ++i) {
+            vm.expectRevert("Initializable: contract is already initialized");
+            IComponent(_helpers[i]).initialize(dao, new address[](0), "");
+        }
+    }
+
+    function test_ActionReceivesOnlyDeclaredBudgetPermissions() public {
+        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
+        _params.nodes[0].action.budgetPermissions = new bytes32[](0);
+        (CapitalTreePlugin _plugin,) = _install(_params);
+        address _action = address(_plugin.nodes()[0].action);
+        assertFalse(dao.hasPermission(address(_plugin.budget()), _action, CHECKPOINT_PERMISSION_ID, ""));
+        vm.prank(manager);
+        vm.expectRevert();
+        OpenFillAction(_action).setDemandPerFill(DEMAND * 2);
+    }
+
+    function test_GrantTargetsAreAlwaysInstallationContracts() public {
+        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
+        _params.nodes[1].action.permissions = new CapitalTreePluginSetup.Grant[](1);
+        _params.nodes[1].action.permissions[0] = CapitalTreePluginSetup.Grant(alice, dao.EXECUTE_PERMISSION_ID());
+        (CapitalTreePlugin _plugin,) = _install(_params);
+        assertTrue(dao.hasPermission(address(_plugin.nodes()[1].action), alice, dao.EXECUTE_PERMISSION_ID(), ""));
+        assertFalse(dao.hasPermission(address(dao), alice, dao.EXECUTE_PERMISSION_ID(), ""));
+    }
+
     // Rejected recipes
-    // =========================================================================================
 
     function test_RevertWhen_AComponentIsNotRegistered() public {
         CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.components[0].id = "Unknown@1";
-
+        _params.nodes[1].action.id = "Unknown@1";
         _expectInstallRevert(
             _params, abi.encodeWithSelector(ComponentRegistry.UnknownComponent.selector, bytes32("Unknown@1"))
         );
     }
 
-    function test_RevertWhen_AReferenceIsUnknown() public {
+    function test_RevertWhen_TheRecipeHasNoBudget() public {
         CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.nodes[1].action = 9;
-
-        _expectInstallRevert(_params, abi.encodeWithSelector(CapitalTreePluginSetup.UnknownReference.selector, 9));
+        _params.budget.id = bytes32(0);
+        _expectInstallRevert(_params, abi.encodeWithSelector(CapitalTreePluginSetup.MissingBudget.selector));
     }
 
-    /// Component 0 is the budget, so a recipe needs at least one component
-    function test_RevertWhen_TheRecipeHasNoComponents() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.components = new CapitalTreePluginSetup.Component[](0);
-
-        _expectInstallRevert(_params, abi.encodeWithSelector(CapitalTreePluginSetup.UnknownReference.selector, 0));
+    function test_RevertWhen_AnAbsentActionHasSettingsOrPermissions() public {
+        for (uint256 i; i < 3; ++i) {
+            CapitalTreePluginSetup.InstallParams memory _params =
+                Recipes.payroll(address(dao), manager, guardian, _stream(), _pair(alice, bob), _weights());
+            if (i == 0) _params.nodes[0].action.settings = hex"01";
+            if (i == 1) _params.nodes[0].action.permissions = new CapitalTreePluginSetup.Grant[](1);
+            if (i == 2) _params.nodes[0].action.budgetPermissions = new bytes32[](1);
+            _expectInstallRevert(
+                _params, abi.encodeWithSelector(CapitalTreePluginSetup.InvalidAbsentComponent.selector)
+            );
+        }
     }
 
-    /// Components are initialized in recipe order, so a dependency must already be initialized
-    function test_RevertWhen_AComponentDependsOnALaterOne() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.components[1].deps[0] = 2;
-
-        _expectInstallRevert(
-            _params, abi.encodeWithSelector(CapitalTreePluginSetup.DependencyNotEarlier.selector, 1, 2)
-        );
+    function test_RevertWhen_AnAbsentSplitterHasSettingsOrPermissions() public {
+        for (uint256 i; i < 2; ++i) {
+            CapitalTreePluginSetup.InstallParams memory _params = _buyback();
+            if (i == 0) _params.nodes[1].splitter.settings = hex"01";
+            if (i == 1) _params.nodes[1].splitter.permissions = new CapitalTreePluginSetup.Grant[](1);
+            _expectInstallRevert(
+                _params, abi.encodeWithSelector(CapitalTreePluginSetup.InvalidAbsentComponent.selector)
+            );
+        }
     }
 
-    function test_RevertWhen_AComponentDependsOnItself() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.components[1].deps[0] = 1;
-
-        _expectInstallRevert(
-            _params, abi.encodeWithSelector(CapitalTreePluginSetup.DependencyNotEarlier.selector, 1, 1)
-        );
-    }
-
-    function test_RevertWhen_OpenFillGetsNoBudget() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.components[1].deps = new uint256[](0);
-
-        _expectInstallRevert(_params, abi.encodeWithSelector(IComponent.WrongDependencyCount.selector, 1, 0));
-    }
-
-    function test_RevertWhen_AGrantTargetsTheDao() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.grants[0] = CapitalTreePluginSetup.Grant(
-            _ref(CapitalTreePluginSetup.RefKind.Dao), _accountRef(manager), keccak256("ROOT_PERMISSION")
-        );
-
-        _expectInstallRevert(
-            _params,
-            abi.encodeWithSelector(
-                CapitalTreePluginSetup.GrantOutsideInstallation.selector, CapitalTreePluginSetup.RefKind.Dao
-            )
-        );
-    }
-
-    function test_RevertWhen_AGrantTargetsAnOutsideContract() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.grants[0] = CapitalTreePluginSetup.Grant(
-            _accountRef(address(tokenA)), _accountRef(manager), SET_SETTINGS_PERMISSION_ID
-        );
-
-        _expectInstallRevert(
-            _params,
-            abi.encodeWithSelector(
-                CapitalTreePluginSetup.GrantOutsideInstallation.selector, CapitalTreePluginSetup.RefKind.Account
-            )
-        );
-    }
-
-    function test_RevertWhen_AGrantGivesConfigure() public {
-        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
-        _params.grants[1] = CapitalTreePluginSetup.Grant(
-            _ref(CapitalTreePluginSetup.RefKind.Plugin), _accountRef(manager), CONFIGURE_PERMISSION_ID
-        );
-
-        _expectInstallRevert(
-            _params, abi.encodeWithSelector(CapitalTreePluginSetup.ReservedPermission.selector, CONFIGURE_PERMISSION_ID)
-        );
+    function test_RevertWhen_AnyRecipeGrantGivesConfigure() public {
+        for (uint256 i; i < 5; ++i) {
+            CapitalTreePluginSetup.InstallParams memory _params = _buyback();
+            if (i == 0) _params.pluginPermissions[0].permissionId = CONFIGURE_PERMISSION_ID;
+            if (i == 1) _params.budget.permissions[0].permissionId = CONFIGURE_PERMISSION_ID;
+            if (i == 2) _params.nodes[0].action.permissions[0].permissionId = CONFIGURE_PERMISSION_ID;
+            if (i == 3) _params.nodes[0].splitter.permissions[0].permissionId = CONFIGURE_PERMISSION_ID;
+            if (i == 4) _params.nodes[0].action.budgetPermissions[0] = CONFIGURE_PERMISSION_ID;
+            _expectInstallRevert(
+                _params,
+                abi.encodeWithSelector(CapitalTreePluginSetup.ReservedPermission.selector, CONFIGURE_PERMISSION_ID)
+            );
+        }
     }
 
     // =========================================================================================
@@ -322,8 +381,9 @@ contract CapitalTreePluginSetupTest is Fixture {
     {
         (address _pluginAddress, IPluginSetup.PreparedSetupData memory _prepared) =
             setup.prepareInstallation(address(dao), abi.encode(_params));
+        installationPermissions = abi.encode(_prepared.permissions);
         dao.applyMultiTargetPermissions(_prepared.permissions);
-        if (_params.components[0].id == Recipes.STREAM_BUDGET) {
+        if (_params.budget.id == Recipes.STREAM_BUDGET) {
             vm.prank(address(dao));
             StreamBudget(_prepared.helpers[0]).writeCheckpoint(); // the install proposal starts the stream
         }
@@ -340,7 +400,7 @@ contract CapitalTreePluginSetupTest is Fixture {
     function _prepareUninstall(
         CapitalTreePlugin _plugin,
         address[] memory _helpers,
-        CapitalTreePluginSetup.Grant[] memory _grants
+        PermissionLib.MultiTargetPermission[] memory _grants
     ) internal view returns (PermissionLib.MultiTargetPermission[] memory) {
         return setup.prepareUninstallation(
             address(dao),
@@ -348,17 +408,9 @@ contract CapitalTreePluginSetupTest is Fixture {
         );
     }
 
-    function _ref(CapitalTreePluginSetup.RefKind _kind) internal pure returns (CapitalTreePluginSetup.Ref memory) {
-        return CapitalTreePluginSetup.Ref(_kind, address(0), 0);
-    }
-
-    function _accountRef(address _address) internal pure returns (CapitalTreePluginSetup.Ref memory) {
-        return CapitalTreePluginSetup.Ref(CapitalTreePluginSetup.RefKind.Account, _address, 0);
-    }
-
     /// @dev Swap 10 A for 1,000 B, then burn 95% and pay 5% to the fee address
     function _buyback() internal view returns (CapitalTreePluginSetup.InstallParams memory) {
-        return Recipes.buyback(manager, guardian, _stream(), _swap(), fee, 50_000);
+        return Recipes.buyback(address(dao), manager, guardian, _stream(), _swap(), fee, 50_000);
     }
 
     function _stream() internal view returns (Recipes.Stream memory) {
