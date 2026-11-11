@@ -448,11 +448,11 @@ Override network addresses in `.env` or an editable `.env.<network>` using the s
 
 ## Install a flow
 
-1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `buyback-and-donate`,
+1. Copy an example from `config/` (`buy-and-burn`, `buyback`, `buyback-and-donate`,
    `merkle-claim`, `payroll`) and fill in the DAO, the manager, the guardian, the tokens and the
    amounts (in the token's smallest unit). The manager changes the components' settings; the
    guardian pauses and unpauses the flow. They can be the same address.
-2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=installs/<yours>.json`
+2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=config/<yours>.json`
    and `PLUGIN_REPO=0x...` in `.env`, and configure `DEPLOYER_KEY` in `.env` or `vars`.
    `PLUGIN_SETUP_PROCESSOR_ADDRESS` comes from the selected network; override it using the same name.
 3. Simulate, then broadcast the preparation:

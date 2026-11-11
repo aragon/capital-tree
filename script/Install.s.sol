@@ -20,7 +20,7 @@ import {Recipes} from "./Recipes.sol";
 ///         the DAO's proposal must execute: grant ROOT to Aragon's PluginSetupProcessor, apply the
 ///         installation, revoke ROOT and, when the budget is a stream, start it.
 /// @dev Run: `forge script script/Install.s.sol --rpc-url <rpc> --broadcast` with
-///      - `INSTALL_CONFIG`: a file in `installs/` (see the examples there)
+///      - `INSTALL_CONFIG`: a file in `config/` (see the examples there)
 ///      - `PLUGIN_SETUP_PROCESSOR_ADDRESS`: Aragon's processor on that network
 ///      - `PLUGIN_REPO`: the plugin repo published by `Deploy.s.sol`
 ///      - `DEPLOYER_KEY`: signing key for the installation preparation

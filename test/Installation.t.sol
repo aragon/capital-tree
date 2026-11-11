@@ -250,6 +250,6 @@ contract InstallationTest is Fixture {
     }
 
     function _example(string memory _name) internal view returns (string memory) {
-        return vm.readFile(string.concat("installs/", _name, ".example.json"));
+        return vm.readFile(string.concat("config/", _name, ".example.json"));
     }
 }
