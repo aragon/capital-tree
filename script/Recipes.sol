@@ -11,6 +11,8 @@ import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferToBeneficiaryAction} from "../src/actions/TransferToBeneficiaryAction.sol";
 import {BurnAction} from "../src/actions/BurnAction.sol";
+import {VaultDonateAction} from "../src/actions/VaultDonateAction.sol";
+import {IDonationVault} from "../src/interfaces/IDonationVault.sol";
 import {WeightSplitter} from "../src/splitters/WeightSplitter.sol";
 import {IBudget, ICheckpointedBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
@@ -40,6 +42,11 @@ library Recipes {
     bytes32 internal constant BURN = "BurnAction@1";
     bytes32 internal constant KEEP = "KeepAction@1";
     bytes32 internal constant WEIGHT_SPLITTER = "WeightSplitter@1";
+
+    bytes32 internal constant VAULT_DONATE = "VaultDonateAction@1";
+
+    error InvalidFeeBps();
+    error InvalidFeeRecipient();
 
     address internal constant ANY_ADDR = address(type(uint160).max);
 
@@ -107,6 +114,54 @@ library Recipes {
         _params.nodes[0].splitter = ISplitter(ref(4));
         _params.nodes[1] = _leaf(2);
         _params.nodes[2] = _leaf(3);
+
+        _params.grants = _swapGrants(_manager, _guardian, 1);
+        _params.grants[6] = _grant(ref(4), _manager, SET_SETTINGS_PERMISSION_ID);
+    }
+
+    /// @notice Stream -> OpenFill -> fee, then donate all remaining proceeds.
+    ///         The stream cap sets the worst price. Surplus output is also split and donated.
+    ///         Components: 0 budget, 1 OpenFill, 2 Donate, 3 fee Transfer, 4 WeightSplitter.
+    function buybackAndDonate(
+        address _manager,
+        address _guardian,
+        Stream memory _stream,
+        Swap memory _swap,
+        IDonationVault _vault,
+        address _feeRecipient,
+        uint256 _feeBps
+    ) internal pure returns (CapitalTreePluginSetup.InstallParams memory _params) {
+        if (_feeBps == 0 || _feeBps >= 10_000) revert InvalidFeeBps();
+        if (_feeRecipient == address(0)) revert InvalidFeeRecipient();
+
+        _params.budget = IBudget(ref(0));
+        _params.components = new CapitalTreePluginSetup.Component[](5);
+
+        // stream budget -> open fill -> donate and collect fees
+        _params.components[0] = _cappedStreamBudget(_stream);
+        _params.components[1] = _openFill(_swap);
+        _params.components[2] =
+            _component(VAULT_DONATE, abi.encodeCall(VaultDonateAction.initialize, (IDAO(DAO_REF), _vault)));
+        _params.components[3] = _transfer(_feeRecipient);
+
+        // weights (split fee and rest)
+        uint32 _feeWeight = uint32(_feeBps * RATIO_BASE / 10_000);
+        uint32[] memory _weights = new uint32[](2);
+        (_weights[0], _weights[1]) = (_feeWeight, uint32(RATIO_BASE) - _feeWeight);
+        _params.components[4] = _weightSplitter(_weights);
+
+        // nodes
+        _params.nodes = new Node[](3);
+        _params.nodes[0].action = INodeAction(ref(1));
+        _params.nodes[0].forwardSurplus = true;
+
+        // openFill splits to 2 children based on weights above
+        _params.nodes[0].splitter = ISplitter(ref(4));
+        _params.nodes[0].children = new uint32[](2);
+        (_params.nodes[0].children[0], _params.nodes[0].children[1]) = (1, 2);
+
+        _params.nodes[1] = _leaf(3); // A failed donation also rolls back the fee.
+        _params.nodes[2] = _leaf(2);
 
         _params.grants = _swapGrants(_manager, _guardian, 1);
         _params.grants[6] = _grant(ref(4), _manager, SET_SETTINGS_PERMISSION_ID);
