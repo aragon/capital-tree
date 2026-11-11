@@ -448,7 +448,7 @@ contract RecipeGasTest is Fixture {
             _tree[1 + i] = _leaf(
                 INodeAction(
                     ProxyLib.deployMinimalProxy(
-                        _implementation, abi.encodeCall(TransferAction.initialize, (dao, _to[i]))
+                        _implementation, abi.encodeCall(TransferAction.initialize, (dao, _noDeps(), abi.encode(_to[i])))
                     )
                 )
             );

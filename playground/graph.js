@@ -16,7 +16,6 @@ const KINDS = {
   KeepAction: "leaf",
 };
 const SETTERS = new Set(["StreamBudget", "OpenFillAction", "MerkleClaimBudget", "WeightSplitter"]);
-const HIDDEN = new Set(["dao", "budget"]); // always DAO_REF, and the flow's budget
 
 const nameOf = (id) => id.split("@")[0];
 const key = (inputName) => inputName.toLowerCase();
@@ -29,7 +28,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 /** The box's inner HTML. `df-<key>` inputs are bound by Drawflow to the box's data. */
 export function nodeHtml(id, meta) {
   const kind = kindOf(id);
-  const inputs = id === BRANCH ? [] : meta[id].initialize.inputs.filter((i) => !HIDDEN.has(i.name));
+  const inputs = id === BRANCH ? [] : meta[id].settings;
   const fields = inputs
     .map((i) => `<label title="${esc(i.description)}">${esc(i.name)}<input df-${key(i.name)}></label>`)
     .join("");
@@ -73,7 +72,7 @@ const connect = (boxes, from, to) => {
 
 /** A recipe (lib.templates format) as a laid-out graph */
 export function recipeToGraph(recipe, meta) {
-  const args = (c) => lowerKeys(Object.fromEntries(Object.entries(c.args).filter(([k]) => !HIDDEN.has(k))));
+  const args = (c) => lowerKeys(c.args);
   const children = recipe.nodes.map((n) => numbers(n.children));
   const weights = recipe.nodes.map((n) => (n.splitter === null ? [] : numbers(recipe.components[n.splitter].args.weights)));
 
@@ -90,7 +89,7 @@ export function recipeToGraph(recipe, meta) {
   if (recipe.nodes.length) place(0, 0);
 
   const boxes = {};
-  const budget = recipe.components[recipe.budget];
+  const budget = recipe.components[0];
   boxes[1] = box(1, budget.id, args(budget), meta, 40, 60 + (row[0] ?? 0) * 170);
   recipe.nodes.forEach((n, i) => {
     const name = n.action === null ? BRANCH : recipe.components[n.action].id;
@@ -136,11 +135,14 @@ export function graphToRecipe(graph, account, meta) {
 
   const position = new Map(order.map((b, i) => [b.id, i]));
   const component = (b) => {
-    const args = { dao: "DAO", budget: "ref(0)" };
-    for (const input of meta[b.name].initialize.inputs) {
-      if (!HIDDEN.has(input.name)) args[input.name] = b.data[key(input.name)] ?? "";
-    }
-    return { id: b.name, args };
+    const args = {};
+    for (const setting of meta[b.name].settings) args[setting.name] = b.data[key(setting.name)] ?? "";
+    // The only dependency any component has is the flow's budget, which is component 0
+    const deps = meta[b.name].dependencies.map((d) => {
+      if (d.kind !== "budget") throw new Error(`${label(b)} depends on a ${d.kind}, which the editor can't wire`);
+      return 0;
+    });
+    return { id: b.name, deps, args };
   };
   const components = [component(budget)];
   const refs = new Map();
@@ -160,7 +162,7 @@ export function graphToRecipe(graph, account, meta) {
       const sum = shares.reduce((s, x) => s + (/^\d+$/.test(x) ? Number(x) : NaN), 0);
       if (sum !== 1_000_000) throw new Error(`The shares under ${label(b)} add up to ${shares.join(" + ")}, not 1,000,000`);
       splitter = components.length;
-      components.push({ id: WEIGHT_SPLITTER, args: { dao: "DAO", weights: shares.join(", ") } });
+      components.push({ id: WEIGHT_SPLITTER, deps: [], args: { weights: shares.join(", ") } });
     }
     return {
       action: b.name === BRANCH ? null : refs.get(b.id),
@@ -169,7 +171,7 @@ export function graphToRecipe(graph, account, meta) {
     };
   });
 
-  return { components, budget: 0, nodes, grants: suggestGrants(components, account) };
+  return { components, nodes, grants: suggestGrants(components, account) };
 }
 
 /** The permissions a recipe of these components needs (the same rules as script/Recipes.sol) */
@@ -179,17 +181,19 @@ export function suggestGrants(components, manager) {
     { where: "PLUGIN", who: manager, permission: "PAUSE" },
   ];
   components.forEach((c, i) => {
-    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `ref(${i})`, who: manager, permission: "SET_SETTINGS" });
+    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `component(${i})`, who: manager, permission: "SET_SETTINGS" });
   });
   components.forEach((c, i) => {
     const name = nameOf(c.id);
     if (name === "StreamBudget") {
-      grants.push({ where: `ref(${i})`, who: "DAO", permission: "CHECKPOINT" });
+      grants.push({ where: `component(${i})`, who: "DAO", permission: "CHECKPOINT" });
       components.forEach((other, j) => {
-        if (nameOf(other.id) === "OpenFillAction") grants.push({ where: `ref(${i})`, who: `ref(${j})`, permission: "CHECKPOINT" });
+        if (nameOf(other.id) === "OpenFillAction") {
+          grants.push({ where: `component(${i})`, who: `component(${j})`, permission: "CHECKPOINT" });
+        }
       });
     }
-    if (name === "MerkleClaimBudget") grants.push({ where: `ref(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
+    if (name === "MerkleClaimBudget") grants.push({ where: `component(${i})`, who: "DAO", permission: "RECORD_CLAIM" });
   });
   return grants;
 }

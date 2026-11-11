@@ -82,13 +82,15 @@ abstract contract Fixture is Test {
         tokenB.mint(address(dao), DAO_B);
 
         burn = BurnAction(
-            ProxyLib.deployMinimalProxy(address(new BurnAction()), abi.encodeCall(BurnAction.initialize, (dao)))
+            ProxyLib.deployMinimalProxy(
+                address(new BurnAction()), abi.encodeCall(BurnAction.initialize, (dao, _noDeps(), ""))
+            )
         );
         keep = _deployKeep(dao);
         toBeneficiary = TransferToBeneficiaryAction(
             ProxyLib.deployMinimalProxy(
                 address(new TransferToBeneficiaryAction()),
-                abi.encodeCall(TransferToBeneficiaryAction.initialize, (dao))
+                abi.encodeCall(TransferToBeneficiaryAction.initialize, (dao, _noDeps(), ""))
             )
         );
     }
@@ -105,7 +107,7 @@ abstract contract Fixture is Test {
         _budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
                 address(new StreamBudget()),
-                abi.encodeCall(StreamBudget.initialize, (dao, _token, _rate, _maxBudget, EPOCH))
+                abi.encodeCall(StreamBudget.initialize, (dao, _noDeps(), abi.encode(_token, _rate, _maxBudget, EPOCH)))
             )
         );
         dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
@@ -120,7 +122,8 @@ abstract contract Fixture is Test {
     function _deployBalanceBudget(IERC20 _token) internal returns (BalanceBudget _budget) {
         _budget = BalanceBudget(
             ProxyLib.deployMinimalProxy(
-                address(new BalanceBudget()), abi.encodeCall(BalanceBudget.initialize, (dao, _token))
+                address(new BalanceBudget()),
+                abi.encodeCall(BalanceBudget.initialize, (dao, _noDeps(), abi.encode(_token)))
             )
         );
     }
@@ -137,7 +140,7 @@ abstract contract Fixture is Test {
         _action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
                 address(new OpenFillAction()),
-                abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND))
+                abi.encodeCall(OpenFillAction.initialize, (dao, _deps(address(_budget)), abi.encode(_demanded, DEMAND)))
             )
         );
         dao.grant(address(_action), manager, SET_SETTINGS_PERMISSION_ID);
@@ -147,7 +150,8 @@ abstract contract Fixture is Test {
     function _deployMerkle(IERC20 _token, bytes32 _root) internal returns (MerkleClaimBudget _merkle) {
         _merkle = MerkleClaimBudget(
             ProxyLib.deployMinimalProxy(
-                address(new MerkleClaimBudget()), abi.encodeCall(MerkleClaimBudget.initialize, (dao, _token, _root))
+                address(new MerkleClaimBudget()),
+                abi.encodeCall(MerkleClaimBudget.initialize, (dao, _noDeps(), abi.encode(_token, _root)))
             )
         );
         dao.grant(address(_merkle), manager, SET_SETTINGS_PERMISSION_ID);
@@ -157,7 +161,8 @@ abstract contract Fixture is Test {
     function _deployTransfer(address _to) internal returns (TransferAction) {
         return TransferAction(
             ProxyLib.deployMinimalProxy(
-                address(new TransferAction()), abi.encodeCall(TransferAction.initialize, (dao, _to))
+                address(new TransferAction()),
+                abi.encodeCall(TransferAction.initialize, (dao, _noDeps(), abi.encode(_to)))
             )
         );
     }
@@ -165,7 +170,8 @@ abstract contract Fixture is Test {
     function _deployWeightSplitter(uint32[] memory _weights) internal returns (WeightSplitter) {
         return WeightSplitter(
             ProxyLib.deployMinimalProxy(
-                address(new WeightSplitter()), abi.encodeCall(WeightSplitter.initialize, (dao, _weights))
+                address(new WeightSplitter()),
+                abi.encodeCall(WeightSplitter.initialize, (dao, _noDeps(), abi.encode(_weights)))
             )
         );
     }
@@ -173,8 +179,21 @@ abstract contract Fixture is Test {
     /// @dev A keep leaf bound to `_dao` (another DAO's component when `_dao` isn't the test DAO)
     function _deployKeep(IDAO _dao) internal returns (KeepAction) {
         return KeepAction(
-            ProxyLib.deployMinimalProxy(address(new KeepAction()), abi.encodeCall(KeepAction.initialize, (_dao)))
+            ProxyLib.deployMinimalProxy(
+                address(new KeepAction()), abi.encodeCall(KeepAction.initialize, (_dao, _noDeps(), ""))
+            )
         );
+    }
+
+    /// @dev A component's dependencies when it has none
+    function _noDeps() internal pure returns (address[] memory) {
+        return new address[](0);
+    }
+
+    /// @dev A component's single dependency
+    function _deps(address _dependency) internal pure returns (address[] memory _addresses) {
+        _addresses = new address[](1);
+        _addresses[0] = _dependency;
     }
 
     // Plugin

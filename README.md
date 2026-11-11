@@ -335,7 +335,7 @@ interface ISplitter {
 change with `setFlow`.
 
 A splitter is a component like any other (a clone bound to the DAO, registered in the
-`ComponentRegistry`, referenced as `ref(i)` in a recipe).
+`ComponentRegistry`, named by its index in a recipe).
 
 ## Example flows
 
@@ -404,9 +404,16 @@ flowchart LR
 
 ## Installation
 
-A recipe lists the components to clone (by registry id), the budget, the tree and the extra
-permissions. It names contracts that don't exist yet with placeholders: `DAO_REF`, `PLUGIN_REF`
-and `ref(i)` for the recipe's component `i`. The setup replaces them wherever they appear.
+A recipe lists the components to clone (by registry id), the tree and the extra permissions. The
+first component is the flow's budget. The recipe names its own contracts by position: each node's
+action and splitter, a component's dependencies and the grants refer to components by their index
+in the recipe's component list, and `NONE` marks a node without an action or a splitter. A grant
+names the plugin, the DAO, one of the components or an outside account.
+
+Every component is initialized the same way, through `IComponent.initialize(dao, deps, settings)`:
+the installing DAO, the addresses of the earlier components it depends on (an OpenFill depends on
+its budget), and its own settings, ABI-encoded as its metadata file lists them. The tree only ever
+names the recipe's own clones.
 
 ```mermaid
 sequenceDiagram
@@ -424,16 +431,16 @@ sequenceDiagram
         Setup->>Clones: clone it
     end
     loop every component, in recipe order
-        Setup->>Clones: initialize(init data with placeholders replaced)
+        Setup->>Clones: initialize(dao, dependencies, settings)
     end
-    Setup->>Plugin: initialize(dao, budget, nodes)
+    Setup->>Plugin: initialize(dao, budget = component 0, nodes)
     Setup-->>PSP: plugin, helpers = clones, permissions
     Note over PSP: the DAO applies the installation and grants the permissions
 ```
 
 Every component is a fresh clone bound to the installing DAO; the plugin rejects any other.
-Initialize order matters: list a component after the ones its initializer checks (OpenFill reads
-its budget's token, so the budget comes first).
+Components are initialized in recipe order and may only depend on earlier ones (OpenFill reads its
+budget's token, so the budget comes first).
 
 Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times that DAO
 has prepared that recipe. The plugin address in a proposal therefore pins the recipe: someone who
@@ -512,7 +519,7 @@ flowchart LR
 | `script/Install.s.sol`                         | Prepares an installation from a config and prints the proposal's actions                                   |
 | `installs/`                                    | One example config per recipe                                                                              |
 | `metadata/release.json`, `metadata/build.json` | The plugin repo's release and build metadata                                                               |
-| `metadata/components/`                         | One JSON per component: name, description, `initialize` inputs                                             |
+| `metadata/components/`                         | One JSON per component: name, description, dependencies and settings                                       |
 | `metadata/uris.json`                           | The IPFS link of each metadata file, read by the deploy script                                             |
 
 ## Develop

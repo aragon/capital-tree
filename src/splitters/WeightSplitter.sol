@@ -6,6 +6,7 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
+import {IComponent} from "../interfaces/IComponent.sol";
 import {Asset} from "../lib/types.sol";
 import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 
@@ -13,7 +14,7 @@ import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 /// @notice Splits a branch's output by weights: one per child, in the node's child order, each
 ///         non-zero, summing to RATIO_BASE. The rounding remainder goes to the largest weight.
 ///         Holders of SET_SETTINGS_PERMISSION_ID can change them.
-contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
+contract WeightSplitter is ISplitter, IComponent, DaoAuthorizableUpgradeable {
     uint32[] internal _weights;
 
     event WeightsUpdated(uint32[] weights);
@@ -26,9 +27,11 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
         _disableInitializers();
     }
 
-    function initialize(IDAO _dao, uint32[] calldata _newWeights) external initializer {
+    /// @param _dao The DAO the splitter works for
+    /// @param _settings `abi.encode(uint32[] weights)`: one non-zero weight per child, summing to RATIO_BASE
+    function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
         __DaoAuthorizableUpgradeable_init(_dao);
-        _setWeights(_newWeights);
+        _setWeights(abi.decode(_settings, (uint32[])));
     }
 
     /// @notice Replaces the weights from the next trigger on
@@ -67,7 +70,7 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
         _amounts[_largest] += _output.amount - _assigned;
     }
 
-    function _setWeights(uint32[] calldata _newWeights) internal {
+    function _setWeights(uint32[] memory _newWeights) internal {
         if (_newWeights.length < 2) revert InvalidWeights();
         uint256 _sum;
         for (uint256 k; k < _newWeights.length; ++k) {

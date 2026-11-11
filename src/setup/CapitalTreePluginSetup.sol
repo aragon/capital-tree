@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.28;
 
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {PermissionLib} from "@aragon/osx-commons-contracts/src/permission/PermissionLib.sol";
@@ -10,20 +9,26 @@ import {PluginSetup} from "@aragon/osx-commons-contracts/src/plugin/setup/Plugin
 import {CapitalTreePlugin} from "../CapitalTreePlugin.sol";
 import {ComponentRegistry} from "../registry/ComponentRegistry.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
+import {IComponent} from "../interfaces/IComponent.sol";
 import {INodeAction} from "../interfaces/INodeAction.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
 import {Node} from "../lib/types.sol";
 import {CONFIGURE_PERMISSION_ID} from "../lib/constants.sol";
-import {DAO_INDEX, PLUGIN_INDEX, isPlaceholder} from "../lib/placeholders.sol";
+
+// A recipe node without an action or without a splitter
+uint256 constant NONE = type(uint256).max;
 
 /// @title CapitalTreePluginSetup
 /// @notice Installs any flow from a recipe: the components to clone (by registry id), the tree and
-///         the permissions. Recipes name contracts that don't exist yet with placeholders
-///         (`DAO_REF`, `PLUGIN_REF`, `ref(i)` for component i), which the setup replaces.
-/// @dev Every component is a fresh clone of a registered implementation. Clones are created first
-///      and initialized in recipe order, so list a component after the ones its initializer
-///      checks. The setup always grants EXECUTE (the plugin on the DAO) and CONFIGURE (the DAO on
-///      the plugin); recipe grants may only target the plugin or its components, and never CONFIGURE.
+///         the permissions. A recipe names its own contracts by position: component 0 is the
+///         budget, and each node's action and splitter, a component's dependencies and the grants
+///         refer to components by their index in the recipe.
+/// @dev Every component is a fresh clone of a registered implementation, initialized through
+///      `IComponent` with the installing DAO, the components it depends on and its own settings.
+///      Components are initialized in recipe order and may only depend on earlier ones. The tree
+///      only ever names the recipe's own clones.
+///      The setup always grants EXECUTE (the plugin on the DAO) and CONFIGURE (the DAO on the
+///      plugin); recipe grants may only target the plugin or its components, and never CONFIGURE.
 ///
 ///      Clone addresses are CREATE2 addresses salted with the DAO, the recipe and how many times
 ///      that DAO has prepared that recipe. The plugin address a proposal applies therefore pins
@@ -31,25 +36,58 @@ import {DAO_INDEX, PLUGIN_INDEX, isPlaceholder} from "../lib/placeholders.sol";
 ///      different address instead of taking the one the proposal names. `pluginAddress` lets
 ///      voters check the address against the published recipe.
 contract CapitalTreePluginSetup is PluginSetup {
+    /// @notice A component to clone
+    /// @param id Its registry id, e.g. "StreamBudget@1"
+    /// @param deps Indexes of the earlier components it depends on, passed to it as addresses in this order
+    /// @param settings Passed to its `initialize` as is, in the shape the component documents
     struct Component {
         bytes32 id;
-        bytes initData;
+        uint256[] deps;
+        bytes settings;
     }
 
+    /// @notice A node of the tree (see `Node`), naming its action and splitter by component index
+    /// @param action The Action component, or `NONE` on a branch that only splits
+    /// @param splitter The Splitter component when the node has 2+ children, `NONE` otherwise
+    struct RecipeNode {
+        uint256 action;
+        uint32[] children;
+        uint256 splitter;
+        bool skipWhenEmpty;
+        bool forwardSurplus;
+    }
+
+    /// @notice What a grant names: an address outside the installation, or one of its contracts
+    enum RefKind {
+        Account,
+        Dao,
+        Plugin,
+        Component
+    }
+
+    /// @param account The address, for `Account` (a manager, a guardian, ANY_ADDR)
+    /// @param index The recipe index, for `Component`
+    struct Ref {
+        RefKind kind;
+        address account;
+        uint256 index;
+    }
+
+    /// @param where The plugin or one of the recipe's components
     struct Grant {
-        address where;
-        address who;
+        Ref where;
+        Ref who;
         bytes32 permissionId;
     }
 
+    /// @param components The first one is the flow's budget
     struct InstallParams {
         Component[] components;
-        IBudget budget;
-        Node[] nodes;
+        RecipeNode[] nodes;
         Grant[] grants;
     }
 
-    /// @dev The addresses placeholders stand for
+    /// @dev The installation's addresses, which references resolve to
     struct Context {
         address dao;
         address plugin;
@@ -69,8 +107,13 @@ contract CapitalTreePluginSetup is PluginSetup {
     ///         Keeps every preparation's addresses unique, so the same recipe can be prepared again.
     mapping(bytes32 daoRecipe => uint256) public preparations;
 
+    /// @notice Thrown when a recipe refers to a component index it doesn't have
     error UnknownReference(uint256 index);
-    error GrantOutsideInstallation(address where);
+
+    /// @notice Thrown when a component depends on itself or on a later component
+    error DependencyNotEarlier(uint256 component, uint256 dependency);
+
+    error GrantOutsideInstallation(RefKind where);
     error ReservedPermission(bytes32 permissionId);
     error GrantsMismatch();
 
@@ -89,18 +132,19 @@ contract CapitalTreePluginSetup is PluginSetup {
         bytes32 _salt = _pluginSalt(_daoRecipe, preparations[_daoRecipe]++);
 
         plugin = Clones.cloneDeterministic(implementation(), _salt);
-        Context memory _ctx = Context(_dao, plugin, _clone(_params.components, _salt));
-        for (uint256 i; i < _params.components.length; ++i) {
-            Address.functionCall(_ctx.components[i], _resolveCall(_params.components[i].initData, _ctx));
+        address[] memory _components = _clone(_params.components, _salt);
+        for (uint256 i; i < _components.length; ++i) {
+            Component memory _component = _params.components[i];
+            IComponent(_components[i])
+                .initialize(IDAO(_dao), _dependencies(i, _component.deps, _components), _component.settings);
         }
         CapitalTreePlugin(plugin)
-            .initialize(
-                IDAO(_dao), IBudget(_resolve(address(_params.budget), _ctx)), _resolveNodes(_params.nodes, _ctx)
-            );
+            .initialize(IDAO(_dao), IBudget(_slot(0, _components)), _resolveNodes(_params.nodes, _components));
 
         grantsHash[plugin] = keccak256(abi.encode(_params.grants));
-        preparedSetupData.helpers = _ctx.components;
-        preparedSetupData.permissions = _permissions(PermissionLib.Operation.Grant, _params.grants, _ctx);
+        preparedSetupData.helpers = _components;
+        preparedSetupData.permissions =
+            _permissions(PermissionLib.Operation.Grant, _params.grants, Context(_dao, plugin, _components));
     }
 
     /// @inheritdoc IPluginSetup
@@ -134,27 +178,54 @@ contract CapitalTreePluginSetup is PluginSetup {
         }
     }
 
+    /// @dev The addresses of component `_index`'s dependencies: earlier components, already initialized
+    function _dependencies(uint256 _index, uint256[] memory _deps, address[] memory _components)
+        internal
+        pure
+        returns (address[] memory _addresses)
+    {
+        _addresses = new address[](_deps.length);
+        for (uint256 k; k < _deps.length; ++k) {
+            if (_deps[k] >= _index) revert DependencyNotEarlier(_index, _deps[k]);
+            _addresses[k] = _components[_deps[k]];
+        }
+    }
+
+    function _resolveNodes(RecipeNode[] memory _nodes, address[] memory _components)
+        internal
+        pure
+        returns (Node[] memory _resolved)
+    {
+        _resolved = new Node[](_nodes.length);
+        for (uint256 i; i < _nodes.length; ++i) {
+            RecipeNode memory _node = _nodes[i];
+            _resolved[i] = Node(
+                INodeAction(_optionalSlot(_node.action, _components)),
+                _node.children,
+                ISplitter(_optionalSlot(_node.splitter, _components)),
+                _node.skipWhenEmpty,
+                _node.forwardSurplus
+            );
+        }
+    }
+
+    /// @dev Component `_index`, which must exist
+    function _slot(uint256 _index, address[] memory _components) internal pure returns (address) {
+        if (_index >= _components.length) revert UnknownReference(_index);
+        return _components[_index];
+    }
+
+    /// @dev Like `_slot`, but `NONE` gives address(0)
+    function _optionalSlot(uint256 _index, address[] memory _components) internal pure returns (address) {
+        return _index == NONE ? address(0) : _slot(_index, _components);
+    }
+
     function _daoRecipeKey(address _dao, bytes calldata _data) internal pure returns (bytes32) {
         return keccak256(abi.encode(_dao, keccak256(_data)));
     }
 
     function _pluginSalt(bytes32 _daoRecipe, uint256 _index) internal pure returns (bytes32) {
         return keccak256(abi.encode(_daoRecipe, _index));
-    }
-
-    function _resolveNodes(Node[] memory _nodes, Context memory _ctx) internal pure returns (Node[] memory _resolved) {
-        _resolved = new Node[](_nodes.length);
-        for (uint256 i; i < _nodes.length; ++i) {
-            address _action = _resolve(address(_nodes[i].action), _ctx);
-            address _splitter = _resolve(address(_nodes[i].splitter), _ctx);
-            _resolved[i] = Node(
-                INodeAction(_action),
-                _nodes[i].children,
-                ISplitter(_splitter),
-                _nodes[i].skipWhenEmpty,
-                _nodes[i].forwardSurplus
-            );
-        }
     }
 
     /// @dev EXECUTE and CONFIGURE, then the recipe grants
@@ -170,7 +241,8 @@ contract CapitalTreePluginSetup is PluginSetup {
         for (uint256 i; i < _grants.length; ++i) {
             Grant memory _grant = _grants[i];
             if (_grant.permissionId == CONFIGURE_PERMISSION_ID) revert ReservedPermission(_grant.permissionId);
-            if (!_isOwnContract(_grant.where)) revert GrantOutsideInstallation(_grant.where);
+            RefKind _where = _grant.where.kind;
+            if (_where != RefKind.Plugin && _where != RefKind.Component) revert GrantOutsideInstallation(_where);
 
             _perms[2 + i] =
                 _permission(_op, _resolve(_grant.where, _ctx), _resolve(_grant.who, _ctx), _grant.permissionId);
@@ -187,38 +259,12 @@ contract CapitalTreePluginSetup is PluginSetup {
         });
     }
 
-    // Placeholders
-
-    /// @dev The plugin or one of the recipe's components (not the DAO, not an outside address)
-    function _isOwnContract(address _where) internal pure returns (bool) {
-        return isPlaceholder(uint160(_where)) && uint160(_where) & 0xFFFF != DAO_INDEX;
-    }
-
-    /// @dev The address a placeholder stands for; any other address is returned as is
-    function _resolve(address _value, Context memory _ctx) internal pure returns (address) {
-        if (!isPlaceholder(uint160(_value))) return _value;
-
-        uint256 _index = uint160(_value) & 0xFFFF;
-        if (_index == DAO_INDEX) return _ctx.dao;
-        if (_index == PLUGIN_INDEX) return _ctx.plugin;
-        if (_index >= _ctx.components.length) revert UnknownReference(_index);
-        return _ctx.components[_index];
-    }
-
-    /// @dev A copy of ABI-encoded call data with every placeholder word replaced
-    function _resolveCall(bytes memory _data, Context memory _ctx) internal pure returns (bytes memory _resolved) {
-        _resolved = bytes.concat(_data);
-        for (uint256 _offset = 4; _offset + 32 <= _resolved.length; _offset += 32) {
-            uint256 _word;
-            assembly ("memory-safe") {
-                _word := mload(add(add(_resolved, 32), _offset))
-            }
-            if (!isPlaceholder(_word)) continue;
-
-            address _address = _resolve(address(uint160(_word)), _ctx);
-            assembly ("memory-safe") {
-                mstore(add(add(_resolved, 32), _offset), _address)
-            }
-        }
+    /// @dev The address a reference names
+    function _resolve(Ref memory _ref, Context memory _ctx) internal pure returns (address) {
+        if (_ref.kind == RefKind.Account) return _ref.account;
+        if (_ref.kind == RefKind.Dao) return _ctx.dao;
+        if (_ref.kind == RefKind.Plugin) return _ctx.plugin;
+        if (_ref.index >= _ctx.components.length) revert UnknownReference(_ref.index);
+        return _ctx.components[_ref.index];
     }
 }

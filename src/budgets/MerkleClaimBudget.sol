@@ -9,6 +9,7 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
+import {IComponent} from "../interfaces/IComponent.sol";
 import {SET_SETTINGS_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title MerkleClaimBudget
@@ -29,7 +30,7 @@ import {SET_SETTINGS_PERMISSION_ID, RECORD_CLAIM_PERMISSION_ID} from "../lib/con
 ///      again from a node's callback before the first one records it.
 ///      Relayed (gasless) claims could be added later with a signature from the account over the
 ///      data of every node.
-contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
+contract MerkleClaimBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
     /// @inheritdoc IBudget
     IERC20 public token;
 
@@ -52,7 +53,11 @@ contract MerkleClaimBudget is IBudget, DaoAuthorizableUpgradeable {
         _disableInitializers();
     }
 
-    function initialize(IDAO _dao, IERC20 _token, bytes32 _root) external initializer {
+    /// @param _dao The DAO holding the funds
+    /// @param _settings `abi.encode(IERC20 token, bytes32 root)`: the ERC20 token claimed, and the
+    ///        Merkle root of the first round
+    function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
+        (IERC20 _token, bytes32 _root) = abi.decode(_settings, (IERC20, bytes32));
         if (address(_token).code.length == 0) revert InvalidToken();
 
         __DaoAuthorizableUpgradeable_init(_dao);

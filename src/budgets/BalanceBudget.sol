@@ -8,10 +8,11 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget} from "../interfaces/IBudget.sol";
+import {IComponent} from "../interfaces/IComponent.sol";
 
 /// @title BalanceBudget
 /// @notice The DAO's whole balance of a token, with nothing to commit. The root receives all of it.
-contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
+contract BalanceBudget is IBudget, IComponent, DaoAuthorizableUpgradeable {
     /// @inheritdoc IBudget
     IERC20 public token;
 
@@ -23,7 +24,10 @@ contract BalanceBudget is IBudget, DaoAuthorizableUpgradeable {
         _disableInitializers();
     }
 
-    function initialize(IDAO _dao, IERC20 _token) external initializer {
+    /// @param _dao The DAO holding the funds
+    /// @param _settings `abi.encode(IERC20 token)`: the ERC20 token the budget gives
+    function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
+        IERC20 _token = abi.decode(_settings, (IERC20));
         if (address(_token).code.length == 0) revert InvalidToken();
 
         __DaoAuthorizableUpgradeable_init(_dao);

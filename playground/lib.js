@@ -12,7 +12,6 @@ import {
   http,
   isAddress,
   keccak256,
-  pad,
   stringToHex,
   toHex,
   zeroAddress,
@@ -30,25 +29,30 @@ export const permissionId = (name) => keccak256(toHex(`${name}_PERMISSION`));
 const ALICE = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const BOB = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
-// Placeholders, as in src/lib/placeholders.sol
-const TAG = BigInt(keccak256(toHex("capital-tree.placeholder"))) & ((1n << 160n) - 1n) & ~0xffffn;
-const placeholder = (index) => getAddress(pad(toHex(TAG | BigInt(index)), { size: 20 }));
-export const DAO_REF = placeholder(0xffff);
-export const PLUGIN_REF = placeholder(0xfffe);
-export const ref = (index) => placeholder(index);
+// Recipe references, as in CapitalTreePluginSetup: RefKind, and NONE for a node without an action or splitter
+const REF = { account: 0, dao: 1, plugin: 2, component: 3 };
+const NONE = (1n << 256n) - 1n;
 
 // Parsing what people type
 
-/** "DAO", "PLUGIN", "ANY", "ref(2)" or an address → the address the recipe carries */
+/** "DAO", "PLUGIN", "ANY", "component(2)" or an address → the reference the recipe carries */
 export function target(text) {
   const t = String(text ?? "").trim();
-  if (t === "DAO") return DAO_REF;
-  if (t === "PLUGIN") return PLUGIN_REF;
-  if (t === "ANY") return ANY_ADDR;
-  const m = t.match(/^ref\((\d+)\)$/);
-  if (m) return ref(Number(m[1]));
-  if (isAddress(t)) return getAddress(t);
-  throw new Error(`"${t}" is not an address, DAO, PLUGIN, ANY or ref(i)`);
+  const ref = (kind, account = zeroAddress, index = 0n) => ({ kind, account, index });
+  if (t === "DAO") return ref(REF.dao);
+  if (t === "PLUGIN") return ref(REF.plugin);
+  if (t === "ANY") return ref(REF.account, ANY_ADDR);
+  const m = t.match(/^component\((\d+)\)$/);
+  if (m) return ref(REF.component, zeroAddress, BigInt(m[1]));
+  if (isAddress(t)) return ref(REF.account, getAddress(t));
+  throw new Error(`"${t}" is not an address, DAO, PLUGIN, ANY or component(i)`);
+}
+
+/** An address someone typed */
+export function parseAddress(text) {
+  const t = String(text ?? "").trim();
+  if (!isAddress(t)) throw new Error(`"${t}" is not an address`);
+  return getAddress(t);
 }
 
 /** "1000", "10e18" or "1.5e18" → bigint */
@@ -77,7 +81,7 @@ export const numbers = (text) =>
 
 function arg(type, value, where) {
   try {
-    if (type === "address") return target(value);
+    if (type === "address") return parseAddress(value);
     if (type === "uint32[]") return numbers(value);
     if (type.startsWith("uint")) return amount(value);
     if (type === "bytes32") {
@@ -142,21 +146,20 @@ function uniqueErrors(abi) {
 
 // Recipes
 
-const component = (id, args) => ({ id, args: { dao: "DAO", ...args } });
+const component = (id, args, deps = []) => ({ id, deps, args });
 const stream = (token, maxBudget = "0") =>
   component("StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
 // 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
-const openFill = (tokenB) =>
-  component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
+const openFill = (tokenB) => component("OpenFillAction@1", { demandedToken: tokenB, demandPerFill: "1000e18" }, [0]);
 const weightSplitter = (weights) => component("WeightSplitter@1", { weights });
 const leaf = (action) => ({ action, children: "", splitter: null });
 const swapGrants = (manager) => [
   { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
   { where: "PLUGIN", who: manager, permission: "PAUSE" },
-  { where: "ref(0)", who: manager, permission: "SET_SETTINGS" },
-  { where: "ref(1)", who: manager, permission: "SET_SETTINGS" },
-  { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
-  { where: "ref(0)", who: "ref(1)", permission: "CHECKPOINT" },
+  { where: "component(0)", who: manager, permission: "SET_SETTINGS" },
+  { where: "component(1)", who: manager, permission: "SET_SETTINGS" },
+  { where: "component(0)", who: "DAO", permission: "CHECKPOINT" },
+  { where: "component(0)", who: "component(1)", permission: "CHECKPOINT" },
 ];
 
 /** The recipes in script/Recipes.sol, as editable state */
@@ -164,7 +167,6 @@ export function templates({ tokenA, tokenB, account }) {
   return {
     "Buy and burn": {
       components: [stream(tokenA, "20e18"), openFill(tokenB), component("BurnAction@1", {})],
-      budget: 0,
       nodes: [{ action: 1, children: "1", splitter: null }, leaf(2)],
       grants: swapGrants(account),
     },
@@ -176,9 +178,8 @@ export function templates({ tokenA, tokenB, account }) {
         component("TransferAction@1", { to: BOB }),
         weightSplitter("950000, 50000"),
       ],
-      budget: 0,
       nodes: [{ action: 1, children: "1, 2", splitter: 4 }, leaf(2), leaf(3)],
-      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "SET_SETTINGS" }],
+      grants: [...swapGrants(account), { where: "component(4)", who: account, permission: "SET_SETTINGS" }],
     },
     Payroll: {
       components: [
@@ -187,14 +188,13 @@ export function templates({ tokenA, tokenB, account }) {
         component("TransferAction@1", { to: BOB }),
         weightSplitter("700000, 300000"),
       ],
-      budget: 0,
       nodes: [{ action: null, children: "1, 2", splitter: 3 }, leaf(1), leaf(2)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "PAUSE" },
-        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
-        { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
-        { where: "ref(3)", who: account, permission: "SET_SETTINGS" },
+        { where: "component(0)", who: account, permission: "SET_SETTINGS" },
+        { where: "component(0)", who: "DAO", permission: "CHECKPOINT" },
+        { where: "component(3)", who: account, permission: "SET_SETTINGS" },
       ],
     },
     "Merkle claim": {
@@ -202,13 +202,12 @@ export function templates({ tokenA, tokenB, account }) {
         component("MerkleClaimBudget@1", { token: tokenA, root: merkleLeaf(account, 100n * 10n ** 18n) }),
         component("TransferToBeneficiaryAction@1", {}),
       ],
-      budget: 0,
       nodes: [leaf(1)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
         { where: "PLUGIN", who: account, permission: "PAUSE" },
-        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
-        { where: "ref(0)", who: "DAO", permission: "RECORD_CLAIM" },
+        { where: "component(0)", who: account, permission: "SET_SETTINGS" },
+        { where: "component(0)", who: "DAO", permission: "RECORD_CLAIM" },
       ],
     },
   };
@@ -221,18 +220,24 @@ export const merkleLeaf = (account, cumulative) =>
 /** The recipe as `abi.encode(InstallParams)`; throws a readable error for anything mistyped */
 export function encodeRecipe(ctx, recipe) {
   const components = recipe.components.map((c, i) => {
-    const inputs = ctx.meta[c.id].initialize.inputs;
-    const args = inputs.map((input) => arg(input.type, c.args[input.name], `ref(${i}) ${input.name}`));
-    const initData = encodeFunctionData({ abi: ctx.abis[c.id.split("@")[0]], functionName: "initialize", args });
-    return { id: stringToHex(c.id, { size: 32 }), initData };
+    const { dependencies, settings } = ctx.meta[c.id];
+    const deps = c.deps ?? [];
+    if (deps.length !== dependencies.length) {
+      throw new Error(`component ${i} ${c.id}: expects ${dependencies.length} dependencies, got ${deps.length}`);
+    }
+    const values = settings.map((s) => arg(s.type, c.args[s.name], `component ${i} ${s.name}`));
+    return {
+      id: stringToHex(c.id, { size: 32 }),
+      deps: deps.map(BigInt),
+      settings: encodeAbiParameters(settings.map(({ type }) => ({ type })), values),
+    };
   });
   const params = {
     components,
-    budget: ref(recipe.budget),
     nodes: recipe.nodes.map((n, i) => ({
-      action: n.action === null ? zeroAddress : ref(n.action),
+      action: n.action === null ? NONE : BigInt(n.action),
       children: wrap(`node ${i} children`, () => numbers(n.children)),
-      splitter: n.splitter === null ? zeroAddress : ref(n.splitter),
+      splitter: n.splitter === null ? NONE : BigInt(n.splitter),
       skipWhenEmpty: false,
       forwardSurplus: false,
     })),

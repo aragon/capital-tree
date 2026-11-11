@@ -3,7 +3,7 @@
   "change": "First version.",
   "pluginSetup": {
     "prepareInstallation": {
-      "description": "A recipe (see script/Recipes.sol). Contracts that don't exist yet are named with placeholders: DAO_REF, PLUGIN_REF and ref(i) for component i.",
+      "description": "A recipe (see script/Recipes.sol). It names its own components by their index in the components list.",
       "inputs": [
         {
           "name": "params",
@@ -15,7 +15,7 @@
               "name": "components",
               "type": "tuple[]",
               "internalType": "struct CapitalTreePluginSetup.Component[]",
-              "description": "Components to clone, initialized in this order.",
+              "description": "Components to clone, initialized in this order with the installing DAO, their dependencies and their settings. The first one is the flow's budget.",
               "components": [
                 {
                   "name": "id",
@@ -23,29 +23,27 @@
                   "description": "Registry id, e.g. \"OpenFillAction@1\"."
                 },
                 {
-                  "name": "initData",
+                  "name": "deps",
+                  "type": "uint256[]",
+                  "description": "Indexes of the earlier components it depends on, in the order its metadata lists them."
+                },
+                {
+                  "name": "settings",
                   "type": "bytes",
-                  "description": "The component's initialize call, with placeholders."
+                  "description": "Its settings, ABI-encoded as its metadata lists them."
                 }
               ]
             },
             {
-              "name": "budget",
-              "type": "address",
-              "internalType": "contract IBudget",
-              "description": "The flow's budget: ref(i) of a budget component."
-            },
-            {
               "name": "nodes",
               "type": "tuple[]",
-              "internalType": "struct Node[]",
+              "internalType": "struct CapitalTreePluginSetup.RecipeNode[]",
               "description": "The tree. Node 0 is the root.",
               "components": [
                 {
                   "name": "action",
-                  "type": "address",
-                  "internalType": "contract INodeAction",
-                  "description": "ref(i) of an action component, or address(0) for a branch without an action."
+                  "type": "uint256",
+                  "description": "Index of an Action component, or type(uint256).max for a branch without an action."
                 },
                 {
                   "name": "children",
@@ -54,9 +52,8 @@
                 },
                 {
                   "name": "splitter",
-                  "type": "address",
-                  "internalType": "contract ISplitter",
-                  "description": "ref(i) of a splitter component that divides the output among the children when there are 2+ (a WeightSplitter for fixed weights), or address(0) otherwise."
+                  "type": "uint256",
+                  "description": "Index of a Splitter component that divides the output among the children when there are 2+ (a WeightSplitter for fixed weights), or type(uint256).max otherwise."
                 },
                 {
                   "name": "skipWhenEmpty",
@@ -66,7 +63,7 @@
                 {
                   "name": "forwardSurplus",
                   "type": "bool",
-                  "description": "Give the children everything that arrived, not just the declared output. Off by default: anything above it stays in the DAO. Only on a node with an action and children; with one token, the node passes its whole input on."
+                  "description": "Give the children everything that arrived, not just the declared output. Off by default: anything above it stays in the DAO. Only on a node with an action and children. With one token, what arrived is the input plus the net change."
                 }
               ]
             },
@@ -74,17 +71,55 @@
               "name": "grants",
               "type": "tuple[]",
               "internalType": "struct CapitalTreePluginSetup.Grant[]",
-              "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin (PLUGIN_REF) or one of the recipe's components (ref(i)).",
+              "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin or one of the recipe's components.",
               "components": [
                 {
                   "name": "where",
-                  "type": "address",
-                  "description": "PLUGIN_REF or ref(i)."
+                  "type": "tuple",
+                  "internalType": "struct CapitalTreePluginSetup.Ref",
+                  "description": "The plugin or a component.",
+                  "components": [
+                    {
+                      "name": "kind",
+                      "type": "uint8",
+                      "internalType": "enum CapitalTreePluginSetup.RefKind",
+                      "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
+                    },
+                    {
+                      "name": "account",
+                      "type": "address",
+                      "description": "The address, for an Account."
+                    },
+                    {
+                      "name": "index",
+                      "type": "uint256",
+                      "description": "The recipe index, for a Component."
+                    }
+                  ]
                 },
                 {
                   "name": "who",
-                  "type": "address",
-                  "description": "Any address, DAO_REF, PLUGIN_REF or ref(i)."
+                  "type": "tuple",
+                  "internalType": "struct CapitalTreePluginSetup.Ref",
+                  "description": "An account, the DAO, the plugin or a component.",
+                  "components": [
+                    {
+                      "name": "kind",
+                      "type": "uint8",
+                      "internalType": "enum CapitalTreePluginSetup.RefKind",
+                      "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
+                    },
+                    {
+                      "name": "account",
+                      "type": "address",
+                      "description": "The address, for an Account."
+                    },
+                    {
+                      "name": "index",
+                      "type": "uint256",
+                      "description": "The recipe index, for a Component."
+                    }
+                  ]
                 },
                 {
                   "name": "permissionId",
@@ -105,17 +140,55 @@
           "name": "grants",
           "type": "tuple[]",
           "internalType": "struct CapitalTreePluginSetup.Grant[]",
-          "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin (PLUGIN_REF) or one of the recipe's components (ref(i)).",
+          "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin or one of the recipe's components.",
           "components": [
             {
               "name": "where",
-              "type": "address",
-              "description": "PLUGIN_REF or ref(i)."
+              "type": "tuple",
+              "internalType": "struct CapitalTreePluginSetup.Ref",
+              "description": "The plugin or a component.",
+              "components": [
+                {
+                  "name": "kind",
+                  "type": "uint8",
+                  "internalType": "enum CapitalTreePluginSetup.RefKind",
+                  "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
+                },
+                {
+                  "name": "account",
+                  "type": "address",
+                  "description": "The address, for an Account."
+                },
+                {
+                  "name": "index",
+                  "type": "uint256",
+                  "description": "The recipe index, for a Component."
+                }
+              ]
             },
             {
               "name": "who",
-              "type": "address",
-              "description": "Any address, DAO_REF, PLUGIN_REF or ref(i)."
+              "type": "tuple",
+              "internalType": "struct CapitalTreePluginSetup.Ref",
+              "description": "An account, the DAO, the plugin or a component.",
+              "components": [
+                {
+                  "name": "kind",
+                  "type": "uint8",
+                  "internalType": "enum CapitalTreePluginSetup.RefKind",
+                  "description": "0 Account, 1 Dao (the installing DAO), 2 Plugin, 3 Component."
+                },
+                {
+                  "name": "account",
+                  "type": "address",
+                  "description": "The address, for an Account."
+                },
+                {
+                  "name": "index",
+                  "type": "uint256",
+                  "description": "The recipe index, for a Component."
+                }
+              ]
             },
             {
               "name": "permissionId",

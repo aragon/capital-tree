@@ -70,7 +70,7 @@ contract LeafActionsTest is Fixture {
         TransferAction _transfer = TransferAction(ProxyLib.deployMinimalProxy(address(new TransferAction()), ""));
 
         vm.expectRevert(TransferAction.NoRecipient.selector);
-        _transfer.initialize(dao, address(0));
+        _transfer.initialize(dao, _noDeps(), abi.encode(address(0)));
     }
 
     // Transfer to beneficiary
@@ -155,11 +155,11 @@ contract LeafActionsTest is Fixture {
         TransferToBeneficiaryAction _toBeneficiary = new TransferToBeneficiaryAction();
 
         vm.expectRevert("Initializable: contract is already initialized");
-        _burn.initialize(dao);
+        _burn.initialize(dao, _noDeps(), "");
         vm.expectRevert("Initializable: contract is already initialized");
-        _keep.initialize(dao);
+        _keep.initialize(dao, _noDeps(), "");
         vm.expectRevert("Initializable: contract is already initialized");
-        _toBeneficiary.initialize(dao);
+        _toBeneficiary.initialize(dao, _noDeps(), "");
     }
 }
 
@@ -179,13 +179,13 @@ contract BalanceBudgetTest is Fixture {
         BalanceBudget _budget = BalanceBudget(ProxyLib.deployMinimalProxy(address(new BalanceBudget()), ""));
 
         vm.expectRevert(BalanceBudget.InvalidToken.selector);
-        _budget.initialize(dao, IERC20(address(0xBEEF)));
+        _budget.initialize(dao, _noDeps(), abi.encode(IERC20(address(0xBEEF))));
     }
 
     function test_RevertWhen_TokenIsUnset() public {
         BalanceBudget _budget = BalanceBudget(ProxyLib.deployMinimalProxy(address(new BalanceBudget()), ""));
 
         vm.expectRevert(BalanceBudget.InvalidToken.selector);
-        _budget.initialize(dao, IERC20(address(0)));
+        _budget.initialize(dao, _noDeps(), abi.encode(IERC20(address(0))));
     }
 }

@@ -10,6 +10,7 @@ import {
     DaoAuthorizableUpgradeable
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
+import {IComponent} from "../interfaces/IComponent.sol";
 import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title StreamBudget
@@ -49,7 +50,7 @@ import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../lib/const
 ///      token should include a `sync()` action.
 ///
 ///      One flow per instance.
-contract StreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
+contract StreamBudget is ICheckpointedBudget, IComponent, DaoAuthorizableUpgradeable {
     /// @notice The token streamed
     IERC20 public token;
 
@@ -107,14 +108,12 @@ contract StreamBudget is ICheckpointedBudget, DaoAuthorizableUpgradeable {
     /// @dev A DAO that holds no tokens at initialization keeps the amount at zero until `sync()`
     ///      is called after it is funded.
     /// @param _dao The DAO holding the funds
-    /// @param _token The ERC20 token streamed
-    /// @param _amountPerEpoch How much the available amount grows per epoch
-    /// @param _maxBudget Maximum available amount at any point in time (0 for no cap)
-    /// @param _epochInterval The epoch duration in seconds
-    function initialize(IDAO _dao, IERC20 _token, uint256 _amountPerEpoch, uint256 _maxBudget, uint256 _epochInterval)
-        external
-        initializer
-    {
+    /// @param _settings `abi.encode(IERC20 token, uint256 amountPerEpoch, uint256 maxBudget, uint256 epochInterval)`:
+    ///        the ERC20 token streamed, how much the available amount grows per epoch, the most it
+    ///        can reach at any time (0 for no cap) and the epoch duration in seconds
+    function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
+        (IERC20 _token, uint256 _amountPerEpoch, uint256 _maxBudget, uint256 _epochInterval) =
+            abi.decode(_settings, (IERC20, uint256, uint256, uint256));
         if (address(_token).code.length == 0) revert InvalidToken();
 
         __DaoAuthorizableUpgradeable_init(_dao);

@@ -99,11 +99,11 @@ function updatePreview() {
   const preview = $("#preview");
   try {
     recipe = graph.graphToRecipe(editor.export(), ctx.deployment.account, ctx.meta);
-    const name = (i) => `ref(${i}) ${recipe.components[i].id.split("@")[0]}`;
+    const name = (i) => `component(${i}) ${recipe.components[i].id.split("@")[0]}`;
     const weights = (n) => (n.splitter === null ? [] : lib.numbers(recipe.components[n.splitter].args.weights));
     const nodes = recipe.nodes.map((n) => ({ ...n, children: lib.numbers(n.children), weights: weights(n) }));
     const tree = lib.describeTree(nodes, (n) => (n.action === null ? "branch (no action)" : name(n.action)));
-    const who = (w) => w.replace(/ref\((\d+)\)/, (_, i) => name(Number(i))).replace(ctx.deployment.account, "you");
+    const who = (w) => w.replace(/component\((\d+)\)/, (_, i) => name(Number(i))).replace(ctx.deployment.account, "you");
     const grants = recipe.grants.map((g) => `  ${g.permission} on ${who(g.where)} → ${who(g.who)}`).join("\n");
     const bytes = (lib.encodeRecipe(ctx, recipe).length - 2) / 2;
     preview.className = "";
@@ -226,7 +226,8 @@ function renderRegistry() {
   $("#registry").innerHTML = Object.entries(ctx.deployment.components)
     .map(([id, implementation]) => {
       const meta = ctx.meta[id];
-      const inputs = meta.initialize.inputs
+      const dependencies = meta.dependencies.map((d) => ({ ...d, type: `${d.kind} component` }));
+      const inputs = [...dependencies, ...meta.settings]
         .map((i) => `<tr><td class="mono">${esc(i.name)}</td><td class="mono">${esc(i.type)}</td><td>${esc(i.description)}</td></tr>`)
         .join("");
       return `<details>
