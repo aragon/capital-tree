@@ -10,8 +10,8 @@ import {PluginRepoFactory} from "@aragon/osx/framework/plugin/repo/PluginRepoFac
 import {PluginRepoRegistry} from "@aragon/osx/framework/plugin/repo/PluginRepoRegistry.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {ENSSubdomainRegistrar} from "@aragon/osx/framework/utils/ens/ENSSubdomainRegistrar.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Install} from "../script/Install.s.sol";
 import {Recipes} from "../script/Recipes.sol";
@@ -22,7 +22,7 @@ import {MockFiller} from "./mocks/MockFiller.sol";
 ///         without ENS (the plugin repo is published with an empty subdomain)
 contract InstallationTest is Fixture {
     PluginSetupProcessor internal psp;
-    CapitalPipelinePluginSetup internal setup;
+    CapitalTreePluginSetup internal setup;
     PluginRepo internal repo;
     Install internal installer;
 
@@ -63,7 +63,7 @@ contract InstallationTest is Fixture {
         dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID()); // stands in for a passed proposal
         dao.execute(bytes32(0), _actions, 0);
 
-        MockFiller _filler = new MockFiller(CapitalPipelinePlugin(_plugin));
+        MockFiller _filler = new MockFiller(CapitalTreePlugin(_plugin));
         tokenB.mint(address(_filler), DEMAND);
         uint256 _supply = tokenB.totalSupply();
         vm.warp(block.timestamp + EPOCH);
@@ -99,14 +99,14 @@ contract InstallationTest is Fixture {
 
         assertEq(
             abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP))),
-            abi.encode(Recipes.buyAndBurn(manager, _stream, _swap))
+            abi.encode(Recipes.buyAndBurn(manager, guardian, _stream, _swap))
         );
     }
 
     function test_EveryExampleConfigBuildsItsRecipe() public view {
         assertEq(installer.recipe(_example("buy-and-burn")).components.length, 3);
         assertEq(installer.recipe(_example("buyback")).components.length, 5);
-        CapitalPipelinePluginSetup.InstallParams memory _donate = installer.recipe(_example("buyback-and-donate"));
+        CapitalTreePluginSetup.InstallParams memory _donate = installer.recipe(_example("buyback-and-donate"));
         assertEq(_donate.components.length, 5);
         assertEq(_donate.components[2].id, Recipes.VAULT_DONATE);
         assertEq(_donate.components[3].id, Recipes.TRANSFER);
@@ -125,7 +125,12 @@ contract InstallationTest is Fixture {
 
     function test_RevertWhen_TheRecipeIsUnknown() public {
         vm.expectRevert(abi.encodeWithSelector(Install.UnknownRecipe.selector, "swapEverything"));
-        installer.recipe('{"recipe":"swapEverything","manager":"0x0000000000000000000000000000000000000001"}');
+        installer.recipe(
+            string.concat(
+                '{"recipe":"swapEverything","manager":"0x0000000000000000000000000000000000000001",',
+                '"guardian":"0x0000000000000000000000000000000000000002"}'
+            )
+        );
     }
 
     // Helpers
@@ -134,6 +139,8 @@ contract InstallationTest is Fixture {
         return string.concat(
             '{"recipe":"buyAndBurn","manager":"',
             vm.toString(manager),
+            '","guardian":"',
+            vm.toString(guardian),
             '","stream":{"token":"',
             vm.toString(address(tokenA)),
             '","amountPerEpoch":"',

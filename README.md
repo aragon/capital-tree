@@ -10,7 +10,7 @@ what the budget released or what its parent really produced.
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     fill["OpenFillAction<br/>sells A for B"]
     burn["BurnAction"]
     fee["TransferAction<br/>to feeAddr"]
@@ -46,8 +46,10 @@ struct Asset { IERC20 token; uint256 amount; }
 A node's input is the asset it receives: the budget at the root, a share of its parent's output
 elsewhere. It spends all of it. Its output is the asset its action declares for its children: the
 least the action accepts, zero for a leaf. The children get that output, or everything that arrived
-on a node marked `forwardSurplus`. The node's splitter divides it, and `NodeExecuted` emits the input
-and what the children got.
+on a node marked `forwardSurplus`. The node's splitter divides it, and `NodeExecuted` emits the input,
+what the children got and the surplus: what arrived above the declared output, forwarded or not.
+A leaf reports no surplus, and neither does a node whose output the plugin doesn't measure (another
+token, none declared, no forwarding).
 
 ### One trigger, step by step
 
@@ -59,7 +61,7 @@ and each action receive their own data and the caller's address.
 sequenceDiagram
     autonumber
     actor Caller
-    participant Plugin as CapitalPipelinePlugin
+    participant Plugin as CapitalTreePlugin
     participant Budget
     participant Action as Node action
     participant DAO
@@ -85,6 +87,7 @@ sequenceDiagram
     Note over Plugin: the DAO lost ≤ available of the budget's token (none with fund actions)
     Plugin->>Budget: commitActions(caller, budgetData)
     Plugin->>DAO: execute(commit actions)
+    Note over Plugin: emit FlowExecuted(caller, nonce, root input)
 ```
 
 Any failure reverts the whole trigger: a flow never runs halfway. When a `WeightSplitter` divides
@@ -95,6 +98,8 @@ nor anything below it runs. Every trigger counts up a nonce, so its execution ID
 even in the same block. Within a trigger, each `dao.execute` has its own index: 0 for the budget's
 fund actions, i + 1 for node i, `nodes.length + 1` for the commit. The errors about a DAO action
 (`MissingFunctionSelector`, `ActionTargetsDao`, `ActionTargetsPlugin`) report that same index.
+A run that finishes emits `FlowExecuted(caller, nonce, input)` last, after the commit: `input` is what
+the budget gave the root, not what the flow spent.
 
 An execution ID isn't a hash: it packs the plugin's address (20 bytes) and the trigger's nonce (8),
 which identify the run, then the execution index (4). Trigger 5's node 1, for example, is
@@ -121,13 +126,22 @@ the budget has fund actions (`BudgetExceeded`).
 
 When the flow is set (`initialize` or `setFlow`, DAO only):
 
-1. 1 to 16 nodes; every child comes after its parent, has exactly one parent, and is reachable from node 0.
+1. At least 1 node; every child comes after its parent, has exactly one parent, and is reachable from node 0. There's no fixed cap (see below).
 2. A node without an action has at least 2 children.
 3. A node with 2+ children has a splitter made for that many children, or for any (`childCount()` returns 0); other nodes have none (`InvalidSplitter`). Whether the splitter returns one amount per child is checked at trigger (`InvalidSplit`).
 4. An action bound to a budget (OpenFill) must be bound to the flow's budget. It may sit anywhere.
 5. The budget, every action and every splitter are clones bound to this plugin's DAO.
 6. The root can't be marked `skipWhenEmpty`: a trigger with nothing to do reverts.
 7. Only a node with an action and children can be marked `forwardSurplus` (`InvalidForwardSurplus`).
+
+Gas and the EVM's call stack bound a flow instead, and `setFlow` checks neither: a flow past them
+saves, then every trigger reverts. Measured on a first payout:
+
+- Size: a root splitting into transfer leaves fits 215 leaves under 16M gas (15.9M), and about 225
+  under the 2^24 transaction cap (EIP-7825). Each transfer leaf adds about 75k gas. Setting a flow
+  that size costs about 10M gas.
+- Depth: the tree is walked recursively. A straight chain runs up to 69 nodes deep; at 70 the
+  trigger reverts with a stack overflow.
 
 ## Components
 
@@ -146,11 +160,11 @@ tree spends what never arrived. The budgets below pay from the DAO's own balance
 
 | Budget               | `available()`                                                              | Commit             |
 | -------------------- | -------------------------------------------------------------------------- | ------------------ |
-| `FundedStreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
+| `StreamBudget` | Grows by `amountPerEpoch` every `epochInterval`, capped as described below | Restarts from zero |
 | `BalanceBudget`      | The DAO's whole balance of the token                                       | Nothing            |
 | `MerkleClaimBudget`  | What the caller is owed                                                    | Records the claim  |
 
-#### FundedStreamBudget
+#### StreamBudget
 
 A stream that never jumps, built for Dutch auctions where a jump in the offer would be taken by
 a filler in the same block.
@@ -179,7 +193,7 @@ xychart-beta
 | ------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
 | `sync()`                                                | anyone                     | Carries the current amount forward and records the DAO balance. Never raises the amount. |
 | `writeCheckpoint()`                                     | `CHECKPOINT_PERMISSION_ID` | Restarts from zero. The plugin runs it through the DAO after every trigger.              |
-| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `MANAGER_PERMISSION_ID`    | Sync first, so time already elapsed keeps the old values.                                |
+| `setAmountPerEpoch`, `setMaxBudget`, `setEpochInterval` | `SET_SETTINGS_PERMISSION_ID` | Sync first, so time already elapsed keeps the old values.                                |
 
 After a deposit the amount stays frozen until someone calls `sync()`: run a keeper, or add a
 `sync()` action wherever revenue enters the DAO.
@@ -201,7 +215,7 @@ raises the cumulative amounts for the next round.
   `TransferToBeneficiaryAction` pays it out.
 - **Records** the claim with `recordClaim` when the budget commits, after the whole tree ran, so it
   rolls back with the flow. The DAO needs `RECORD_CLAIM_PERMISSION_ID` on the budget.
-- **Settings**: `setRoot` (`MANAGER_PERMISSION_ID`). Whoever holds it can direct payouts up to the
+- **Settings**: `setRoot` (`SET_SETTINGS_PERMISSION_ID`). Whoever holds it can direct payouts up to the
   DAO's balance of the token.
 - **One flow per instance**: a second flow on the same budget could pay a claim again from a node's
   callback before the first one records it.
@@ -235,7 +249,7 @@ finds the trade worth it first calls `trigger()` and fills it.
   an auction" below); below an action, whatever that action passes on. Every node of the flow then
   waits for a fill, and changing the demand restarts the whole budget, not just the auction's share.
 - **Checks**: the DAO received at least `demandPerFill` of B, or the whole trigger reverts.
-- **Settings**: `setDemandPerFill` (`MANAGER_PERMISSION_ID`) restarts the auction, so the action
+- **Settings**: `setDemandPerFill` (`SET_SETTINGS_PERMISSION_ID`) restarts the auction, so the action
   needs `CHECKPOINT_PERMISSION_ID` on its budget. The stream's `setMaxBudget` moves the worst price:
   raising the cap lowers it.
 
@@ -243,7 +257,7 @@ finds the trade worth it first calls `trigger()` and fills it.
 sequenceDiagram
     autonumber
     actor Filler
-    participant Plugin as CapitalPipelinePlugin
+    participant Plugin as CapitalTreePlugin
     participant DAO
     participant TokenA as Token A
     participant Fill as OpenFillAction
@@ -311,7 +325,7 @@ interface ISplitter {
   then it and everything below it are skipped, as with a weight that rounds down.
 - **View only:** a split changes no state.
 - **Setters:** a splitter with its own setters gives its shares to whoever the recipe grants that
-  permission. A `WeightSplitter`'s `setWeights` needs `MANAGER_PERMISSION_ID`, which the recipes
+  permission. A `WeightSplitter`'s `setWeights` needs `SET_SETTINGS_PERMISSION_ID`, which the recipes
   grant to the manager.
 
 `WeightSplitter` takes one weight per child, in the node's child order, each non-zero, summing to
@@ -331,7 +345,7 @@ A splitter is a component like any other (a clone bound to the DAO, registered i
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     fill["OpenFillAction<br/>sells A for B"]
     burn["BurnAction"]
 
@@ -356,7 +370,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     split{"branch<br/>(no action)"}
     one["TransferAction<br/>recipient 1"]
     two["TransferAction<br/>recipient 2"]
@@ -376,7 +390,7 @@ since the last fill (it stays in the DAO).
 
 ```mermaid
 flowchart LR
-    budget[("FundedStreamBudget<br/>token A")]
+    budget[("StreamBudget<br/>token A")]
     split{"branch<br/>(no action)"}
     grants["TransferAction<br/>to grantsSafe"]
     fill["OpenFillAction<br/>sells A for B"]
@@ -398,7 +412,7 @@ and `ref(i)` for the recipe's component `i`. The setup replaces them wherever th
 sequenceDiagram
     autonumber
     participant PSP as PluginSetupProcessor
-    participant Setup as CapitalPipelinePluginSetup
+    participant Setup as CapitalTreePluginSetup
     participant Registry as ComponentRegistry
     participant Clones as Component clones
     participant Plugin as Plugin clone
@@ -436,7 +450,8 @@ Only the DAO itself can apply the installation.
 | ---------------------------- | -------------------------- | ------------------------------------------------------------- |
 | `TRIGGER_PERMISSION_ID`      | anyone                     | `trigger()`                                                   |
 | `CONFIGURE_PERMISSION_ID`    | DAO only                   | `setFlow()`                                                   |
-| `MANAGER_PERMISSION_ID`      | manager                    | parameter setters, Merkle `setRoot()`, weight splitter `setWeights()`, `pause()`, `unpause()` |
+| `PAUSE_PERMISSION_ID`        | guardian                   | `pause()`, `unpause()`                                        |
+| `SET_SETTINGS_PERMISSION_ID` | manager                    | stream setters, OpenFill `setDemandPerFill()`, Merkle `setRoot()`, weight splitter `setWeights()` |
 | `CHECKPOINT_PERMISSION_ID`   | DAO, swap action           | restarting the stream budget                                  |
 | `RECORD_CLAIM_PERMISSION_ID` | DAO                        | Merkle `recordClaim()`, run by the plugin through the DAO     |
 | `REGISTER_PERMISSION_ID`     | picked by the managing DAO | registering new components                                    |
@@ -449,29 +464,30 @@ these (an arrow goes from the holder to the contract it may call):
 flowchart LR
     anyone(("anyone"))
     manager(("manager"))
+    guardian(("guardian"))
     dao["DAO"]
     plugin["Plugin"]
-    budget["FundedStreamBudget"]
+    budget["StreamBudget"]
     fill["OpenFillAction"]
     splitter["WeightSplitter<br/>(buyback only)"]
 
     anyone -- "TRIGGER" --> plugin
     dao -- "CONFIGURE" --> plugin
     plugin -- "EXECUTE" --> dao
-    manager -- "MANAGER" --> plugin
-    manager -- "MANAGER" --> budget
-    manager -- "MANAGER" --> fill
+    guardian -- "PAUSE" --> plugin
+    manager -- "SET_SETTINGS" --> budget
+    manager -- "SET_SETTINGS" --> fill
     dao -- "CHECKPOINT" --> budget
     fill -- "CHECKPOINT" --> budget
-    manager -- "MANAGER" --> splitter
+    manager -- "SET_SETTINGS" --> splitter
 ```
 
 ## Layout
 
 | Path                                           | What                                                                                                       |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `src/CapitalPipelinePlugin.sol`                | Runs the tree, checks balances after every node                                                            |
-| `src/budgets/FundedStreamBudget.sol`           | Streaming pot that never jumps                                                                             |
+| `src/CapitalTreePlugin.sol`                    | Runs the tree, checks balances after every node                                                            |
+| `src/budgets/StreamBudget.sol`                 | Streaming pot that never jumps                                                                             |
 | `src/budgets/BalanceBudget.sol`                | The DAO's whole balance of a token                                                                         |
 | `src/budgets/MerkleClaimBudget.sol`            | Cumulative Merkle claims; the account picks the payout address                                             |
 | `src/actions/OpenFillAction.sol`               | Open-fill swap with Dutch-auction pricing, anywhere in the tree (the stream's cap limits the offer)        |
@@ -483,7 +499,7 @@ flowchart LR
 | `src/actions/KeepAction.sol`                   | Leaf: leaves its input in the DAO                                                                          |
 | `src/splitters/WeightSplitter.sol`             | Splits a branch's output by fixed weights                                                                  |
 | `src/registry/ComponentRegistry.sol`           | Write-once ids for the implementations recipes can clone                                                   |
-| `src/setup/CapitalPipelinePluginSetup.sol`     | Installs any flow from a recipe                                                                            |
+| `src/setup/CapitalTreePluginSetup.sol`         | Installs any flow from a recipe                                                                            |
 | `script/Recipes.sol`                           | Recipes for buy and burn, buyback, Merkle claim and payroll                                                |
 | `script/Deploy.s.sol`                          | Deploys every implementation, the registry and the setup, and publishes the setup to an Aragon plugin repo |
 | `script/Install.s.sol`                         | Prepares an installation from a config and prints the proposal's actions                                   |
@@ -552,7 +568,7 @@ the unit tests, broadcasts the deployment, verifies contracts and writes a log u
 | ---------------------------- | --------------------------------------------------------------------- |
 | `MANAGEMENT_DAO_ADDRESS`      | Maintains the component registry; supplied by the selected network     |
 | `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon's factory; supplied by the selected network                      |
-| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-pipeline` by default |
+| `PLUGIN_REPO_SUBDOMAIN`       | Optional: the name under `plugin.dao.eth`, `capital-tree` by default     |
 | `PLUGIN_REPO_MAINTAINER`      | Optional: who can publish later versions, the managing DAO by default   |
 | `DEPLOYER_KEY`               | Required signing key for both deployment and installation preparation  |
 
@@ -561,7 +577,9 @@ Override network addresses in `.env` or an editable `.env.<network>` using the s
 ## Install a flow
 
 1. Copy an example from `installs/` (`buy-and-burn`, `buyback`, `merkle-claim`, `payroll`) and fill
-   in the DAO, the manager, the tokens and the amounts (in the token's smallest unit).
+   in the DAO, the manager, the guardian, the tokens and the amounts (in the token's smallest unit).
+   The manager changes the components' settings; the guardian pauses and unpauses the flow. They
+   can be the same address.
 2. Select the network with `just switch <network>`. Set `INSTALL_CONFIG=installs/<yours>.json`
    and `PLUGIN_REPO=0x...` in `.env`, and configure `DEPLOYER_KEY` in `.env` or `vars`.
    `PLUGIN_SETUP_PROCESSOR_ADDRESS` comes from the selected network; override it using the same name.
@@ -573,4 +591,4 @@ just run script/Install.s.sol:Install
 ```
 
 4. Put the three actions printed by the broadcast run in a DAO proposal. Once it executes, the
-   flow is live: fillers can call `trigger()` and the manager can tune it.
+   flow is live: fillers can call `trigger()`, the manager can tune it and the guardian can pause it.

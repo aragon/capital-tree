@@ -6,7 +6,7 @@ locked assets without minting shares, so existing avKAT holders receive the valu
 It does not give the DAO a new avKAT position.
 
 ```text
-DAO USDC -> FundedStreamBudget -> OpenFillAction (KAT)
+DAO USDC -> StreamBudget -> OpenFillAction (KAT)
                                     |-- 10 bps -> TransferAction -> Aragon (KAT)
                                     `-- all remaining KAT -> VaultDonateAction -> AvKATVault.donate
 ```
@@ -53,7 +53,7 @@ Aragon receives approximately 2.995361 KAT and the vault receives the remaining
 
 ## Installation and configuration
 
-`Recipes.buybackAndDonate(manager, stream, swap, vault, feeRecipient, feeBps)` builds the
+`Recipes.buybackAndDonate(manager, guardian, stream, swap, vault, feeRecipient, feeBps)` builds the
 installation recipe. `Install.s.sol` accepts `"recipe": "buybackAndDonate"`;
 `installs/buyback-and-donate.example.json` demonstrates the Katana configuration.
 Replace the DAO/manager/fee-recipient placeholders and choose fresh auction terms

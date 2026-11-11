@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../../src/budgets/BalanceBudget.sol";
 import {MerkleClaimBudget} from "../../src/budgets/MerkleClaimBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
@@ -15,12 +15,13 @@ import {TransferToBeneficiaryAction} from "../../src/actions/TransferToBeneficia
 import {BurnAction} from "../../src/actions/BurnAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
 import {WeightSplitter} from "../../src/splitters/WeightSplitter.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 import {IBudget} from "../../src/interfaces/IBudget.sol";
 import {INodeAction} from "../../src/interfaces/INodeAction.sol";
 import {Node} from "../../src/lib/types.sol";
 import {
-    MANAGER_PERMISSION_ID,
+    PAUSE_PERMISSION_ID,
+    SET_SETTINGS_PERMISSION_ID,
     CHECKPOINT_PERMISSION_ID,
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
@@ -30,7 +31,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
 /// @dev Metadata links for the deploy script, one per component (see metadata/uris.json)
 string constant METADATA_URIS = '{"release":"ipfs://release","build":"ipfs://build","components":{'
-    '"FundedStreamBudget":"ipfs://FundedStreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
+    '"StreamBudget":"ipfs://StreamBudget","BalanceBudget":"ipfs://BalanceBudget",'
     '"OpenFillAction":"ipfs://OpenFillAction","MerkleClaimBudget":"ipfs://MerkleClaimBudget",'
     '"TransferAction":"ipfs://TransferAction","TransferToBeneficiaryAction":"ipfs://TransferToBeneficiaryAction",'
     '"BurnAction":"ipfs://BurnAction","KeepAction":"ipfs://KeepAction","WeightSplitter":"ipfs://WeightSplitter","VaultDonateAction":"ipfs://VaultDonateAction"}}';
@@ -50,6 +51,7 @@ abstract contract Fixture is Test {
     uint256 internal constant STREAM_CAP = 20 ether; // 1,000 B for at most 20 A: 50 B per A or better
 
     address internal manager = makeAddr("manager");
+    address internal guardian = makeAddr("guardian");
     address internal fee = makeAddr("fee");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -94,22 +96,19 @@ abstract contract Fixture is Test {
     // Budgets
 
     /// @dev A stream of token A. Deploy after funding the DAO: the budget records the balance it sees at init.
-    function _deployBudget(uint256 _rate, uint256 _maxBudget) internal returns (FundedStreamBudget) {
+    function _deployBudget(uint256 _rate, uint256 _maxBudget) internal returns (StreamBudget) {
         return _deployStream(tokenA, _rate, _maxBudget);
     }
 
     /// @dev A stream of any ERC20 token
-    function _deployStream(IERC20 _token, uint256 _rate, uint256 _maxBudget)
-        internal
-        returns (FundedStreamBudget _budget)
-    {
-        _budget = FundedStreamBudget(
+    function _deployStream(IERC20 _token, uint256 _rate, uint256 _maxBudget) internal returns (StreamBudget _budget) {
+        _budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
-                address(new FundedStreamBudget()),
-                abi.encodeCall(FundedStreamBudget.initialize, (dao, _token, _rate, _maxBudget, EPOCH))
+                address(new StreamBudget()),
+                abi.encodeCall(StreamBudget.initialize, (dao, _token, _rate, _maxBudget, EPOCH))
             )
         );
-        dao.grant(address(_budget), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
     }
 
@@ -129,19 +128,19 @@ abstract contract Fixture is Test {
     // Actions
 
     /// @dev Demands token B. Bound to `_budget`, which it restarts when its demand changes.
-    function _deployAction(FundedStreamBudget _budget) internal returns (OpenFillAction) {
+    function _deployAction(StreamBudget _budget) internal returns (OpenFillAction) {
         return _deployOpenFill(_budget, tokenB);
     }
 
     /// @dev Demands any ERC20 token
-    function _deployOpenFill(FundedStreamBudget _budget, IERC20 _demanded) internal returns (OpenFillAction _action) {
+    function _deployOpenFill(StreamBudget _budget, IERC20 _demanded) internal returns (OpenFillAction _action) {
         _action = OpenFillAction(
             ProxyLib.deployMinimalProxy(
                 address(new OpenFillAction()),
                 abi.encodeCall(OpenFillAction.initialize, (dao, _budget, _demanded, DEMAND))
             )
         );
-        dao.grant(address(_action), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_action), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_budget), address(_action), CHECKPOINT_PERMISSION_ID);
     }
 
@@ -151,7 +150,7 @@ abstract contract Fixture is Test {
                 address(new MerkleClaimBudget()), abi.encodeCall(MerkleClaimBudget.initialize, (dao, _token, _root))
             )
         );
-        dao.grant(address(_merkle), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_merkle), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_merkle), address(dao), RECORD_CLAIM_PERMISSION_ID);
     }
 
@@ -180,18 +179,17 @@ abstract contract Fixture is Test {
 
     // Plugin
 
-    /// @dev Same grants as CapitalPipelinePluginSetup: anyone triggers, the DAO configures, the manager pauses
-    function _deployPlugin(IBudget _budget, Node[] memory _tree) internal returns (CapitalPipelinePlugin _plugin) {
-        _plugin = CapitalPipelinePlugin(
+    /// @dev Same grants as CapitalTreePluginSetup: anyone triggers, the DAO configures, the manager pauses
+    function _deployPlugin(IBudget _budget, Node[] memory _tree) internal returns (CapitalTreePlugin _plugin) {
+        _plugin = CapitalTreePlugin(
             ProxyLib.deployMinimalProxy(
-                address(new CapitalPipelinePlugin()),
-                abi.encodeCall(CapitalPipelinePlugin.initialize, (dao, _budget, _tree))
+                address(new CapitalTreePlugin()), abi.encodeCall(CapitalTreePlugin.initialize, (dao, _budget, _tree))
             )
         );
         dao.grant(address(dao), address(_plugin), dao.EXECUTE_PERMISSION_ID());
         dao.grant(address(_plugin), ANY_ADDR, TRIGGER_PERMISSION_ID);
         dao.grant(address(_plugin), address(dao), CONFIGURE_PERMISSION_ID);
-        dao.grant(address(_plugin), manager, MANAGER_PERMISSION_ID);
+        dao.grant(address(_plugin), manager, PAUSE_PERMISSION_ID);
     }
 
     // Trees

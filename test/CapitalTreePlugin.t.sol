@@ -7,8 +7,8 @@ import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {MerkleClaimBudget} from "../src/budgets/MerkleClaimBudget.sol";
@@ -18,7 +18,7 @@ import {IBudget} from "../src/interfaces/IBudget.sol";
 import {INodeAction} from "../src/interfaces/INodeAction.sol";
 import {ISplitter} from "../src/interfaces/ISplitter.sol";
 import {Asset, Node} from "../src/lib/types.sol";
-import {CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
+import {CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID, RATIO_BASE} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
@@ -28,12 +28,12 @@ import {CapSplitter, FixedSplitter} from "./mocks/MockSplitter.sol";
 import {IncomeAction, IncomeSource} from "./mocks/MockIncome.sol";
 import {MockHolderBudget} from "./mocks/MockHolderBudget.sol";
 
-contract CapitalPipelinePluginTest is Fixture {
+contract CapitalTreePluginTest is Fixture {
     IERC20 internal constant NO_TOKEN = IERC20(address(0));
 
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
-    CapitalPipelinePlugin internal plugin;
+    CapitalTreePlugin internal plugin;
     MockFiller internal filler;
 
     /// @dev Swap 10 A for 1,000 B, then pay 95% to the burn address and 5% to the fee address
@@ -85,7 +85,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_PauseUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(plugin), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(plugin), address(this), PAUSE_PERMISSION_ID
             )
         );
         plugin.pause();
@@ -102,59 +102,65 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_RevertWhen_NoBudget() public {
-        _expectInitRevert(
-            IBudget(address(0)), _one(keep), abi.encodeWithSelector(CapitalPipelinePlugin.NoBudget.selector)
-        );
+        _expectInitRevert(IBudget(address(0)), _one(keep), abi.encodeWithSelector(CapitalTreePlugin.NoBudget.selector));
     }
 
     function test_RevertWhen_NoNodes() public {
-        _expectInitRevert(
-            budget, new Node[](0), abi.encodeWithSelector(CapitalPipelinePlugin.InvalidNodeCount.selector, 0)
-        );
+        _expectInitRevert(budget, new Node[](0), abi.encodeWithSelector(CapitalTreePlugin.InvalidNodeCount.selector, 0));
     }
 
-    function test_RevertWhen_TooManyNodes() public {
-        Node[] memory _tree = new Node[](17);
-        for (uint32 i; i < 16; ++i) {
-            _tree[i] = _then(keep, i + 1);
+    /// No fixed node cap: a root splitting into 31 transfer leaves, twice the old 16 nodes
+    function test_RunsAFlowOf32Nodes() public {
+        uint32 _leafCount = 31;
+        INodeAction _toAlice = _deployTransfer(alice);
+        Node[] memory _tree = new Node[](_leafCount + 1);
+        _tree[0].children = new uint32[](_leafCount);
+        uint32[] memory _weights = new uint32[](_leafCount);
+        for (uint32 i; i < _leafCount; ++i) {
+            _tree[0].children[i] = i + 1;
+            _tree[i + 1] = _leaf(_toAlice);
+            _weights[i] = uint32(RATIO_BASE / _leafCount);
         }
-        _tree[16] = _leaf(keep);
+        _weights[0] += uint32(RATIO_BASE % _leafCount);
+        _tree[0].splitter = _deployWeightSplitter(_weights);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidNodeCount.selector, 17));
+        _plugin.trigger("", noData);
+
+        assertEq(_plugin.nodes().length, 32);
+        assertEq(tokenA.balanceOf(alice), DAO_A);
     }
 
     function test_RevertWhen_ALeafHasNoAction() public {
-        _expectInitRevert(
-            budget, _one(NO_ACTION), abi.encodeWithSelector(CapitalPipelinePlugin.MissingAction.selector, 0)
-        );
+        _expectInitRevert(budget, _one(NO_ACTION), abi.encodeWithSelector(CapitalTreePlugin.MissingAction.selector, 0));
     }
 
     function test_RevertWhen_AChildDoesNotComeAfterItsParent() public {
         Node[] memory _tree = new Node[](1);
         _tree[0] = _then(keep, 0);
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidChild.selector, 0, 0));
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidChild.selector, 0, 0));
     }
 
     function test_RevertWhen_ANodeHasTwoParents() public {
         Node[] memory _tree = new Node[](3);
         (_tree[0], _tree[1], _tree[2]) = (_branch(NO_ACTION, 1, 500_000, 2, 500_000), _then(keep, 2), _leaf(keep));
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidChild.selector, 1, 2));
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidChild.selector, 1, 2));
     }
 
     function test_RevertWhen_ANodeIsUnreachable() public {
         Node[] memory _tree = new Node[](2);
         (_tree[0], _tree[1]) = (_leaf(keep), _leaf(keep));
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.UnreachableNode.selector, 1));
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.UnreachableNode.selector, 1));
     }
 
     function test_RevertWhen_ABranchHasNoSplitter() public {
         Node[] memory _tree = _fork(NO_ACTION, 500_000, keep, 500_000, keep);
         _tree[0].splitter = ISplitter(address(0));
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidSplitter.selector, 0));
     }
 
     function test_RevertWhen_ABoundActionBelowTheRootUsesAnotherBudget() public {
@@ -165,7 +171,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _tree[3] = _leaf(keep);
 
         _expectInitRevert(
-            _deployBudget(RATE, 0), _tree, abi.encodeWithSelector(CapitalPipelinePlugin.BudgetMismatch.selector, 2)
+            _deployBudget(RATE, 0), _tree, abi.encodeWithSelector(CapitalTreePlugin.BudgetMismatch.selector, 2)
         );
     }
 
@@ -175,7 +181,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(
             budget,
             _one(_implementation),
-            abi.encodeWithSelector(CapitalPipelinePlugin.ForeignComponent.selector, address(_implementation))
+            abi.encodeWithSelector(CapitalTreePlugin.ForeignComponent.selector, address(_implementation))
         );
     }
 
@@ -185,7 +191,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(
             budget,
             _one(_foreign),
-            abi.encodeWithSelector(CapitalPipelinePlugin.ForeignComponent.selector, address(_foreign))
+            abi.encodeWithSelector(CapitalTreePlugin.ForeignComponent.selector, address(_foreign))
         );
     }
 
@@ -198,9 +204,7 @@ contract CapitalPipelinePluginTest is Fixture {
         );
 
         _expectInitRevert(
-            _foreign,
-            _one(keep),
-            abi.encodeWithSelector(CapitalPipelinePlugin.ForeignComponent.selector, address(_foreign))
+            _foreign, _one(keep), abi.encodeWithSelector(CapitalTreePlugin.ForeignComponent.selector, address(_foreign))
         );
     }
 
@@ -208,7 +212,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(
             _deployBudget(RATE, 0),
             _chain(action, keep),
-            abi.encodeWithSelector(CapitalPipelinePlugin.BudgetMismatch.selector, 0)
+            abi.encodeWithSelector(CapitalTreePlugin.BudgetMismatch.selector, 0)
         );
     }
 
@@ -230,8 +234,7 @@ contract CapitalPipelinePluginTest is Fixture {
 
     /// The example tree: swap, burn 95%, send 5% to a fee address
     function test_BuybackBurnsAndPaysAFee() public {
-        CapitalPipelinePlugin _plugin =
-            _deployPlugin(budget, _fork(action, 950_000, burn, 50_000, _deployTransfer(fee)));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _fork(action, 950_000, burn, 50_000, _deployTransfer(fee)));
         MockFiller _filler = new MockFiller(_plugin);
         tokenB.mint(address(_filler), DEMAND);
         uint256 _supply = tokenB.totalSupply();
@@ -244,7 +247,7 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_ABranchWithoutActionSplitsTheBudget() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(
+        CapitalTreePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(tokenA),
             _fork(NO_ACTION, 500_000, _deployTransfer(alice), 500_000, _deployTransfer(bob))
         );
@@ -256,7 +259,7 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_KeepIsAnExplicitLeaf() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(action, keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(action, keep));
         MockFiller _filler = new MockFiller(_plugin);
         tokenB.mint(address(_filler), DEMAND);
 
@@ -266,8 +269,8 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_BudgetCommitsOnceAfterTheWholeTree() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, 0);
-        CapitalPipelinePlugin _plugin =
+        StreamBudget _budget = _deployBudget(RATE, 0);
+        CapitalTreePlugin _plugin =
             _deployPlugin(_budget, _fork(NO_ACTION, 500_000, _deployTransfer(alice), 500_000, _deployTransfer(bob)));
         vm.warp(block.timestamp + EPOCH);
 
@@ -292,7 +295,7 @@ contract CapitalPipelinePluginTest is Fixture {
 
     /// The stream's cap, not the action, limits the offer
     function test_TheStreamCapLimitsTheOffer() public {
-        FundedStreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
+        StreamBudget _budget = _deployBudget(RATE, STREAM_CAP);
         MockFiller _filler = new MockFiller(_deployPlugin(_budget, _chain(_deployAction(_budget), keep)));
         tokenB.mint(address(_filler), DEMAND);
         vm.warp(block.timestamp + 5 * EPOCH); // 50 A streamed, capped at 20
@@ -335,11 +338,11 @@ contract CapitalPipelinePluginTest is Fixture {
     /// The DAO holds none of the token: the budget brings it in before the root pays it out
     function test_TheBudgetFundsTheDaoBeforeTheRoot() public {
         (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
         vm.expectEmit(address(_plugin));
         // The first trigger counts the nonce up to 1; fund actions run at execution index 0
-        emit CapitalPipelinePlugin.BudgetFunded(_executionIdOf(address(_plugin), 1, 0));
+        emit CapitalTreePlugin.BudgetFunded(_executionIdOf(address(_plugin), 1, 0));
         _plugin.trigger("", noData);
 
         assertEq(_held.balanceOf(alice), 10 ether);
@@ -351,7 +354,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_TheBudgetFundsLessThanItReleases() public {
         (MockHolderBudget _budget,) = _holderBudget(10 ether);
         _budget.setDelivered(9 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
         _plugin.trigger("", noData);
@@ -362,9 +365,9 @@ contract CapitalPipelinePluginTest is Fixture {
         (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
         _held.mint(address(dao), 10 ether);
         _budget.setDelivered(9 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.BudgetExceeded.selector, 0, 1 ether));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.BudgetExceeded.selector, 0, 1 ether));
         _plugin.trigger("", noData);
     }
 
@@ -373,7 +376,7 @@ contract CapitalPipelinePluginTest is Fixture {
         (MockHolderBudget _budget, ERC20Mock _held) = _holderBudget(10 ether);
         _held.mint(address(_budget), 2 ether);
         _budget.setDelivered(12 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
         _plugin.trigger("", noData);
 
@@ -385,9 +388,9 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_AFundActionTargetsTheDao() public {
         (MockHolderBudget _budget,) = _holderBudget(10 ether);
         _budget.setFundTarget(address(dao));
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, 0, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsDao.selector, 0, 0));
         _plugin.trigger("", noData);
     }
 
@@ -443,7 +446,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_AOneTokenNodeForwardsItsInputAndItsIncome() public {
         Node[] memory _tree = _chain(_income(NO_TOKEN, 3 ether, 0, 0), _deployTransfer(alice));
         _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger("", noData);
 
@@ -452,7 +455,7 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_AOneTokenDeclaredNodeKeepsItsIncome() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(
+        CapitalTreePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(tokenA), _chain(_income(NO_TOKEN, 3 ether, 0, 0), _deployTransfer(alice))
         );
 
@@ -466,7 +469,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_ATwoTokenNodeWithNoMinimumForwardsWhatArrived() public {
         Node[] memory _tree = _chain(_income(tokenB, 20 ether, 0, 0), _deployTransfer(alice));
         _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger("", noData);
 
@@ -477,11 +480,11 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_AOneTokenForwardingNodeLosesTokens() public {
         Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 1 ether, 0), keep);
         _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                CapitalPipelinePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A, DAO_A - 1 ether
+                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A, DAO_A - 1 ether
             )
         );
         _plugin.trigger("", noData);
@@ -491,22 +494,18 @@ contract CapitalPipelinePluginTest is Fixture {
         Node[] memory _tree = _chain(_bad(BadAction.Mode.Pass), keep);
         _tree[1].forwardSurplus = true;
 
-        _expectInitRevert(
-            budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidForwardSurplus.selector, 1)
-        );
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidForwardSurplus.selector, 1));
     }
 
     function test_RevertWhen_ABranchWithoutActionForwardsSurplus() public {
         Node[] memory _tree = _fork(NO_ACTION, 500_000, keep, 500_000, keep);
         _tree[0].forwardSurplus = true;
 
-        _expectInitRevert(
-            budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidForwardSurplus.selector, 0)
-        );
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidForwardSurplus.selector, 0));
     }
 
     function test_PreconditionsCanBlockANode() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Block), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Block), keep));
 
         vm.expectRevert(BadAction.Blocked.selector);
         _plugin.trigger("", noData);
@@ -521,8 +520,39 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_RevertWhen_DataLengthMismatch() public {
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.DataLengthMismatch.selector, 3, 1));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.DataLengthMismatch.selector, 3, 1));
         plugin.trigger("", new bytes[](1));
+    }
+
+    /// Each action gets its node's entry, the same bytes in `build` and `preconditions`
+    function test_EachActionGetsItsNodeData() public {
+        CapitalTreePlugin _plugin =
+            _deployPlugin(_deployBalanceBudget(tokenA), _fork(NO_ACTION, 500_000, keep, 500_000, toBeneficiary));
+        bytes[] memory _data = new bytes[](3);
+        _data[2] = abi.encode(alice);
+        Asset memory _half = Asset(tokenA, DAO_A / 2);
+
+        vm.expectCall(address(keep), abi.encodeCall(INodeAction.build, (address(this), "", _half)));
+        vm.expectCall(address(toBeneficiary), abi.encodeCall(INodeAction.build, (address(this), _data[2], _half)));
+        vm.expectCall(
+            address(toBeneficiary),
+            abi.encodeCall(INodeAction.preconditions, (address(this), _data[2], _half, Asset(tokenA, 0)))
+        );
+        _plugin.trigger("", _data);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A / 2);
+    }
+
+    /// No node data: every action gets empty bytes
+    function test_WithoutNodeDataActionsGetEmptyBytes() public {
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+        Asset memory _input = Asset(tokenA, DAO_A);
+
+        vm.expectCall(address(keep), abi.encodeCall(INodeAction.build, (address(this), "", _input)));
+        vm.expectCall(
+            address(keep), abi.encodeCall(INodeAction.preconditions, (address(this), "", _input, Asset(tokenA, 0)))
+        );
+        _plugin.trigger("", noData);
     }
 
     // =========================================================================================
@@ -532,7 +562,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_TheBudgetIsEmpty() public {
         filler.fillWithoutData(); // the auction restarts at 0
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 0));
         filler.fillWithoutData();
     }
 
@@ -540,12 +570,12 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_RevertWhen_AShareRoundsToZero() public {
         ERC20Mock _dust = new ERC20Mock("Dust", "D");
         _dust.mint(address(dao), 19); // 5% of 19 rounds to 0
-        CapitalPipelinePlugin _plugin = _deployPlugin(
+        CapitalTreePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(IERC20(address(_dust))),
             _fork(NO_ACTION, 950_000, _deployTransfer(alice), 50_000, _deployTransfer(bob))
         );
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 2));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 2));
         _plugin.trigger("", noData);
     }
 
@@ -555,7 +585,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _dust.mint(address(dao), 19);
         Node[] memory _tree = _fork(NO_ACTION, 950_000, _deployTransfer(alice), 50_000, _deployTransfer(bob));
         _tree[2].skipWhenEmpty = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_dust))), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_dust))), _tree);
 
         _plugin.trigger("", noData);
 
@@ -571,7 +601,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _tree[2] = _then(_bad(BadAction.Mode.Pass), 3);
         _tree[2].skipWhenEmpty = true;
         _tree[3] = _leaf(keep);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger("", noData);
 
@@ -582,41 +612,41 @@ contract CapitalPipelinePluginTest is Fixture {
         Node[] memory _tree = _one(keep);
         _tree[0].skipWhenEmpty = true;
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.SkippableRoot.selector));
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.SkippableRoot.selector));
     }
 
     /// Its child then receives nothing
     function test_RevertWhen_TheRootOutputsNothing() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Skip), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Skip), keep));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 1));
         _plugin.trigger("", noData);
     }
 
     /// A leaf below a branch without an action can't output anything either
     function test_RevertWhen_ALeafBelowABranchOutputsSomething() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(
+        CapitalTreePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(tokenA), _fork(NO_ACTION, 500_000, _bad(BadAction.Mode.TakeHalf), 500_000, keep)
         );
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputWithoutChildren.selector, 1, DAO_A / 4));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.OutputWithoutChildren.selector, 1, DAO_A / 4));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_AChildOutputsNothing() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(
+        CapitalTreePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), _bad(BadAction.Mode.Skip), keep)
         );
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 2));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 2));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_ALeafLeavesOutputBehind() public {
         MockSwapAction _swap = new MockSwapAction(new MockExchange(2e18), tokenB, address(dao));
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_swap));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_swap));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.OutputWithoutChildren.selector, 0, 2 * DAO_A));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.OutputWithoutChildren.selector, 0, 2 * DAO_A));
         _plugin.trigger("", noData);
     }
 
@@ -625,8 +655,7 @@ contract CapitalPipelinePluginTest is Fixture {
     // =========================================================================================
 
     function test_ASplitterDividesABranchOutput() public {
-        CapitalPipelinePlugin _plugin =
-            _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, 30 ether)));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, 30 ether)));
 
         _plugin.trigger("", noData);
 
@@ -665,7 +694,7 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_ASplitterCanLeaveOutAChildThatMaySkip() public {
         Node[] memory _tree = _splitBy(_capSplitter(dao, DAO_A));
         _tree[2].skipWhenEmpty = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger("", noData);
 
@@ -674,27 +703,27 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function test_RevertWhen_ASplitterGivesNothingToAChildThatCannotSkip() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, DAO_A)));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_capSplitter(dao, DAO_A)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.EmptyInput.selector, 2));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 2));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_ASplitDoesNotAddUp() public {
         uint256[] memory _amounts = new uint256[](2);
         (_amounts[0], _amounts[1]) = (DAO_A / 2, DAO_A / 2 - 1);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplit.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.InvalidSplit.selector, 0));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_ASplitHasTheWrongLength() public {
         uint256[] memory _amounts = new uint256[](1);
         _amounts[0] = DAO_A;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplit.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.InvalidSplit.selector, 0));
         _plugin.trigger("", noData);
     }
 
@@ -702,7 +731,7 @@ contract CapitalPipelinePluginTest is Fixture {
         Node[] memory _tree = _chain(_bad(BadAction.Mode.Pass), keep);
         _tree[0].splitter = _capSplitter(dao, 1);
 
-        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0));
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidSplitter.selector, 0));
     }
 
     /// Weights for 3 children on a 2-child branch are rejected when the flow is set
@@ -713,7 +742,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(
             budget,
             _splitBy(_deployWeightSplitter(_weights)),
-            abi.encodeWithSelector(CapitalPipelinePlugin.InvalidSplitter.selector, 0)
+            abi.encodeWithSelector(CapitalTreePlugin.InvalidSplitter.selector, 0)
         );
     }
 
@@ -723,7 +752,7 @@ contract CapitalPipelinePluginTest is Fixture {
         _expectInitRevert(
             budget,
             _splitBy(_foreign),
-            abi.encodeWithSelector(CapitalPipelinePlugin.ForeignComponent.selector, address(_foreign))
+            abi.encodeWithSelector(CapitalTreePlugin.ForeignComponent.selector, address(_foreign))
         );
     }
 
@@ -751,7 +780,7 @@ contract CapitalPipelinePluginTest is Fixture {
         MockFiller _filler = _overpayingFiller(_tree, 50 ether);
 
         _expectNodeExecuted(
-            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND + 50 ether)
+            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND + 50 ether), 50 ether
         );
         _filler.fillWithoutData();
     }
@@ -760,7 +789,9 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_ADeclaredNodePassesOnTheDeclaredAmount() public {
         MockFiller _filler = _overpayingFiller(_chain(action, keep), 50 ether);
 
-        _expectNodeExecuted(address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND));
+        _expectNodeExecuted(
+            address(_filler.plugin()), address(_filler), Asset(tokenA, RATE), Asset(tokenB, DEMAND), 50 ether
+        );
         _filler.fillWithoutData();
     }
 
@@ -768,16 +799,68 @@ contract CapitalPipelinePluginTest is Fixture {
     function test_AOneTokenForwardingNodePassesOnItsInputPlusTheNetChange() public {
         Node[] memory _tree = _chain(_income(NO_TOKEN, 20 ether, 10 ether, 0), keep);
         _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
-        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A + 10 ether));
+        _expectNodeExecuted(
+            address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A + 10 ether), 10 ether
+        );
         _plugin.trigger("", noData);
+    }
+
+    /// With one token, a node that pays a 2 A cost and declares the 98 A left has no surplus
+    function test_AOneTokenNodeWithACostHasNoSurplus() public {
+        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 2 ether, -2 ether), keep);
+        _tree[0].forwardSurplus = true;
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, DAO_A - 2 ether), 0);
+        _plugin.trigger("", noData);
+    }
+
+    /// A keep leaf leaves its whole input in the DAO, but a leaf has no children: no surplus
+    function test_ALeafReportsNoSurplus() public {
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenA, 0), 0);
+        _plugin.trigger("", noData);
+    }
+
+    /// Another token, none declared, no forwarding: the plugin doesn't read that token, so the 20 B
+    /// that came in aren't reported
+    function test_AnUnmeasuredOutputReportsNoSurplus() public {
+        Node[] memory _tree = _chain(_income(tokenB, 20 ether, 0, 0), keep);
+        _tree[1].skipWhenEmpty = true;
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
+
+        _expectNodeExecuted(address(_plugin), address(this), Asset(tokenA, DAO_A), Asset(tokenB, 0), 0);
+        _plugin.trigger("", noData);
+
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 20 ether);
+    }
+
+    /// The last event of a run, after the budget's commit
+    function test_FlowExecutedFollowsTheBudgetCommit() public {
+        vm.expectEmit(address(plugin));
+        emit CapitalTreePlugin.BudgetCommitted(_executionIdOf(address(plugin), 1, 4));
+        vm.expectEmit(address(plugin));
+        emit CapitalTreePlugin.FlowExecuted(address(filler), 1, Asset(tokenA, RATE));
+        filler.fillWithoutData();
+    }
+
+    /// Without commit actions too, once per trigger, with that trigger's nonce
+    function test_FlowExecutedIsEmittedOncePerTrigger() public {
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+
+        for (uint64 _nonce = 1; _nonce <= 2; ++_nonce) {
+            vm.expectEmit(address(_plugin));
+            emit CapitalTreePlugin.FlowExecuted(address(this), _nonce, Asset(tokenA, DAO_A));
+            _plugin.trigger("", noData);
+        }
     }
 
     /// Two fillers, or a solver batching triggers, in the same block: indexers can still tell them apart
     function test_TwoTriggersInOneBlockGetTheirOwnExecutionIds() public {
-        CapitalPipelinePlugin _plugin =
-            _deployPlugin(_deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), keep));
 
         bytes32 _first = _triggerAndGetRootExecutionId(_plugin);
         bytes32 _second = _triggerAndGetRootExecutionId(_plugin);
@@ -788,7 +871,7 @@ contract CapitalPipelinePluginTest is Fixture {
     /// A branch without an action runs nothing: its splitter shares the input as it came
     function test_ABranchWithoutActionPassesOnItsInput() public {
         ISplitter _splitter = _capSplitter(dao, 30 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_splitter));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_splitter));
 
         vm.expectCall(address(_splitter), abi.encodeCall(ISplitter.split, (address(this), Asset(tokenA, DAO_A), 2)));
         _plugin.trigger("", noData);
@@ -799,23 +882,23 @@ contract CapitalPipelinePluginTest is Fixture {
     // =========================================================================================
 
     function test_RevertWhen_AnActionTargetsTheDao() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetDao), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetDao), keep));
 
         // Node 0 runs at execution index 1
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsDao.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsDao.selector, 1, 0));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_AnActionTargetsThePlugin() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetPlugin), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.TargetPlugin), keep));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.ActionTargetsPlugin.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.ActionTargetsPlugin.selector, 1, 0));
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_ACheckChangesState() public {
         WritingCheckAction _writer = new WritingCheckAction(address(dao));
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(INodeAction(address(_writer)), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(INodeAction(address(_writer)), keep));
 
         vm.expectRevert(); // the write fails in the static call, with no revert data
         _plugin.trigger("", noData);
@@ -835,23 +918,23 @@ contract CapitalPipelinePluginTest is Fixture {
     // =========================================================================================
 
     function test_RevertWhen_AnActionDeclaresOutputItNeverProduced() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Lie), keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _chain(_bad(BadAction.Mode.Lie), keep));
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                CapitalPipelinePlugin.UnexpectedBalance.selector, 0, address(tokenB), DAO_B + 10 ether, DAO_B
+                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenB), DAO_B + 10 ether, DAO_B
             )
         );
         _plugin.trigger("", noData);
     }
 
     function test_RevertWhen_AnActionSpendsMoreThanItDeclared() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(_bad(BadAction.Mode.Drain)));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _one(_bad(BadAction.Mode.Drain)));
 
         // The root declared RATE but moved twice that
         vm.expectRevert(
             abi.encodeWithSelector(
-                CapitalPipelinePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A - RATE, DAO_A - 2 * RATE
+                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A - RATE, DAO_A - 2 * RATE
             )
         );
         _plugin.trigger("", noData);
@@ -880,25 +963,29 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     /// @dev Triggers `_plugin` once and returns the execution ID its root (node 0) emitted
-    function _triggerAndGetRootExecutionId(CapitalPipelinePlugin _plugin) internal returns (bytes32) {
+    function _triggerAndGetRootExecutionId(CapitalTreePlugin _plugin) internal returns (bytes32) {
         vm.recordLogs();
         _plugin.trigger("", noData);
         Vm.Log[] memory _logs = vm.getRecordedLogs();
         for (uint256 i; i < _logs.length; ++i) {
             bool _isRoot = _logs[i].emitter == address(_plugin)
-                && _logs[i].topics[0] == CapitalPipelinePlugin.NodeExecuted.selector && uint256(_logs[i].topics[1]) == 0;
+                && _logs[i].topics[0] == CapitalTreePlugin.NodeExecuted.selector && uint256(_logs[i].topics[1]) == 0;
             // The execution ID is the first non-indexed field
             if (_isRoot) return abi.decode(_logs[i].data, (bytes32));
         }
         revert("no NodeExecuted for the root");
     }
 
-    /// @dev The root (node 0) of `_plugin`'s first trigger emits exactly this input and output
-    function _expectNodeExecuted(address _plugin, address _caller, Asset memory _input, Asset memory _output)
-        internal
-    {
+    /// @dev The root (node 0) of `_plugin`'s first trigger emits exactly this input, output and surplus
+    function _expectNodeExecuted(
+        address _plugin,
+        address _caller,
+        Asset memory _input,
+        Asset memory _output,
+        uint256 _surplus
+    ) internal {
         vm.expectEmit(_plugin);
-        emit CapitalPipelinePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 1), _input, _output);
+        emit CapitalTreePlugin.NodeExecuted(0, _caller, _executionIdOf(_plugin, 1, 1), _input, _output, _surplus);
     }
 
     /// @dev The plugin's address, the trigger's nonce and the execution index, packed in 32 bytes
@@ -949,8 +1036,7 @@ contract CapitalPipelinePluginTest is Fixture {
     }
 
     function _expectInitRevert(IBudget _budget, Node[] memory _tree, bytes memory _error) internal {
-        CapitalPipelinePlugin _plugin =
-            CapitalPipelinePlugin(ProxyLib.deployMinimalProxy(address(new CapitalPipelinePlugin()), ""));
+        CapitalTreePlugin _plugin = CapitalTreePlugin(ProxyLib.deployMinimalProxy(address(new CapitalTreePlugin()), ""));
         vm.expectRevert(_error);
         _plugin.initialize(dao, _budget, _tree);
     }

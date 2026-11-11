@@ -2,14 +2,14 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./helpers/Fixture.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {Node} from "../src/lib/types.sol";
 import {MockFiller} from "./mocks/MockFiller.sol";
 
 /// @notice Fills after stream-cap and demand changes, including a capped stream shared with grants.
 contract OpenFillStreamCapTest is Fixture {
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
     MockFiller internal filler;
 

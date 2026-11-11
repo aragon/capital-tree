@@ -7,12 +7,12 @@ import {
 } from "@aragon/osx-commons-contracts/src/permission/auth/DaoAuthorizableUpgradeable.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
 import {Asset} from "../lib/types.sol";
-import {RATIO_BASE, MANAGER_PERMISSION_ID} from "../lib/constants.sol";
+import {RATIO_BASE, SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title WeightSplitter
 /// @notice Splits a branch's output by weights: one per child, in the node's child order, each
 ///         non-zero, summing to RATIO_BASE. The rounding remainder goes to the largest weight.
-///         Holders of MANAGER_PERMISSION_ID can change them.
+///         Holders of SET_SETTINGS_PERMISSION_ID can change them.
 contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
     uint32[] internal _weights;
 
@@ -33,7 +33,7 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
 
     /// @notice Replaces the weights from the next trigger on
     /// @dev Keeps their number: the node's children only change with `setFlow`
-    function setWeights(uint32[] calldata _newWeights) external auth(MANAGER_PERMISSION_ID) {
+    function setWeights(uint32[] calldata _newWeights) external auth(SET_SETTINGS_PERMISSION_ID) {
         if (_newWeights.length != _weights.length) revert WeightCountChanged(_weights.length, _newWeights.length);
         _setWeights(_newWeights);
     }
@@ -49,7 +49,9 @@ contract WeightSplitter is ISplitter, DaoAuthorizableUpgradeable {
     }
 
     /// @inheritdoc ISplitter
-    /// @dev Returns one amount per weight; the plugin reverts if that isn't one per child
+    /// @dev Returns one amount per weight and ignores the child count. A weight count that doesn't
+    ///      match the node's children reverts in the plugin: in `_checkNode` (`InvalidSplitter`) when
+    ///      the flow is set, and in `_split` (`InvalidSplit`) on a trigger.
     function split(address, Asset calldata _output, uint256) external view returns (uint256[] memory _amounts) {
         uint32[] memory _w = _weights;
         uint256 _count = _w.length;

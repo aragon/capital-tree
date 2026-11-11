@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {CapitalPipelinePlugin} from "../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
 import {BalanceBudget} from "../src/budgets/BalanceBudget.sol";
 import {TransferAction} from "../src/actions/TransferAction.sol";
 import {TransferBase} from "../src/actions/base/TransferBase.sol";
@@ -25,7 +25,7 @@ contract LeafActionsTest is Fixture {
     // Transfer
 
     function test_TransferSendsTheWholeInput() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(_deployTransfer(alice)));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _one(_deployTransfer(alice)));
 
         _plugin.trigger("", noData);
 
@@ -40,7 +40,7 @@ contract LeafActionsTest is Fixture {
         uint256 _before = tokenA.balanceOf(alice);
 
         bytes memory _snapshot = _transfer.preconditions(address(0), "", _in, _out);
-        assertEq(_snapshot, abi.encode(alice, DAO_A, _before));
+        assertEq(_snapshot, abi.encode(alice, _before));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -56,7 +56,7 @@ contract LeafActionsTest is Fixture {
     function test_RevertWhen_ATransferSilentlyFails() public {
         FalseReturnToken _token = new FalseReturnToken(0);
         _token.mint(address(dao), 100 ether);
-        CapitalPipelinePlugin _plugin =
+        CapitalTreePlugin _plugin =
             _deployPlugin(_deployBalanceBudget(IERC20(address(_token))), _one(_deployTransfer(alice)));
 
         // The transfer returns false; the postcondition catches it
@@ -76,7 +76,7 @@ contract LeafActionsTest is Fixture {
     // Transfer to beneficiary
 
     function test_RevertWhen_ThereIsNoBeneficiary() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(toBeneficiary));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _one(toBeneficiary));
 
         vm.expectRevert(TransferToBeneficiaryAction.NoBeneficiary.selector);
         _plugin.trigger("", noData);
@@ -85,7 +85,7 @@ contract LeafActionsTest is Fixture {
     // Burn
 
     function test_BurnLowersTheSupply() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(burn));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _one(burn));
         uint256 _supply = tokenA.totalSupply();
 
         _plugin.trigger("", noData);
@@ -111,7 +111,7 @@ contract LeafActionsTest is Fixture {
     function test_RevertWhen_TheTokenIgnoresBurn() public {
         FallbackToken _token = new FallbackToken();
         _token.mint(address(dao), 100 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_token))), _one(burn));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(IERC20(address(_token))), _one(burn));
 
         // The burn is a no-op; the postcondition catches it
         vm.expectRevert(abi.encodeWithSelector(BurnAction.NotBurned.selector, address(_token), 0, 100 ether));
@@ -121,7 +121,7 @@ contract LeafActionsTest is Fixture {
     // Keep
 
     function test_KeepLeavesTheInputInTheDao() public {
-        CapitalPipelinePlugin _plugin = _deployPlugin(budget, _one(keep));
+        CapitalTreePlugin _plugin = _deployPlugin(budget, _one(keep));
 
         _plugin.trigger("", noData);
 
@@ -135,7 +135,7 @@ contract LeafActionsTest is Fixture {
     function test_RevertWhen_ARepeatedRecipientMissesATransfer() public {
         FalseReturnToken _token = new FalseReturnToken(1); // the second transfer silently fails
         _token.mint(address(dao), 100 ether);
-        CapitalPipelinePlugin _plugin = _deployPlugin(
+        CapitalTreePlugin _plugin = _deployPlugin(
             _deployBalanceBudget(IERC20(address(_token))),
             _fork(NO_ACTION, 500_000, _deployTransfer(alice), 500_000, _deployTransfer(alice))
         );

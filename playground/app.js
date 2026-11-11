@@ -12,7 +12,7 @@ const load = (path) =>
     return r.json();
   });
 
-const SAVED = "capital-pipeline-graphs";
+const SAVED = "capital-tree-graphs";
 let ctx;
 let editor;
 let recipe = null; // the recipe the graph describes, or null while it isn't valid
@@ -59,7 +59,7 @@ async function refresh() {
 // Graph editor
 
 const GROUPS = [
-  ["Budgets", ["FundedStreamBudget@1", "BalanceBudget@1", "MerkleClaimBudget@1"]],
+  ["Budgets", ["StreamBudget@1", "BalanceBudget@1", "MerkleClaimBudget@1"]],
   ["Actions", ["OpenFillAction@1"]],
   ["Splits", [graph.BRANCH]],
   ["Leaves", ["TransferAction@1", "TransferToBeneficiaryAction@1", "BurnAction@1", "KeepAction@1"]],

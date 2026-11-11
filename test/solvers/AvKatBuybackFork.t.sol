@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {IDonationVault} from "../../src/interfaces/IDonationVault.sol";
-import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
+import {GenericFillSolver} from "../../src/solvers/GenericFillSolver.sol";
 import {WeightSplitter} from "../../src/splitters/WeightSplitter.sol";
 import {Node} from "../../src/lib/types.sol";
 import {Recipes} from "../../script/Recipes.sol";

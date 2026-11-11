@@ -8,13 +8,13 @@
         {
           "name": "params",
           "type": "tuple",
-          "internalType": "struct CapitalPipelinePluginSetup.InstallParams",
+          "internalType": "struct CapitalTreePluginSetup.InstallParams",
           "description": "The recipe.",
           "components": [
             {
               "name": "components",
               "type": "tuple[]",
-              "internalType": "struct CapitalPipelinePluginSetup.Component[]",
+              "internalType": "struct CapitalTreePluginSetup.Component[]",
               "description": "Components to clone, initialized in this order.",
               "components": [
                 {
@@ -73,7 +73,7 @@
             {
               "name": "grants",
               "type": "tuple[]",
-              "internalType": "struct CapitalPipelinePluginSetup.Grant[]",
+              "internalType": "struct CapitalTreePluginSetup.Grant[]",
               "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin (PLUGIN_REF) or one of the recipe's components (ref(i)).",
               "components": [
                 {
@@ -104,7 +104,7 @@
         {
           "name": "grants",
           "type": "tuple[]",
-          "internalType": "struct CapitalPipelinePluginSetup.Grant[]",
+          "internalType": "struct CapitalTreePluginSetup.Grant[]",
           "description": "Permissions to grant, beyond EXECUTE and CONFIGURE which the setup always grants. Each may only target the plugin (PLUGIN_REF) or one of the recipe's components (ref(i)).",
           "components": [
             {

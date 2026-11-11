@@ -5,19 +5,19 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
+import {GenericFillSolver} from "../../src/solvers/GenericFillSolver.sol";
 import {Node} from "../../src/lib/types.sol";
 import {TRIGGER_PERMISSION_ID} from "../../src/lib/constants.sol";
 import {Fixture} from "../helpers/Fixture.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
 contract GenericFillSolverTest is Fixture {
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
-    CapitalPipelinePlugin internal plugin;
+    CapitalTreePlugin internal plugin;
     GenericFillSolver internal solver;
 
     function setUp() public override {
@@ -144,7 +144,7 @@ contract GenericFillSolverTest is Fixture {
         bytes[] memory data = new bytes[](1);
         data[0] = abi.encode(_calls(RATE, DEMAND, address(dao)));
 
-        vm.expectRevert(abi.encodeWithSelector(CapitalPipelinePlugin.DataLengthMismatch.selector, 2, 1));
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.DataLengthMismatch.selector, 2, 1));
         solver.trigger(data);
     }
 
@@ -157,7 +157,7 @@ contract GenericFillSolverTest is Fixture {
     }
 
     function test_RevertWhen_CallbackDataIsEmpty() public {
-        // An empty pipeline array is valid, but this solver needs an encoded Action[].
+        // An empty node data array is valid for the plugin, but this solver needs an encoded Action[].
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
         solver.trigger(new bytes[](0));
     }
@@ -184,7 +184,7 @@ contract GenericFillSolverTest is Fixture {
         _assertUnfilled(checkpoint);
     }
 
-    function test_RevertWhen_BatchReentersPipeline() public {
+    function test_RevertWhen_BatchReentersThePlugin() public {
         Action[] memory calls = new Action[](1);
         calls[0] = Action(address(plugin), 0, abi.encodeCall(plugin.trigger, ("", new bytes[](0))));
         bytes[] memory data = _data(calls);
@@ -209,7 +209,7 @@ contract GenericFillSolverTest is Fixture {
         solver.trigger(data);
     }
 
-    function test_RevertWhen_PipelinePaused() public {
+    function test_RevertWhen_PluginPaused() public {
         vm.prank(manager);
         plugin.pause();
         bytes[] memory data = _data(_calls(RATE, DEMAND, address(dao)));
@@ -312,7 +312,7 @@ contract GenericFillSolverTest is Fixture {
 
     function testFuzz_SweepArbitraryTokenAndRecipient(address recipient, uint128 amount, uint128 existing) public {
         vm.assume(recipient != address(0) && recipient != address(solver));
-        // A fresh token outside the pipeline's offered/demanded pair.
+        // A fresh token outside the flow's offered/demanded pair.
         ERC20Mock other = new ERC20Mock("Other", "OTHER");
         other.mint(address(solver), uint256(amount));
         other.mint(recipient, uint256(existing));

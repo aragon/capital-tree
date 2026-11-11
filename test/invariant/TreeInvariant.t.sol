@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
 import {Node} from "../../src/lib/types.sol";
 import {Fixture} from "../helpers/Fixture.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
@@ -13,7 +13,7 @@ import {MockFiller} from "../mocks/MockFiller.sol";
 /// @notice Random fills, deposits, syncs and manager tweaks. No call may revert.
 /// @dev Read anything a bound needs before `vm.prank`: the prank applies to the very next call.
 contract Handler is Test {
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
     MockFiller internal filler;
     ERC20Mock internal tokenA;
@@ -21,7 +21,7 @@ contract Handler is Test {
     address internal manager;
 
     constructor(
-        FundedStreamBudget _budget,
+        StreamBudget _budget,
         OpenFillAction _action,
         MockFiller _filler,
         ERC20Mock _tokenA,
@@ -70,17 +70,17 @@ contract Handler is Test {
     }
 }
 
-contract PipelineInvariantTest is Fixture {
+contract TreeInvariantTest is Fixture {
     MockFiller internal filler;
 
     function setUp() public override {
         super.setUp();
-        FundedStreamBudget _budget = _deployBudget(RATE, 0);
+        StreamBudget _budget = _deployBudget(RATE, 0);
         OpenFillAction _action = _deployAction(_budget);
         // Forwarding the surplus, so whatever the filler overpays is split too
         Node[] memory _tree = _splitToBurnAndFee(_action);
         _tree[0].forwardSurplus = true;
-        CapitalPipelinePlugin _plugin = _deployPlugin(_budget, _tree);
+        CapitalTreePlugin _plugin = _deployPlugin(_budget, _tree);
 
         filler = new MockFiller(_plugin);
         tokenB.mint(address(filler), type(uint128).max);

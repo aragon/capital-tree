@@ -2,7 +2,7 @@
   "release": "",
   "build": "",
   "components": {
-    "FundedStreamBudget": "",
+    "StreamBudget": "",
     "BalanceBudget": "",
     "OpenFillAction": "",
     "MerkleClaimBudget": "",

@@ -1,7 +1,7 @@
 {
   "name": "WeightSplitter",
   "version": 1,
-  "description": "Splitter. Divides a branch's output among its children by weights; the rounding remainder goes to the largest weight. The weights change through setWeights, which needs MANAGER_PERMISSION_ID.",
+  "description": "Splitter. Divides a branch's output among its children by weights; the rounding remainder goes to the largest weight. The weights change through setWeights, which needs SET_SETTINGS_PERMISSION_ID.",
   "initialize": {
     "inputs": [
       {

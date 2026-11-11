@@ -5,28 +5,29 @@ import {Script} from "forge-std/Script.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {CapitalPipelinePlugin} from "../../src/CapitalPipelinePlugin.sol";
-import {FundedStreamBudget} from "../../src/budgets/FundedStreamBudget.sol";
+import {CapitalTreePlugin} from "../../src/CapitalTreePlugin.sol";
+import {StreamBudget} from "../../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../../src/actions/OpenFillAction.sol";
 import {KeepAction} from "../../src/actions/KeepAction.sol";
-import {GenericFillSolver} from "../../src/solvers/GenericSwapSolver.sol";
+import {GenericFillSolver} from "../../src/solvers/GenericFillSolver.sol";
 import {Node} from "../../src/lib/types.sol";
 import {
     TRIGGER_PERMISSION_ID,
     CONFIGURE_PERMISSION_ID,
-    MANAGER_PERMISSION_ID,
+    PAUSE_PERMISSION_ID,
+    SET_SETTINGS_PERMISSION_ID,
     CHECKPOINT_PERMISSION_ID
 } from "../../src/lib/constants.sol";
 
-/// @dev Shared in-memory fixture: funded stream -> OpenFill -> Keep. No broadcast.
+/// @dev Shared in-memory fixture: stream -> OpenFill -> Keep. No broadcast.
 abstract contract DeployFlow is Script {
     address internal constant ADMIN = address(0xA11CE);
     uint256 public constant EPOCH = 1 hours;
 
     struct Deployment {
         DAO dao;
-        CapitalPipelinePlugin plugin;
-        FundedStreamBudget budget;
+        CapitalTreePlugin plugin;
+        StreamBudget budget;
         OpenFillAction action;
         GenericFillSolver solver;
         IERC20 sell;
@@ -46,10 +47,10 @@ abstract contract DeployFlow is Script {
         );
         d.sell = sell;
         d.buy = buy;
-        d.budget = FundedStreamBudget(
+        d.budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
-                address(new FundedStreamBudget()),
-                abi.encodeCall(FundedStreamBudget.initialize, (d.dao, sell, amount, amount, EPOCH))
+                address(new StreamBudget()),
+                abi.encodeCall(StreamBudget.initialize, (d.dao, sell, amount, amount, EPOCH))
             )
         );
         d.action = OpenFillAction(
@@ -65,17 +66,16 @@ abstract contract DeployFlow is Script {
         nodes[0].children = new uint32[](1);
         nodes[0].children[0] = 1;
         nodes[1].action = keep;
-        d.plugin = CapitalPipelinePlugin(
+        d.plugin = CapitalTreePlugin(
             ProxyLib.deployMinimalProxy(
-                address(new CapitalPipelinePlugin()),
-                abi.encodeCall(CapitalPipelinePlugin.initialize, (d.dao, d.budget, nodes))
+                address(new CapitalTreePlugin()), abi.encodeCall(CapitalTreePlugin.initialize, (d.dao, d.budget, nodes))
             )
         );
         d.dao.grant(address(d.dao), address(d.plugin), d.dao.EXECUTE_PERMISSION_ID());
         d.dao.grant(address(d.plugin), address(d.dao), CONFIGURE_PERMISSION_ID);
-        d.dao.grant(address(d.plugin), ADMIN, MANAGER_PERMISSION_ID);
-        d.dao.grant(address(d.budget), ADMIN, MANAGER_PERMISSION_ID);
-        d.dao.grant(address(d.action), ADMIN, MANAGER_PERMISSION_ID);
+        d.dao.grant(address(d.plugin), ADMIN, PAUSE_PERMISSION_ID);
+        d.dao.grant(address(d.budget), ADMIN, SET_SETTINGS_PERMISSION_ID);
+        d.dao.grant(address(d.action), ADMIN, SET_SETTINGS_PERMISSION_ID);
         d.dao.grant(address(d.budget), address(d.dao), CHECKPOINT_PERMISSION_ID);
         d.dao.grant(address(d.budget), address(d.action), CHECKPOINT_PERMISSION_ID);
         d.solver = new GenericFillSolver(operator, d.plugin);

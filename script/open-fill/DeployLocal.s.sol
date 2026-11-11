@@ -39,7 +39,7 @@ contract DeployLocal is DeployFlow {
         d.budget.sync();
         vm.warp(block.timestamp + EPOCH);
         console2.log("DAO", address(d.dao));
-        console2.log("Pipeline", address(d.plugin));
+        console2.log("Plugin", address(d.plugin));
         console2.log("Solver", address(d.solver));
     }
 }

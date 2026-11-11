@@ -14,9 +14,9 @@ import {IBudget} from "./interfaces/IBudget.sol";
 import {INodeAction} from "./interfaces/INodeAction.sol";
 import {ISplitter} from "./interfaces/ISplitter.sol";
 import {Asset, Node} from "./lib/types.sol";
-import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, MAX_NODES} from "./lib/constants.sol";
+import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, PAUSE_PERMISSION_ID} from "./lib/constants.sol";
 
-/// @title CapitalPipelinePlugin
+/// @title CapitalTreePlugin
 /// @notice Runs one flow: a budget feeding a tree of actions. The budget gives the root its input
 ///         once, first bringing it into the DAO when it sits elsewhere; every node passes its
 ///         output to its children (split by a splitter when there are several); leaves consume
@@ -30,7 +30,7 @@ import {TRIGGER_PERMISSION_ID, CONFIGURE_PERMISSION_ID, MANAGER_PERMISSION_ID, M
 ///      balance checks: the DAO spent no more than the node's input and received at least its
 ///      declared output. The children get that declared output, or
 ///      everything that arrived when the node is marked `forwardSurplus`.
-contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
+contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     /// @notice What the flow may spend; read and funded at the start, committed at the end
     IBudget public budget;
     /// @dev Makes every execution ID unique, even for two triggers in one block. Counts triggers;
@@ -44,11 +44,23 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     event FlowUpdated(IBudget budget, Node[] nodes);
     /// @param output What the children got: the declared output, or everything that arrived when the
     ///        node forwards its surplus
+    /// @param surplus What arrived above the declared output, whether the children got it or not.
+    ///        0 on a leaf, and 0 when the plugin doesn't measure the output: another token than the
+    ///        input, none declared and no forwarding.
     event NodeExecuted(
-        uint256 indexed nodeIndex, address indexed caller, bytes32 executionId, Asset input, Asset output
+        uint256 indexed nodeIndex,
+        address indexed caller,
+        bytes32 executionId,
+        Asset input,
+        Asset output,
+        uint256 surplus
     );
     event BudgetFunded(bytes32 executionId);
     event BudgetCommitted(bytes32 executionId);
+    /// @notice A trigger ran the whole flow and the budget committed
+    /// @param nonce The trigger's nonce, the same as in its execution IDs
+    /// @param input What the budget gave the root, not what the flow spent
+    event FlowExecuted(address indexed caller, uint64 indexed nonce, Asset input);
 
     // Configuration errors
     error NoBudget();
@@ -84,6 +96,15 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _setFlow(_budget, _newNodes);
     }
 
+    // Views
+
+    /// @notice The flow's nodes; node 0 is the root
+    function nodes() external view returns (Node[] memory) {
+        return _nodes;
+    }
+
+    // Entry points
+
     /// @notice Runs the flow
     /// @param _budgetData Passed to the budget (a Merkle claim's proof); empty for most budgets
     /// @param _nodeData Empty, or one entry per node (passed to that node's action)
@@ -98,7 +119,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
             revert DataLengthMismatch(_nodeCount, _nodeData.length);
         }
 
-        ++_nonce;
+        _nonce += 1;
         IERC20 _token = budget.token();
         uint256 _available = budget.available(msg.sender, _budgetData);
 
@@ -113,6 +134,7 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _checkBudgetSpend(_token, _fundActions.length == 0 ? _available : 0, _before);
 
         _commitBudget(_budgetData);
+        emit FlowExecuted(msg.sender, _nonce, Asset(_token, _available));
     }
 
     /// @notice Replaces the flow. DAO only: an action can return arbitrary DAO actions.
@@ -121,17 +143,13 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
     }
 
     /// @notice Stops the flow until `unpause`
-    function pause() external auth(MANAGER_PERMISSION_ID) {
+    function pause() external auth(PAUSE_PERMISSION_ID) {
         _pause();
     }
 
     /// @notice Resumes the flow
-    function unpause() external auth(MANAGER_PERMISSION_ID) {
+    function unpause() external auth(PAUSE_PERMISSION_ID) {
         _unpause();
-    }
-
-    function nodes() external view returns (Node[] memory) {
-        return _nodes;
     }
 
     // Running the tree
@@ -147,10 +165,12 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         
         Asset memory _output;
         if (address(_node.action) == address(0)) {
-            // If node has no action, the input becomes an output.
-            _output = Asset(_input.token, _input.amount);
+            // If node has no action, the input becomes an output. Both point to the same memory;
+            // nothing below writes to it, since the children get new structs.
+            _output = _input;
         } else {
-            bytes calldata _data = _nodeData.length == 0 ? msg.data[0:0] : _nodeData[_index];
+            bytes memory _data;
+            if (_nodeData.length != 0) _data = _nodeData[_index];
             _output = _runAction(_index, _node.action, _input, _data, _node.children.length == 0);
         }
 
@@ -174,13 +194,10 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         }
     }
 
-    function _runAction(
-        uint256 _index,
-        INodeAction _action,
-        Asset memory _input,
-        bytes calldata _data,
-        bool _isLeaf
-    ) internal returns (Asset memory _output) {
+    function _runAction(uint256 _index, INodeAction _action, Asset memory _input, bytes memory _data, bool _isLeaf)
+        internal
+        returns (Asset memory _output)
+    {
         Action[] memory _daoActions;
         bytes memory _actionSnapshot;
         (_output, _daoActions, _actionSnapshot) = _buildAction(_index, _action, _input, _data, _isLeaf);
@@ -191,29 +208,31 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         _action.postconditions(msg.sender, _input, _output, _actionSnapshot);
         uint256 _arrived = _verifyBalances(_index, _input, _output, _forwardSurplus, _inBefore, _outBefore);
 
+        // Against the declared output, before forwarding replaces it. The balance checks keep it from
+        // underflowing. A leaf reports none: it has no children, and with one token what's left of
+        // its input isn't extra.
+        uint256 _surplus = _isLeaf ? 0 : _arrived - _output.amount;
         // Give the children everything that arrived, not just the declared amount
         if (_forwardSurplus) _output.amount = _arrived;
 
-        emit NodeExecuted(_index, msg.sender, _executionId, _input, _output);
+        emit NodeExecuted(_index, msg.sender, _executionId, _input, _output, _surplus);
     }
 
     /// @dev Builds the node, then calls the action's preconditions on its output.
     ///      The node spends its whole input; the action's postconditions check that it did.
-    function _buildAction(uint256 _index, INodeAction _action, Asset memory _input, bytes calldata _data, bool _isLeaf)
+    function _buildAction(uint256 _index, INodeAction _action, Asset memory _input, bytes memory _data, bool _isLeaf)
         internal
         view
         returns (Asset memory _output, Action[] memory _daoActions, bytes memory _actionSnapshot)
     {
         (_output, _daoActions) = _action.build(msg.sender, _data, _input);
 
-        // `_isLeaf` means the node has no children: it's at the bottom of the tree.
-        // `_output.amount` is how much the node says it produces for its children.
-        // A leaf has no children to give anything to. So if a leaf says "I produce 250 GOV", 
-        // those 250 GOV would arrive in the DAO and nobody would receive them.
+        // A leaf has no children to receive an output. The output depends on the trigger's data and
+        // state, and an action doesn't know where it sits in the tree, so it's checked here, on
+        // every build, before anything runs.
         if (_isLeaf && _output.amount != 0) {
             revert OutputWithoutChildren(_index, _output.amount);
         }
-
 
         _actionSnapshot = _action.preconditions(msg.sender, _data, _input, _output);
     }
@@ -285,7 +304,11 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         return _outAfter > _outBefore ? _outAfter - _outBefore : 0;
     }
 
-    /// @dev Reverts unless `actual + maxSpend >= target`
+    /// @dev A balance floor: after the node ran, the DAO holds at least `_target` minus what the node
+    ///      may spend (`_maxSpend`). For the input token the target is the balance before and the
+    ///      node may spend its input; for another output token it's the balance before plus the
+    ///      declared output, with nothing to spend. With one token both combine into one floor.
+    ///      Net balances only: this doesn't prove where the tokens went or came from.
     function _checkMinBalance(uint256 _index, IERC20 _token, uint256 _actual, uint256 _target, uint256 _maxSpend)
         internal
         pure
@@ -317,7 +340,9 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
 
     // Helpers
 
-    /// @dev The splitter's amounts, which must be one per child and add up to what the children share
+    /// @dev The splitter's amounts, which must be one per child and add up to what the children share.
+    ///      `setFlow` only checks the splitter's `childCount()`; what `split` returns depends on the
+    ///      caller, the amount and the splitter's state, so every trigger checks it.
     function _split(uint256 _index, ISplitter _splitter, Asset memory _output, uint256 _childCount)
         internal
         view
@@ -339,7 +364,8 @@ contract CapitalPipelinePlugin is PluginCloneable, PausableUpgradeable, Reentran
         if (address(_budget) == address(0)) revert NoBudget();
         _checkOwnDao(address(_budget));
         uint256 _nodeCount = _newNodes.length;
-        if (_nodeCount == 0 || _nodeCount > MAX_NODES) revert InvalidNodeCount(_nodeCount);
+        // No fixed cap: gas bounds a flow's size, and the recursive tree walk its depth (see README)
+        if (_nodeCount == 0) revert InvalidNodeCount(_nodeCount);
         // A trigger with nothing to do reverts
         if (_newNodes[0].skipWhenEmpty) revert SkippableRoot();
 

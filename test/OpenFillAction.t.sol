@@ -5,15 +5,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IFiller} from "../src/interfaces/IFiller.sol";
 import {Asset} from "../src/lib/types.sol";
-import {MANAGER_PERMISSION_ID} from "../src/lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
 contract OpenFillActionTest is Fixture {
-    FundedStreamBudget internal budget;
+    StreamBudget internal budget;
     OpenFillAction internal action;
     address internal filler = makeAddr("filler");
 
@@ -73,7 +73,7 @@ contract OpenFillActionTest is Fixture {
     function test_RevertWhen_SetterUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(action), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(action), address(this), SET_SETTINGS_PERMISSION_ID
             )
         );
         action.setDemandPerFill(1);

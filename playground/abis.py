@@ -4,14 +4,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = {
-    "plugin": "CapitalPipelinePlugin.sol/CapitalPipelinePlugin.json",
-    "setup": "CapitalPipelinePluginSetup.sol/CapitalPipelinePluginSetup.json",
+    "plugin": "CapitalTreePlugin.sol/CapitalTreePlugin.json",
+    "setup": "CapitalTreePluginSetup.sol/CapitalTreePluginSetup.json",
     "registry": "ComponentRegistry.sol/ComponentRegistry.json",
     "psp": "PluginSetupProcessor.sol/PluginSetupProcessor.json",
     "dao": "DAO.sol/DAO.json",
     "token": "ERC20Mock.sol/ERC20Mock.json",
     "filler": "PlaygroundFiller.sol/PlaygroundFiller.json",
-    "FundedStreamBudget": "FundedStreamBudget.sol/FundedStreamBudget.json",
+    "StreamBudget": "StreamBudget.sol/StreamBudget.json",
     "BalanceBudget": "BalanceBudget.sol/BalanceBudget.json",
     "OpenFillAction": "OpenFillAction.sol/OpenFillAction.json",
     "MerkleClaimBudget": "MerkleClaimBudget.sol/MerkleClaimBudget.json",

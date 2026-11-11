@@ -11,14 +11,14 @@ import {INodeAction} from "../interfaces/INodeAction.sol";
 import {IBudget, ICheckpointedBudget} from "../interfaces/IBudget.sol";
 import {IFiller} from "../interfaces/IFiller.sol";
 import {Asset} from "../lib/types.sol";
-import {MANAGER_PERMISSION_ID} from "../lib/constants.sol";
+import {SET_SETTINGS_PERMISSION_ID} from "../lib/constants.sol";
 
 /// @title OpenFillAction
 /// @notice Take-it-or-leave-it swap priced as a Dutch auction. It offers its whole input; the DAO
 ///         demands a flat `demandPerFill` back; any filler can take it.
 /// @dev The price obtained is `demandPerFill / offered`, so it worsens as the offer grows. The
 ///      action has no cap of its own: the recipe sets the worst price through the cap of the
-///      stream that feeds it (`FundedStreamBudget.maxBudget`) and the nodes above it. The worst
+///      stream that feeds it (`StreamBudget.maxBudget`) and the nodes above it. The worst
 ///      price is `demandPerFill` over the most the node can receive.
 ///      Changing `demandPerFill` restarts the budget, so a filler cannot take an offer that
 ///      accumulated under the old demand at the new one.
@@ -140,7 +140,7 @@ contract OpenFillAction is INodeAction, DaoAuthorizableUpgradeable {
     // Manager settings
 
     /// @notice Updates how much must come back per fill, and restarts the auction
-    function setDemandPerFill(uint256 _demandPerFill) external virtual auth(MANAGER_PERMISSION_ID) {
+    function setDemandPerFill(uint256 _demandPerFill) external virtual auth(SET_SETTINGS_PERMISSION_ID) {
         _setDemandPerFill(_demandPerFill);
         _restartAuction();
     }

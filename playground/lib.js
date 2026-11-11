@@ -23,7 +23,7 @@ import {
 
 export const RPC = "http://127.0.0.1:8545";
 export const ANY_ADDR = "0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF";
-export const PERMISSIONS = ["TRIGGER", "MANAGER", "CHECKPOINT", "RECORD_CLAIM"];
+export const PERMISSIONS = ["TRIGGER", "PAUSE", "SET_SETTINGS", "CHECKPOINT", "RECORD_CLAIM"];
 export const permissionId = (name) => keccak256(toHex(`${name}_PERMISSION`));
 
 // Anvil's second and third accounts, used as default payroll recipients
@@ -31,7 +31,7 @@ const ALICE = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const BOB = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
 // Placeholders, as in src/lib/placeholders.sol
-const TAG = BigInt(keccak256(toHex("capital-pipeline.placeholder"))) & ((1n << 160n) - 1n) & ~0xffffn;
+const TAG = BigInt(keccak256(toHex("capital-tree.placeholder"))) & ((1n << 160n) - 1n) & ~0xffffn;
 const placeholder = (index) => getAddress(pad(toHex(TAG | BigInt(index)), { size: 20 }));
 export const DAO_REF = placeholder(0xffff);
 export const PLUGIN_REF = placeholder(0xfffe);
@@ -144,7 +144,7 @@ function uniqueErrors(abi) {
 
 const component = (id, args) => ({ id, args: { dao: "DAO", ...args } });
 const stream = (token, maxBudget = "0") =>
-  component("FundedStreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
+  component("StreamBudget@1", { token, amountPerEpoch: "10e18", maxBudget, epochInterval: "86400" });
 // 1,000 B for at most 20 A (the stream's cap): 50 B per A or better
 const openFill = (tokenB) =>
   component("OpenFillAction@1", { budget: "ref(0)", demandedToken: tokenB, demandPerFill: "1000e18" });
@@ -152,9 +152,9 @@ const weightSplitter = (weights) => component("WeightSplitter@1", { weights });
 const leaf = (action) => ({ action, children: "", splitter: null });
 const swapGrants = (manager) => [
   { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-  { where: "PLUGIN", who: manager, permission: "MANAGER" },
-  { where: "ref(0)", who: manager, permission: "MANAGER" },
-  { where: "ref(1)", who: manager, permission: "MANAGER" },
+  { where: "PLUGIN", who: manager, permission: "PAUSE" },
+  { where: "ref(0)", who: manager, permission: "SET_SETTINGS" },
+  { where: "ref(1)", who: manager, permission: "SET_SETTINGS" },
   { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
   { where: "ref(0)", who: "ref(1)", permission: "CHECKPOINT" },
 ];
@@ -178,7 +178,7 @@ export function templates({ tokenA, tokenB, account }) {
       ],
       budget: 0,
       nodes: [{ action: 1, children: "1, 2", splitter: 4 }, leaf(2), leaf(3)],
-      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "MANAGER" }],
+      grants: [...swapGrants(account), { where: "ref(4)", who: account, permission: "SET_SETTINGS" }],
     },
     Payroll: {
       components: [
@@ -191,10 +191,10 @@ export function templates({ tokenA, tokenB, account }) {
       nodes: [{ action: null, children: "1, 2", splitter: 3 }, leaf(1), leaf(2)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-        { where: "PLUGIN", who: account, permission: "MANAGER" },
-        { where: "ref(0)", who: account, permission: "MANAGER" },
+        { where: "PLUGIN", who: account, permission: "PAUSE" },
+        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
         { where: "ref(0)", who: "DAO", permission: "CHECKPOINT" },
-        { where: "ref(3)", who: account, permission: "MANAGER" },
+        { where: "ref(3)", who: account, permission: "SET_SETTINGS" },
       ],
     },
     "Merkle claim": {
@@ -206,8 +206,8 @@ export function templates({ tokenA, tokenB, account }) {
       nodes: [leaf(1)],
       grants: [
         { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-        { where: "PLUGIN", who: account, permission: "MANAGER" },
-        { where: "ref(0)", who: account, permission: "MANAGER" },
+        { where: "PLUGIN", who: account, permission: "PAUSE" },
+        { where: "ref(0)", who: account, permission: "SET_SETTINGS" },
         { where: "ref(0)", who: "DAO", permission: "RECORD_CLAIM" },
       ],
     },
@@ -379,12 +379,12 @@ export async function describeComponent(ctx, address) {
   const abi = ctx.abis[name];
   const get = (fn) => read(ctx, address, abi, fn);
   const details = [];
-  if (name === "FundedStreamBudget" || name === "BalanceBudget") {
+  if (name === "StreamBudget" || name === "BalanceBudget") {
     const token = await get("token");
     const sym = await symbol(ctx, token);
     const [amount] = await read(ctx, address, abi, "available", [zeroAddress, "0x"]);
     details.push(`available ${units(amount)} ${sym}`);
-    if (name === "FundedStreamBudget") {
+    if (name === "StreamBudget") {
       details.push(`${units(await get("amountPerEpoch"))} ${sym} per ${await get("epochInterval")}s`);
       const cap = await get("maxBudget");
       if (cap > 0n) details.push(`capped at ${units(cap)} ${sym}`);

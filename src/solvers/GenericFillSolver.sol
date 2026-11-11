@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {CapitalPipelinePlugin} from "../CapitalPipelinePlugin.sol";
+import {CapitalTreePlugin} from "../CapitalTreePlugin.sol";
 
 import {IFiller} from "../interfaces/IFiller.sol";
 
@@ -21,9 +21,9 @@ contract GenericFillSolver is IFiller {
     /// @notice Restricts the caller of trigger and sweep functions.
     address public immutable authorized;
 
-    CapitalPipelinePlugin public immutable plugin;
+    CapitalTreePlugin public immutable plugin;
 
-    constructor(address _authorized, CapitalPipelinePlugin _plugin) {
+    constructor(address _authorized, CapitalTreePlugin _plugin) {
         if (_authorized == address(0)) revert InvalidAuthorized();
         authorized = _authorized;
         plugin = _plugin;

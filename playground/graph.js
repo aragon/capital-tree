@@ -6,7 +6,7 @@
 export const BRANCH = "branch";
 const WEIGHT_SPLITTER = "WeightSplitter@1";
 const KINDS = {
-  FundedStreamBudget: "budget",
+  StreamBudget: "budget",
   BalanceBudget: "budget",
   MerkleClaimBudget: "budget",
   OpenFillAction: "action",
@@ -15,7 +15,7 @@ const KINDS = {
   BurnAction: "leaf",
   KeepAction: "leaf",
 };
-const SETTERS = new Set(["FundedStreamBudget", "OpenFillAction", "MerkleClaimBudget", "WeightSplitter"]);
+const SETTERS = new Set(["StreamBudget", "OpenFillAction", "MerkleClaimBudget", "WeightSplitter"]);
 const HIDDEN = new Set(["dao", "budget"]); // always DAO_REF, and the flow's budget
 
 const nameOf = (id) => id.split("@")[0];
@@ -41,7 +41,7 @@ export function nodeHtml(id, meta) {
 /** Default settings for a new box */
 export function defaultData(id, { tokenA, tokenB }) {
   const defaults = {
-    FundedStreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "20e18", epochInterval: "86400" },
+    StreamBudget: { token: tokenA, amountPerEpoch: "10e18", maxBudget: "20e18", epochInterval: "86400" },
     BalanceBudget: { token: tokenA },
     OpenFillAction: { demandedToken: tokenB, demandPerFill: "1000e18" },
     MerkleClaimBudget: { token: tokenA, root: "0x" + "00".repeat(32) },
@@ -176,14 +176,14 @@ export function graphToRecipe(graph, account, meta) {
 export function suggestGrants(components, manager) {
   const grants = [
     { where: "PLUGIN", who: "ANY", permission: "TRIGGER" },
-    { where: "PLUGIN", who: manager, permission: "MANAGER" },
+    { where: "PLUGIN", who: manager, permission: "PAUSE" },
   ];
   components.forEach((c, i) => {
-    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `ref(${i})`, who: manager, permission: "MANAGER" });
+    if (SETTERS.has(nameOf(c.id))) grants.push({ where: `ref(${i})`, who: manager, permission: "SET_SETTINGS" });
   });
   components.forEach((c, i) => {
     const name = nameOf(c.id);
-    if (name === "FundedStreamBudget") {
+    if (name === "StreamBudget") {
       grants.push({ where: `ref(${i})`, who: "DAO", permission: "CHECKPOINT" });
       components.forEach((other, j) => {
         if (nameOf(other.id) === "OpenFillAction") grants.push({ where: `ref(${i})`, who: `ref(${j})`, permission: "CHECKPOINT" });

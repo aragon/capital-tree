@@ -6,7 +6,7 @@ import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/Proxy
 import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginRepoFactory} from "@aragon/osx/framework/plugin/repo/PluginRepoFactory.sol";
 import {ComponentRegistry} from "../../src/registry/ComponentRegistry.sol";
-import {CapitalPipelinePluginSetup} from "../../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePluginSetup} from "../../src/setup/CapitalTreePluginSetup.sol";
 import {ERC20Mock} from "../../test/mocks/ERC20Mock.sol";
 import {Deploy} from "../Deploy.s.sol";
 import {Recipes} from "../Recipes.sol";
@@ -29,7 +29,7 @@ contract Playground is Deploy {
 
     /// @dev The UI reads metadata from the local files, so the links only need to be non-empty
     string internal constant LINKS = '{"release":"ipfs://playground","build":"ipfs://playground","components":{'
-        '"FundedStreamBudget":"ipfs://playground","BalanceBudget":"ipfs://playground",'
+        '"StreamBudget":"ipfs://playground","BalanceBudget":"ipfs://playground",'
         '"OpenFillAction":"ipfs://playground","MerkleClaimBudget":"ipfs://playground",'
         '"TransferAction":"ipfs://playground","TransferToBeneficiaryAction":"ipfs://playground",'
         '"BurnAction":"ipfs://playground","KeepAction":"ipfs://playground","WeightSplitter":"ipfs://playground"}}';
@@ -41,7 +41,7 @@ contract Playground is Deploy {
         ERC20Mock tokenB;
         PlaygroundFiller filler;
         ComponentRegistry registry;
-        CapitalPipelinePluginSetup setup;
+        CapitalTreePluginSetup setup;
         PluginRepo repo;
     }
 
@@ -59,7 +59,7 @@ contract Playground is Deploy {
         _d.tokenA.mint(address(_d.dao), 1_000_000 ether);
         _d.tokenB.mint(address(_d.filler), 1_000_000_000 ether);
         (_d.registry, _d.setup) = deploy(_d.dao, LINKS);
-        string memory _subdomain = string.concat("capital-pipeline-", vm.toString(block.timestamp));
+        string memory _subdomain = string.concat("capital-tree-", vm.toString(block.timestamp));
         _d.repo = publish(PLUGIN_REPO_FACTORY, _d.setup, _subdomain, _d.account, LINKS);
         vm.stopBroadcast();
 
@@ -81,7 +81,7 @@ contract Playground is Deploy {
     function _write(Deployment memory _d, uint256 _startBlock) internal {
         string memory _components = "components";
         bytes32[9] memory _ids = [
-            Recipes.FUNDED_STREAM_BUDGET,
+            Recipes.STREAM_BUDGET,
             Recipes.BALANCE_BUDGET,
             Recipes.OPEN_FILL,
             Recipes.MERKLE_CLAIM,

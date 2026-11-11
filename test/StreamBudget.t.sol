@@ -5,12 +5,12 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {FundedStreamBudget} from "../src/budgets/FundedStreamBudget.sol";
-import {MANAGER_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../src/lib/constants.sol";
+import {StreamBudget} from "../src/budgets/StreamBudget.sol";
+import {SET_SETTINGS_PERMISSION_ID, CHECKPOINT_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 
-contract FundedStreamBudgetTest is Fixture {
-    FundedStreamBudget internal budget;
+contract StreamBudgetTest is Fixture {
+    StreamBudget internal budget;
 
     function setUp() public override {
         super.setUp();
@@ -39,6 +39,18 @@ contract FundedStreamBudgetTest is Fixture {
 
         vm.warp(block.timestamp + EPOCH);
         assertEq(_available(budget), DAO_A + RATE, "growth resumes from where it froze");
+    }
+
+    /// A sync every block must not freeze a stream slower than one unit per block
+    function test_SyncEveryBlockKeepsTheCurve() public {
+        StreamBudget _slow = _deployBudget(7000, 0); // 0.97 units per 12 s block
+
+        for (uint256 i; i < 300; ++i) {
+            vm.warp(block.timestamp + 12);
+            _slow.sync();
+        }
+
+        assertEq(_available(_slow), (7000 * 3600) / EPOCH, "an hour of growth");
     }
 
     function test_AvailableIgnoresTheCaller() public {
@@ -114,17 +126,16 @@ contract FundedStreamBudgetTest is Fixture {
     function test_RevertWhen_SetterUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                DaoUnauthorized.selector, address(dao), address(budget), address(this), MANAGER_PERMISSION_ID
+                DaoUnauthorized.selector, address(dao), address(budget), address(this), SET_SETTINGS_PERMISSION_ID
             )
         );
         budget.setAmountPerEpoch(1);
     }
 
     function test_RevertWhen_TokenHasNoCode() public {
-        FundedStreamBudget _budget =
-            FundedStreamBudget(ProxyLib.deployMinimalProxy(address(new FundedStreamBudget()), ""));
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
 
-        vm.expectRevert(FundedStreamBudget.InvalidToken.selector);
+        vm.expectRevert(StreamBudget.InvalidToken.selector);
         _budget.initialize(dao, IERC20(address(0xBEEF)), RATE, 0, EPOCH);
     }
 }

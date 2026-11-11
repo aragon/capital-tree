@@ -11,7 +11,7 @@ import {PermissionManager} from "@aragon/osx/core/permission/PermissionManager.s
 import {PluginRepo} from "@aragon/osx/framework/plugin/repo/PluginRepo.sol";
 import {PluginSetupProcessor} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessor.sol";
 import {PluginSetupRef, hashHelpers} from "@aragon/osx/framework/plugin/setup/PluginSetupProcessorHelpers.sol";
-import {CapitalPipelinePluginSetup} from "../src/setup/CapitalPipelinePluginSetup.sol";
+import {CapitalTreePluginSetup} from "../src/setup/CapitalTreePluginSetup.sol";
 import {IDonationVault} from "../src/interfaces/IDonationVault.sol";
 import {Recipes} from "./Recipes.sol";
 
@@ -70,15 +70,19 @@ contract Install is Script {
     }
 
     /// @notice The recipe a config describes: `.recipe` names it, the other keys are its parameters
-    function recipe(string memory _config) public pure returns (CapitalPipelinePluginSetup.InstallParams memory) {
+    function recipe(string memory _config) public pure returns (CapitalTreePluginSetup.InstallParams memory) {
         string memory _name = _config.readString(".recipe");
         address _manager = _config.readAddress(".manager");
+        address _guardian = _config.readAddress(".guardian");
         bytes32 _hash = keccak256(bytes(_name));
 
-        if (_hash == keccak256("buyAndBurn")) return Recipes.buyAndBurn(_manager, _stream(_config), _swap(_config));
+        if (_hash == keccak256("buyAndBurn")) {
+            return Recipes.buyAndBurn(_manager, _guardian, _stream(_config), _swap(_config));
+        }
         if (_hash == keccak256("buybackAndDonate")) {
             return Recipes.buybackAndDonate(
                 _manager,
+                _guardian,
                 _stream(_config),
                 _swap(_config),
                 IDonationVault(_config.readAddress(".vault")),
@@ -89,6 +93,7 @@ contract Install is Script {
         if (_hash == keccak256("buyback")) {
             return Recipes.buyback(
                 _manager,
+                _guardian,
                 _stream(_config),
                 _swap(_config),
                 _config.readAddress(".fee.recipient"),
@@ -96,11 +101,14 @@ contract Install is Script {
             );
         }
         if (_hash == keccak256("merkleClaim")) {
-            return Recipes.merkleClaim(_manager, IERC20(_config.readAddress(".token")), _config.readBytes32(".root"));
+            return Recipes.merkleClaim(
+                _manager, _guardian, IERC20(_config.readAddress(".token")), _config.readBytes32(".root")
+            );
         }
         if (_hash == keccak256("payroll")) {
-            return
-                Recipes.payroll(_manager, _stream(_config), _config.readAddressArray(".recipients"), _weights(_config));
+            return Recipes.payroll(
+                _manager, _guardian, _stream(_config), _config.readAddressArray(".recipients"), _weights(_config)
+            );
         }
         revert UnknownRecipe(_name);
     }
