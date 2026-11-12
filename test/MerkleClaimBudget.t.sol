@@ -28,68 +28,82 @@ contract MerkleClaimBudgetTest is Fixture {
         plugin = _deployPlugin(merkle, _one(toBeneficiary));
     }
 
-    function test_AvailableIsWhatTheAccountIsOwed() public view {
-        assertEq(merkle.available(alice, _claim(alice, 10 ether)), 10 ether);
+    function testFuzz_AvailableIsWhatTheAccountIsOwed(uint256 _amount) public {
+        _amount = bound(_amount, 1, type(uint256).max);
+        _setEntitlement(_amount);
+        assertEq(merkle.available(alice, _claim(alice, _amount)), _amount);
     }
 
-    function test_CommitRecordsTheClaim() public view {
-        Action[] memory _actions = merkle.commitActions(alice, _claim(alice, 10 ether));
-
+    function testFuzz_CommitRecordsTheClaim(uint256 _amount) public {
+        _amount = bound(_amount, 1, type(uint256).max);
+        _setEntitlement(_amount);
+        Action[] memory _actions = merkle.commitActions(alice, _claim(alice, _amount));
         assertEq(_actions.length, 1);
         assertEq(_actions[0].to, address(merkle));
-        assertEq(_actions[0].data, abi.encodeCall(merkle.recordClaim, (alice, 10 ether)));
+        assertEq(_actions[0].data, abi.encodeCall(merkle.recordClaim, (alice, _amount)));
     }
 
-    function test_AccountClaimsItsAmount() public {
+    function testFuzz_AccountClaimsItsAmount(uint256 _amount) public {
+        _amount = bound(_amount, 1, DAO_A);
+        _setEntitlement(_amount);
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
+        plugin.trigger(_claim(alice, _amount), _payTo(alice, 1));
 
-        assertEq(tokenA.balanceOf(alice), 10 ether);
-        assertEq(tokenA.balanceOf(address(dao)), DAO_A - 10 ether);
-        assertEq(merkle.claimed(alice), 10 ether);
+        assertEq(tokenA.balanceOf(alice), _amount);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A - _amount);
+        assertEq(merkle.claimed(alice), _amount);
     }
 
-    function test_RevertWhen_ClaimingAgain() public {
+    function testFuzz_RevertWhen_ClaimingAgain(uint256 _amount) public {
+        _amount = bound(_amount, 1, DAO_A);
+        _setEntitlement(_amount);
         vm.startPrank(alice);
-        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
+        plugin.trigger(_claim(alice, _amount), _payTo(alice, 1));
 
         vm.expectRevert(MerkleClaimBudget.NothingToClaim.selector);
-        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
+        plugin.trigger(_claim(alice, _amount), _payTo(alice, 1));
         vm.stopPrank();
     }
 
-    function test_RevertWhen_SomeoneElseClaims() public {
+    function testFuzz_RevertWhen_SomeoneElseClaims(address _caller) public {
+        vm.assume(_caller != alice);
         vm.expectRevert(MerkleClaimBudget.NotTheAccount.selector);
-        vm.prank(carol);
+        vm.prank(_caller);
         plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 1));
     }
 
     /// The account names who gets paid in the payout leaf's data
-    function test_AccountRedirectsToAnotherBeneficiary() public {
+    function testFuzz_AccountRedirectsToAnotherBeneficiary(address _recipient, uint256 _amount) public {
+        vm.assume(_recipient != address(0) && _recipient != address(dao) && _recipient != alice);
+        _amount = bound(_amount, 1, DAO_A);
+        _setEntitlement(_amount);
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 1));
-
-        assertEq(tokenA.balanceOf(carol), 10 ether);
+        plugin.trigger(_claim(alice, _amount), _payTo(_recipient, 1));
+        assertEq(tokenA.balanceOf(_recipient), _amount);
         assertEq(tokenA.balanceOf(alice), 0);
     }
 
-    function test_RevertWhen_ProofIsInvalid() public {
+    function testFuzz_RevertWhen_ProofIsInvalid(uint256 _wrongAmount) public {
+        vm.assume(_wrongAmount != 10 ether);
         vm.expectRevert(MerkleClaimBudget.InvalidProof.selector);
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 20 ether), _payTo(alice, 1)); // the tree says 10
+        plugin.trigger(_claim(alice, _wrongAmount), _payTo(alice, 1));
     }
 
-    function test_NewRootPaysTheDifference() public {
+    function testFuzz_NewRootPaysTheDifference(uint256 _first, uint256 _next) public {
+        _first = bound(_first, 1, DAO_A);
+        _next = bound(_next, 0, DAO_A);
+        _setEntitlement(_first);
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 1));
-
-        vm.prank(manager);
-        merkle.setRoot(_root(25 ether, 30 ether));
-
+        plugin.trigger(_claim(alice, _first), _payTo(alice, 1));
+        _setEntitlement(_next);
+        if (_next <= _first) vm.expectRevert(MerkleClaimBudget.NothingToClaim.selector);
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 25 ether), _payTo(alice, 1));
-
-        assertEq(tokenA.balanceOf(alice), 25 ether, "10 in round one, 15 more in round two");
+        plugin.trigger(_claim(alice, _next), _payTo(alice, 1));
+        uint256 _paid = _next > _first ? _next : _first;
+        assertEq(tokenA.balanceOf(alice), _paid);
+        assertEq(merkle.claimed(alice), _paid);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A - _paid);
     }
 
     function test_RevertWhen_SetRootUnauthorized() public {
@@ -117,29 +131,34 @@ contract MerkleClaimBudgetTest is Fixture {
     }
 
     /// The payout fails, so the whole claim reverts
-    function test_RevertWhen_TheDaoCannotPay() public {
-        vm.prank(manager);
-        merkle.setRoot(_root(1_000 ether, 30 ether));
-
+    function testFuzz_RevertWhen_TheDaoCannotPay(uint256 _amount) public {
+        _amount = bound(_amount, DAO_A + 1, type(uint256).max);
+        _setEntitlement(_amount);
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 0));
         vm.prank(alice);
-        plugin.trigger(_claim(alice, 1_000 ether), _payTo(alice, 1));
+        plugin.trigger(_claim(alice, _amount), _payTo(alice, 1));
+        assertEq(merkle.claimed(alice), 0);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A);
     }
 
     /// Claim → swap A to B at 2 → pay the beneficiary (redirected to carol)
-    function test_ClaimThenSwap() public {
+    function testFuzz_ClaimThenSwap(uint256 _amount) public {
+        _amount = bound(_amount, 1, DAO_A);
+        _setEntitlement(_amount);
         CapitalTreePlugin _plugin = _deployPlugin(merkle, _chain(_swap(), toBeneficiary));
 
         vm.prank(alice);
-        _plugin.trigger(_claim(alice, 10 ether), _payTo(carol, 2));
+        _plugin.trigger(_claim(alice, _amount), _payTo(carol, 2));
 
-        assertEq(tokenB.balanceOf(carol), 20 ether);
-        assertEq(tokenA.balanceOf(address(dao)), DAO_A - 10 ether);
+        assertEq(tokenB.balanceOf(carol), 2 * _amount);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A - _amount);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B, "treasury B untouched");
     }
 
     /// A branch at the root splits the claim itself: 1% to the fee address, 99% swapped and paid to alice
-    function test_ClaimWithAFeeBranch() public {
+    function testFuzz_ClaimWithAFeeBranch(uint256 _amount) public {
+        _amount = bound(_amount, 100, DAO_A); // both shares must be nonzero
+        _setEntitlement(_amount);
         Node[] memory _tree = new Node[](4);
         _tree[0] = _branch(NO_ACTION, 1, 10_000, 2, 990_000);
         _tree[1] = _leaf(_deployTransfer(fee));
@@ -148,23 +167,31 @@ contract MerkleClaimBudgetTest is Fixture {
         CapitalTreePlugin _plugin = _deployPlugin(merkle, _tree);
 
         vm.prank(alice);
-        _plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 4));
+        _plugin.trigger(_claim(alice, _amount), _payTo(alice, 4));
 
-        assertEq(tokenA.balanceOf(fee), 0.1 ether);
-        assertEq(tokenB.balanceOf(alice), 19.8 ether);
+        assertEq(tokenA.balanceOf(fee), _amount / 100);
+        assertEq(tokenB.balanceOf(alice), 2 * (_amount - _amount / 100));
     }
 
     /// If a node can't run, the whole claim reverts and stays claimable
-    function test_ClaimStaysOpenWhenANodeCannotRun() public {
+    function testFuzz_ClaimStaysOpenWhenANodeCannotRun(uint256 _amount) public {
+        _amount = bound(_amount, 1, DAO_A);
+        _setEntitlement(_amount);
         CapitalTreePlugin _plugin =
             _deployPlugin(merkle, _chain(new BadAction(BadAction.Mode.Skip, address(dao), tokenB), toBeneficiary));
 
         // The root outputs nothing, so its child receives nothing
         vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, 1));
         vm.prank(alice);
-        _plugin.trigger(_claim(alice, 10 ether), _payTo(alice, 2));
+        _plugin.trigger(_claim(alice, _amount), _payTo(alice, 2));
 
         assertEq(merkle.claimed(alice), 0, "nothing recorded");
+    }
+
+    function _setEntitlement(uint256 _amount) internal {
+        bytes32 _newRoot = _root(_amount, 30 ether);
+        vm.prank(manager);
+        merkle.setRoot(_newRoot);
     }
 
     // Helpers

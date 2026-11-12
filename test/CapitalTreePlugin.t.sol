@@ -108,9 +108,9 @@ contract CapitalTreePluginTest is Fixture {
         _expectInitRevert(budget, new Node[](0), abi.encodeWithSelector(CapitalTreePlugin.InvalidNodeCount.selector, 0));
     }
 
-    /// No fixed node cap: a root splitting into 31 transfer leaves, twice the old 16 nodes
-    function test_RunsAFlowOf32Nodes() public {
-        uint32 _leafCount = 31;
+    /// Vary branch width across and beyond the old 16-node limit.
+    function testFuzz_RunsWideFlow(uint32 _leafCount) public {
+        _leafCount = uint32(bound(_leafCount, 2, 64));
         INodeAction _toAlice = _deployTransfer(alice);
         Node[] memory _tree = new Node[](_leafCount + 1);
         _tree[0].children = new uint32[](_leafCount);
@@ -126,7 +126,7 @@ contract CapitalTreePluginTest is Fixture {
 
         _plugin.trigger("", noData);
 
-        assertEq(_plugin.nodes().length, 32);
+        assertEq(_plugin.nodes().length, _leafCount + 1);
         assertEq(tokenA.balanceOf(alice), DAO_A);
     }
 
@@ -319,102 +319,110 @@ contract CapitalTreePluginTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND, "the proceeds stay in the treasury");
     }
 
-    function test_RevertWhen_FillerUnderDelivers() public {
-        filler.setFillDelta(-1);
+    function testFuzz_RevertWhen_FillerUnderDelivers(uint256 _shortfall) public {
+        _shortfall = bound(_shortfall, 1, DEMAND);
+        filler.setFillDelta(-int256(_shortfall));
 
         vm.expectRevert(
-            abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + DEMAND - 1)
+            abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + DEMAND - _shortfall)
         );
         filler.fill("");
 
         assertEq(_available(budget), RATE, "offer not consumed");
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B);
+        assertEq(tokenA.allowance(address(dao), address(filler)), 0);
     }
 
     // =========================================================================================
     // Forwarding the surplus
     // =========================================================================================
 
-    /// The filler sends 100 B above the demand. Without forwardSurplus they stay in the DAO.
-    function test_ADeclaredNodePassesItsOutputAndKeepsTheSurplus() public {
-        filler.setFillDelta(100 ether);
+    /// Without forwardSurplus, arbitrary overpayments stay in the DAO.
+    function testFuzz_ADeclaredNodePassesItsOutputAndKeepsTheSurplus(uint256 _surplus) public {
+        _surplus = bound(_surplus, 0, 1_000_000 ether - DEMAND);
+        filler.setFillDelta(int256(_surplus));
 
         filler.fill("");
 
         assertEq(tokenB.balanceOf(BURN), 950 ether, "95% of the demanded 1,000 B");
         assertEq(tokenB.balanceOf(fee), 50 ether, "5% of the demanded 1,000 B");
-        assertEq(tokenB.balanceOf(address(dao)), DAO_B + 100 ether, "the surplus stays in the treasury");
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + _surplus, "the surplus stays in the treasury");
     }
 
-    function test_TheNextNodeGetsEverythingTheFillerDelivers() public {
+    function testFuzz_TheNextNodeGetsEverythingTheFillerDelivers(uint128 _surplus) public {
         Node[] memory _tree = _chain(action, _deployTransfer(alice));
         _tree[0].forwardSurplus = true;
         MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
-        tokenB.mint(address(_filler), DEMAND + 1 ether);
-        _filler.setFillDelta(1 ether);
+        tokenB.mint(address(_filler), DEMAND + _surplus);
+        _filler.setFillDelta(int256(uint256(_surplus)));
 
         _filler.fillWithoutData();
 
-        assertEq(tokenB.balanceOf(alice), DEMAND + 1 ether);
+        assertEq(tokenB.balanceOf(alice), DEMAND + _surplus);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B, "no surplus left in the treasury");
     }
 
-    function test_WeightsSplitEverythingTheFillerDelivers() public {
+    function testFuzz_WeightsSplitEverythingTheFillerDelivers(uint128 _surplus) public {
         Node[] memory _tree = _splitToBurnAndFee(action);
         _tree[0].forwardSurplus = true;
         MockFiller _filler = new MockFiller(_deployPlugin(budget, _tree));
-        tokenB.mint(address(_filler), DEMAND + 100 ether);
-        _filler.setFillDelta(100 ether);
+        tokenB.mint(address(_filler), DEMAND + _surplus);
+        _filler.setFillDelta(int256(uint256(_surplus)));
 
         _filler.fillWithoutData();
 
-        assertEq(tokenB.balanceOf(BURN), 1045 ether, "95% of 1,100 B");
-        assertEq(tokenB.balanceOf(fee), 55 ether, "5% of 1,100 B");
+        uint256 _fee = (DEMAND + _surplus) / 20;
+        assertEq(tokenB.balanceOf(BURN), DEMAND + _surplus - _fee);
+        assertEq(tokenB.balanceOf(fee), _fee);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
     /// One token: the children get the whole input plus what came in
-    function test_AOneTokenNodeForwardsItsInputAndItsIncome() public {
-        Node[] memory _tree = _chain(_income(NO_TOKEN, 3 ether, 0, 0), _deployTransfer(alice));
+    function testFuzz_AOneTokenNodeForwardsItsInputAndItsIncome(uint128 _incomeAmount) public {
+        Node[] memory _tree = _chain(_income(NO_TOKEN, _incomeAmount, 0, 0), _deployTransfer(alice));
         _tree[0].forwardSurplus = true;
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger("", noData);
 
-        assertEq(tokenA.balanceOf(alice), DAO_A + 3 ether);
+        assertEq(tokenA.balanceOf(alice), DAO_A + _incomeAmount);
         assertEq(tokenA.balanceOf(address(dao)), 0);
     }
 
-    function test_AOneTokenDeclaredNodeKeepsItsIncome() public {
+    function testFuzz_AOneTokenDeclaredNodeKeepsItsIncome(uint128 _incomeAmount) public {
         CapitalTreePlugin _plugin = _deployPlugin(
-            _deployBalanceBudget(tokenA), _chain(_income(NO_TOKEN, 3 ether, 0, 0), _deployTransfer(alice))
+            _deployBalanceBudget(tokenA), _chain(_income(NO_TOKEN, _incomeAmount, 0, 0), _deployTransfer(alice))
         );
 
         _plugin.trigger("", noData);
 
         assertEq(tokenA.balanceOf(alice), DAO_A);
-        assertEq(tokenA.balanceOf(address(dao)), 3 ether, "the income stays in the treasury");
+        assertEq(tokenA.balanceOf(address(dao)), _incomeAmount, "the income stays in the treasury");
     }
 
-    /// The action can't promise any B, so it declares 0. The children still get the 20 B that came in.
-    function test_ATwoTokenNodeWithNoMinimumForwardsWhatArrived() public {
-        Node[] memory _tree = _chain(_income(tokenB, 20 ether, 0, 0), _deployTransfer(alice));
+    /// With no declared minimum, forwarding still passes all received B to the children.
+    function testFuzz_ATwoTokenNodeWithNoMinimumForwardsWhatArrived(uint128 _incomeAmount) public {
+        _incomeAmount = uint128(bound(_incomeAmount, 1, type(uint128).max));
+        Node[] memory _tree = _chain(_income(tokenB, _incomeAmount, 0, 0), _deployTransfer(alice));
         _tree[0].forwardSurplus = true;
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         _plugin.trigger("", noData);
 
-        assertEq(tokenB.balanceOf(alice), 20 ether);
+        assertEq(tokenB.balanceOf(alice), _incomeAmount);
         assertEq(tokenA.balanceOf(address(dao)), DAO_A, "the A input wasn't spent");
     }
 
-    function test_RevertWhen_AOneTokenForwardingNodeLosesTokens() public {
-        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, 1 ether, 0), keep);
+    function testFuzz_RevertWhen_AOneTokenForwardingNodeLosesTokens(uint256 _loss) public {
+        _loss = bound(_loss, 1, DAO_A);
+        Node[] memory _tree = _chain(_income(NO_TOKEN, 0, _loss, 0), keep);
         _tree[0].forwardSurplus = true;
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _tree);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A, DAO_A - 1 ether
+                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A, DAO_A - _loss
             )
         );
         _plugin.trigger("", noData);
@@ -449,20 +457,25 @@ contract CapitalTreePluginTest is Fixture {
         filler.fill("");
     }
 
-    function test_RevertWhen_DataLengthMismatch() public {
-        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.DataLengthMismatch.selector, 3, 1));
-        plugin.trigger("", new bytes[](1));
+    function testFuzz_RevertWhen_DataLengthMismatch(uint256 _length) public {
+        _length = bound(_length, 1, 64);
+        if (_length == 3) _length = 4;
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.DataLengthMismatch.selector, 3, _length));
+        plugin.trigger("", new bytes[](_length));
     }
 
     /// Each action gets its node's entry, the same bytes in `build` and `preconditions`
-    function test_EachActionGetsItsNodeData() public {
+    function testFuzz_EachActionGetsItsNodeData(bytes memory _keepData, address _beneficiary) public {
+        vm.assume(_beneficiary != address(0) && _beneficiary != address(dao));
+        uint256 _before = tokenA.balanceOf(_beneficiary);
         CapitalTreePlugin _plugin =
             _deployPlugin(_deployBalanceBudget(tokenA), _fork(NO_ACTION, 500_000, keep, 500_000, toBeneficiary));
         bytes[] memory _data = new bytes[](3);
-        _data[2] = abi.encode(alice);
+        _data[1] = _keepData;
+        _data[2] = abi.encode(_beneficiary);
         Asset memory _half = Asset(tokenA, DAO_A / 2);
 
-        vm.expectCall(address(keep), abi.encodeCall(INodeAction.build, (address(this), "", _half)));
+        vm.expectCall(address(keep), abi.encodeCall(INodeAction.build, (address(this), _keepData, _half)));
         vm.expectCall(address(toBeneficiary), abi.encodeCall(INodeAction.build, (address(this), _data[2], _half)));
         vm.expectCall(
             address(toBeneficiary),
@@ -470,7 +483,7 @@ contract CapitalTreePluginTest is Fixture {
         );
         _plugin.trigger("", _data);
 
-        assertEq(tokenA.balanceOf(alice), DAO_A / 2);
+        assertEq(tokenA.balanceOf(_beneficiary), _before + DAO_A / 2);
     }
 
     /// No node data: every action gets empty bytes
@@ -639,17 +652,20 @@ contract CapitalTreePluginTest is Fixture {
         _plugin.trigger("", noData);
     }
 
-    function test_RevertWhen_ASplitDoesNotAddUp() public {
+    function testFuzz_RevertWhen_ASplitDoesNotAddUp(uint256 _shortfall) public {
+        _shortfall = bound(_shortfall, 1, DAO_A / 2);
         uint256[] memory _amounts = new uint256[](2);
-        (_amounts[0], _amounts[1]) = (DAO_A / 2, DAO_A / 2 - 1);
+        (_amounts[0], _amounts[1]) = (DAO_A / 2, DAO_A / 2 - _shortfall);
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
 
         vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.InvalidSplit.selector, 0));
         _plugin.trigger("", noData);
     }
 
-    function test_RevertWhen_ASplitHasTheWrongLength() public {
-        uint256[] memory _amounts = new uint256[](1);
+    function testFuzz_RevertWhen_ASplitHasTheWrongLength(uint256 _length) public {
+        _length = bound(_length, 1, 64);
+        if (_length == 2) _length = 3;
+        uint256[] memory _amounts = new uint256[](_length);
         _amounts[0] = DAO_A;
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
 
@@ -918,8 +934,10 @@ contract CapitalTreePluginTest is Fixture {
     /// @dev An action that claims `_income` of `_outToken` (NO_TOKEN: its input token) and loses `_loss`
     function _income(IERC20 _outToken, uint256 _amount, uint256 _loss, int256 _extra) internal returns (INodeAction) {
         IncomeSource _source = new IncomeSource();
-        tokenA.mint(address(_source), 1_000 ether);
-        tokenB.mint(address(_source), 1_000 ether);
+        // Fund the requested income, including amounts above the old fixed mock balance.
+        uint256 _funding = _amount > 1_000 ether ? _amount : 1_000 ether;
+        tokenA.mint(address(_source), _funding);
+        tokenB.mint(address(_source), _funding);
         return new IncomeAction(_source, address(dao), _outToken, _amount, _loss, _extra);
     }
 

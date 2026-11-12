@@ -42,26 +42,42 @@ contract CapitalTreePluginSetupTest is Fixture {
     // Recipes
     // =========================================================================================
 
-    function test_BuyAndBurnBurnsEverything() public {
-        (CapitalTreePlugin _plugin,) = _install(Recipes.buyAndBurn(manager, guardian, _stream(), _swap()));
-        MockFiller _filler = _newFiller(_plugin);
+    function testFuzz_BuyAndBurnBurnsEverything(uint96 _rate, uint96 _cap, uint96 _demand, uint32 _epoch) public {
+        // Sample both rate-limited and cap-limited offers as well as balance saturation.
+        _rate = uint96(bound(_rate, 1, DAO_A * 2));
+        _cap = uint96(bound(_cap, 1, DAO_A * 2));
+        _demand = uint96(bound(_demand, 1, type(uint96).max));
+        _epoch = uint32(bound(_epoch, 1, 365 days));
+        (CapitalTreePlugin _plugin,) = _install(
+            Recipes.buyAndBurn(
+                manager, guardian, Recipes.Stream(tokenA, _rate, _cap, _epoch), Recipes.Swap(tokenB, _demand)
+            )
+        );
+        MockFiller _filler = new MockFiller(_plugin);
+        tokenB.mint(address(_filler), _demand);
+        vm.warp(block.timestamp + _epoch);
         uint256 _supply = tokenB.totalSupply();
 
         _filler.fill("");
 
-        assertEq(tokenB.totalSupply(), _supply - DEMAND);
+        assertEq(tokenB.totalSupply(), _supply - _demand);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
+        uint256 _offered = _rate < _cap ? _rate : _cap;
+        if (_offered > DAO_A) _offered = DAO_A;
+        assertEq(tokenA.balanceOf(address(_filler)), _offered);
     }
 
-    function test_BuybackBurnsAndPaysTheFee() public {
-        (CapitalTreePlugin _plugin,) = _install(_buyback());
+    function testFuzz_BuybackBurnsAndPaysTheFee(uint32 _feeWeight) public {
+        _feeWeight = uint32(bound(_feeWeight, 1, 999_999));
+        (CapitalTreePlugin _plugin,) = _install(Recipes.buyback(manager, guardian, _stream(), _swap(), fee, _feeWeight));
         MockFiller _filler = _newFiller(_plugin);
         uint256 _supply = tokenB.totalSupply();
 
         _filler.fill("");
 
-        assertEq(tokenB.totalSupply(), _supply - 950 ether);
-        assertEq(tokenB.balanceOf(fee), 50 ether);
+        uint256 _fee = DEMAND * _feeWeight / 1_000_000;
+        assertEq(tokenB.totalSupply(), _supply - (DEMAND - _fee));
+        assertEq(tokenB.balanceOf(fee), _fee);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
@@ -82,9 +98,10 @@ contract CapitalTreePluginSetupTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
-    function test_MerkleClaimPaysTheAccount() public {
-        bytes32 _aliceLeaf = _leafHash(alice, 10 ether);
-        bytes32 _bobLeaf = _leafHash(bob, 30 ether);
+    function testFuzz_MerkleClaimPaysTheAccount(uint256 _amount, uint128 _otherAmount) public {
+        _amount = bound(_amount, 1, DAO_A);
+        bytes32 _aliceLeaf = _leafHash(alice, _amount);
+        bytes32 _bobLeaf = _leafHash(bob, _otherAmount);
         (CapitalTreePlugin _plugin,) =
             _install(Recipes.merkleClaim(manager, guardian, IERC20(tokenA), _hashPair(_aliceLeaf, _bobLeaf)));
 
@@ -95,9 +112,9 @@ contract CapitalTreePluginSetupTest is Fixture {
         _data[0] = abi.encode(alice);
 
         vm.prank(alice);
-        _plugin.trigger(abi.encode(alice, 10 ether, _proof), _data);
+        _plugin.trigger(abi.encode(alice, _amount, _proof), _data);
 
-        assertEq(tokenA.balanceOf(alice), 10 ether);
+        assertEq(tokenA.balanceOf(alice), _amount);
     }
 
     function test_PayrollPaysEachRecipient() public {
@@ -112,31 +129,32 @@ contract CapitalTreePluginSetupTest is Fixture {
     }
 
     /// The recipe lets the manager change the shares
-    function test_TheManagerChangesThePayrollWeights() public {
+    function testFuzz_TheManagerChangesThePayrollWeights(uint32 _weight) public {
         (CapitalTreePlugin _plugin, address[] memory _helpers) =
             _install(Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights()));
         WeightSplitter _splitter = WeightSplitter(address(_plugin.nodes()[0].splitter));
         uint32[] memory _swapped = new uint32[](2);
-        (_swapped[0], _swapped[1]) = (300_000, 700_000);
+        _weight = uint32(bound(_weight, 1, 999_999));
+        (_swapped[0], _swapped[1]) = (_weight, 1_000_000 - _weight);
 
         vm.prank(manager);
         _splitter.setWeights(_swapped);
         vm.warp(block.timestamp + EPOCH);
         _plugin.trigger("", noData);
 
-        assertEq(tokenA.balanceOf(alice), 3 ether);
-        assertEq(tokenA.balanceOf(bob), 7 ether);
+        assertEq(tokenA.balanceOf(alice), RATE * _weight / 1_000_000);
+        assertEq(tokenA.balanceOf(bob), RATE - RATE * _weight / 1_000_000);
     }
 
-    /// A payroll whose branch caps alice at 3 A with a custom splitter in place of the weight splitter
-    function test_InstallsASplitter() public {
+    /// A custom cap splitter varies Alice's share and may leave the skippable Bob branch empty.
+    function testFuzz_InstallsASplitter(uint256 _cap) public {
+        _cap = bound(_cap, 1, RATE * 2);
         dao.grant(address(registry), address(this), registry.REGISTER_PERMISSION_ID());
         registry.register(ComponentRegistry.Registration("CapSplitter@1", address(new CapSplitter()), ""));
         CapitalTreePluginSetup.InstallParams memory _params =
             Recipes.payroll(manager, guardian, _stream(), _pair(alice, bob), _weights());
-        _params.nodes[0].splitter = CapitalTreePluginSetup.Component(
-            "CapSplitter@1", abi.encode(3 ether), new CapitalTreePluginSetup.Grant[](0)
-        );
+        _params.nodes[0].splitter =
+            CapitalTreePluginSetup.Component("CapSplitter@1", abi.encode(_cap), new CapitalTreePluginSetup.Grant[](0));
         _params.nodes[2].skipWhenEmpty = true;
 
         (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_params);
@@ -145,8 +163,8 @@ contract CapitalTreePluginSetupTest is Fixture {
 
         assertEq(address(_plugin.nodes()[0].splitter), _helpers[1]);
         assertTrue(_plugin.nodes()[2].skipWhenEmpty);
-        assertEq(tokenA.balanceOf(alice), 3 ether);
-        assertEq(tokenA.balanceOf(bob), RATE - 3 ether);
+        assertEq(tokenA.balanceOf(alice), (_cap < RATE ? _cap : RATE));
+        assertEq(tokenA.balanceOf(bob), RATE - (_cap < RATE ? _cap : RATE));
     }
 
     // =========================================================================================
@@ -183,11 +201,12 @@ contract CapitalTreePluginSetupTest is Fixture {
     }
 
     /// A recipe of the same shape with another fee recipient, prepared first, lands elsewhere
-    function test_AnotherRecipeCantTakeTheRecipesAddress() public {
+    function testFuzz_AnotherRecipeCantTakeTheRecipesAddress(address _otherFee) public {
+        vm.assume(_otherFee != fee && _otherFee != address(0));
         address _expected = setup.pluginAddress(address(dao), abi.encode(_buyback()), 0);
 
         CapitalTreePluginSetup.InstallParams memory _other =
-            Recipes.buyback(manager, guardian, _stream(), _swap(), alice, 50_000);
+            Recipes.buyback(manager, guardian, _stream(), _swap(), _otherFee, 50_000);
         (CapitalTreePlugin _attacker,) = _install(_other);
         (CapitalTreePlugin _plugin,) = _install(_buyback());
 
