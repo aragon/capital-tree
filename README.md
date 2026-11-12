@@ -414,6 +414,28 @@ Never set `via_ir = true`; fix stack-too-deep errors by restructuring the code.
 `lib/ens-contracts` is only there so Aragon's framework contracts compile. The installation test
 deploys Aragon's plugin repo registry, factory and PluginSetupProcessor locally, without ENS.
 
+### Continuous integration
+
+[Tests](.github/workflows/tests.yml) runs on pull requests and pushes to `dev` and
+`main`. It uses Foundry v1.8.6 and runs three independent checks:
+
+- Unit, fuzz and invariant tests, excluding fork files.
+- Ethereum fork tests using the direct Uniswap route at the latest block.
+- Katana fork tests at block 47,557,066, including donation and rollback.
+
+Fork jobs use public RPC endpoints by default. Optional GitHub Actions secrets
+`MAINNET_RPC_URL` and `KATANA_RPC_URL` override them with dedicated providers.
+RPC failures fail the job; the workflow does not silently skip the fork suites.
+Ethereum uses recent state because the default public RPC requires credentials
+for archive requests. Katana keeps the historical block used by its fixture.
+
+Use **Actions → Tests → Run workflow → live_quotes** to also run live aggregator
+quotes at the latest Ethereum block. This optional job enables FFI for `curl`
+and `jq`. Set the `ZERO_EX_API_KEY` and `ONEINCH_API_KEY` repository secrets to
+include those providers; their tests explicitly skip when their key is absent.
+KyberSwap and Velora do not need quote API keys. Manual dispatch becomes
+available after the workflow reaches the repository's default branch.
+
 ## Deploy
 
 Once per network:
