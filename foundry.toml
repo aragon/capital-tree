@@ -10,8 +10,8 @@ via_ir = false
 fs_permissions = [{ access = "read", path = "./metadata" }, { access = "read", path = "./config" }]
 
 [invariant]
-runs = 64
-depth = 32
+runs = 256
+depth = 64
 fail_on_revert = true
 
 [lint]
