@@ -98,6 +98,12 @@ abstract contract BaseHandler is Test {
     INodeAction internal toBeneficiary;
     OpenFillAction internal openFill;
 
+    // Where tokens go when they leave the DAO outside the flow (a handler may never use it)
+    address public sink = makeAddr("sink");
+
+    // Who takes OpenFill offers. The handler itself unless a handler sets a solver.
+    address public filler = address(this);
+
     // The model's copy of the OpenFill settings, and what the filler sends on top of the demand
     uint256 internal demand;
     int256 internal fillDelta;
@@ -222,32 +228,32 @@ abstract contract BaseHandler is Test {
         return tree.length;
     }
 
-    // Triggering
-
-    /// @dev Triggers the flow on `_amount` of A as `_caller`. The model predicts the result first:
-    ///      a revert must happen with exactly that reason and change nothing; a success must leave
-    ///      the DAO holding exactly what the model says.
-    /// @param _seed Picks the beneficiary each Beneficiary node names
-    /// @return _ok Whether the trigger succeeded
     function _trigger(address _caller, uint256 _amount, uint256 _seed) internal returns (bool _ok) {
         // Check if tree contains transferToBeneficiaryAction:
         // If so, set the addresses for each action beneficiary. 
+        Run memory _run = _simulate(_amount);
+
         uint256[] memory _beneficiaryOf = new uint256[](tree.length);
         bytes[] memory _data = new bytes[](tree.length);
         for (uint256 i; i < tree.length; ++i) {
-            if (tree[i].kind != Kind.Beneficiary) continue;
-            _beneficiaryOf[i] = uint256(keccak256(abi.encode(_seed, i))) % beneficiaries.length;
-            _data[i] = abi.encode(beneficiaries[_beneficiaryOf[i]]);
+            if (tree[i].kind == Kind.Beneficiary) {
+                _beneficiaryOf[i] = uint256(keccak256(abi.encode(_seed, i))) % beneficiaries.length;
+                _data[i] = abi.encode(beneficiaries[_beneficiaryOf[i]]);
+            }
+            // An OpenFill node's data tells the filler what to do with the offer it gets
+            if (tree[i].kind == Kind.OpenFill && _run.input[i] != 0) _data[i] = _fillData(_run.input[i]);
         }
-        
-        Run memory _run = _simulate(_amount);
+
         if (_run.reverts) {
             _assertRevertChangesNothing(_caller, _data, _run.reason);
             return false;
         }
 
-        vm.prank(_caller);
-        plugin.trigger("", _data);
+        (bool _success, bytes memory _reason) = _callTrigger(_caller, _data);
+        if (!_success) {
+            // Not predicted: rethrow, so the run fails with the real reason
+            assembly { revert(add(_reason, 32), mload(_reason)) }
+        }
         triggers++;
 
         _record(_run.input, _beneficiaryOf);
@@ -275,13 +281,14 @@ abstract contract BaseHandler is Test {
 
     /// @dev Step 1, the simulation: works out what node `_i` receives and passes it on, in the
     ///      plugin's order (a node checks its input, runs, then its children left to right, depth
-    ///      first). The first failure in that order is the trigger's revert. No bookkeeping here.
+    ///      first). The first failure in that order is the trigger's revert.
     function _walk(uint256 _i, uint256 _amount, Run memory _run) internal view {
         if (_run.reverts) return;
         ModelNode storage _node = tree[_i];
 
         if (_amount == 0) {
             if (_node.skip) return; // skips the whole subtree
+
             (_run.reverts, _run.reason) = (
                 true, 
                 abi.encodeWithSelector(CapitalTreePlugin.EmptyInput.selector, _i)
@@ -298,23 +305,25 @@ abstract contract BaseHandler is Test {
         }
 
         if (_kind == Kind.OpenFill) {
-            uint256 _sent = _delivered();
-            if (_sent < demand) {
+            // The amount of B that goes to DAO.
+            uint256 _paid = _paidByFiller();
+            
+            if (_paid < demand) {
                 // OpenFill's own postcondition runs before the plugin's balance checks
                 (_run.reverts, _run.reason) = (
                     true,
                     abi.encodeWithSelector(
                         OpenFillAction.DemandNotMet.selector, 
                         _run.daoTokenBBalance + demand, 
-                        _run.daoTokenBBalance + _sent
+                        _run.daoTokenBBalance + _paid
                     )
                 );
                 return;
             }
-            _run.daoTokenBBalance += _sent;
+            _run.daoTokenBBalance += _paid;
 
             // Without forwarding, the children share the demand and the surplus stays in the DAO
-            _walkChildren(_node, _node.forwardSurplus ? _sent : demand, _run);
+            _walkChildren(_node, _node.forwardSurplus ? _paid : demand, _run);
             return;
         }
 
@@ -322,8 +331,8 @@ abstract contract BaseHandler is Test {
         if (_node.token == B && _kind != Kind.Keep) _run.daoTokenBBalance -= _amount;
     }
 
-    /// @dev Passes a node's output to its children: all of it to a single child, split by the
-    ///      node's weights among several
+    /// @dev Passes a node's output to its children: all of it to a single child, 
+    ///      split by the node's weights among several
     function _walkChildren(ModelNode storage _node, uint256 _output, Run memory _run) internal view {
         if (_node.children.length == 1) {
             _walk(_node.children[0], _output, _run);
@@ -335,8 +344,8 @@ abstract contract BaseHandler is Test {
         }
     }
 
-    /// @dev Step 2, the bookkeeping, after the trigger succeeded: adds what every node received to
-    ///      the totals of the token it received
+    /// @dev the bookkeeping, after the trigger succeeded: adds what every node received to
+    ///      the totals of the token it receive.
     /// @param _beneficiaryOf The beneficiary each Beneficiary node named in the trigger's data
     function _record(uint256[] memory _input, uint256[] memory _beneficiaryOf) internal {
         for (uint256 i; i < tree.length; ++i) {
@@ -360,15 +369,14 @@ abstract contract BaseHandler is Test {
                 // The filler takes the A and mints B to the DAO
                 ghostA.dao -= _amount;
                 ghostToFiller += _amount;
-                ghostB.dao += _delivered();
-                ghostB.minted += _delivered();
+                ghostB.dao += _paidByFiller();
+                ghostB.minted += _paidByFiller();
             }
-            // Branch and Keep: nothing leaves the DAO
         }
     }
 
-    /// @dev The B the filler sends for one fill
-    function _delivered() internal view returns (uint256) {
+    /// @dev The B the filler pays the DAO for one fill: the demand plus `fillDelta`
+    function _paidByFiller() internal view returns (uint256) {
         return uint256(int256(demand) + fillDelta);
     }
 
@@ -394,6 +402,7 @@ abstract contract BaseHandler is Test {
         bool _atMaxDepth = _depth == MAX_DEPTH;
 
         // A branch half the time, unless it's already as deep as allowed
+        // create a branch with 2/3/4 children.
         if (!_atMaxDepth && _seed % 2 == 0) {
             uint256 _childCount = 2 + (_seed >> 32) % (MAX_CHILDREN - 1);
             _node.kind = Kind.Branch;
@@ -496,30 +505,42 @@ abstract contract BaseHandler is Test {
         uint256[2] memory _supplyBefore;
         uint256[][2] memory _recipientsBefore;
         uint256[][2] memory _beneficiariesBefore;
-        for (uint256 t; t < 2; ++t) {
-            _daoBefore[t] = tokens[t].balanceOf(address(dao));
-            _supplyBefore[t] = tokens[t].totalSupply();
-            _recipientsBefore[t] = _balancesOf(tokens[t], recipients);
-            _beneficiariesBefore[t] = _balancesOf(tokens[t], beneficiaries);
+        for (uint256 i; i < 2; ++i) {
+            _daoBefore[i] = tokens[i].balanceOf(address(dao));
+            _supplyBefore[i] = tokens[i].totalSupply();
+            _recipientsBefore[i] = _balancesOf(tokens[i], recipients);
+            _beneficiariesBefore[i] = _balancesOf(tokens[i], beneficiaries);
         }
-        uint256 _fillerBefore = tokens[A].balanceOf(address(this));
+        uint256 _fillerBefore = tokens[A].balanceOf(filler);
 
-        vm.prank(_caller);
-        try plugin.trigger("", _data) {
-            fail("trigger should have reverted");
-        } catch (bytes memory _actual) {
-            assertEq(_actual, _reason, "unexpected revert reason");
-        }
+        (bool _success, bytes memory _actual) = _callTrigger(_caller, _data);
+        assertFalse(_success, "trigger should have reverted");
+        assertEq(_actual, _reason, "unexpected revert reason");
         expectedReverts++;
 
-        for (uint256 t; t < 2; ++t) {
-            assertEq(tokens[t].balanceOf(address(dao)), _daoBefore[t], "revert moved dao funds");
-            assertEq(tokens[t].totalSupply(), _supplyBefore[t], "revert changed the supply");
-            assertEq(_balancesOf(tokens[t], recipients), _recipientsBefore[t], "revert paid a recipient");
-            assertEq(_balancesOf(tokens[t], beneficiaries), _beneficiariesBefore[t], "revert paid a beneficiary");
+        for (uint256 i; i < 2; ++i) {
+            assertEq(tokens[i].balanceOf(address(dao)), _daoBefore[i], "revert moved dao funds");
+            assertEq(tokens[i].totalSupply(), _supplyBefore[i], "revert changed the supply");
+            assertEq(_balancesOf(tokens[i], recipients), _recipientsBefore[i], "revert paid a recipient");
+            assertEq(_balancesOf(tokens[i], beneficiaries), _beneficiariesBefore[i], "revert paid a beneficiary");
         }
-        assertEq(tokens[A].balanceOf(address(this)), _fillerBefore, "revert paid the filler");
+        assertEq(tokens[A].balanceOf(filler), _fillerBefore, "revert paid the filler");
     }
+
+    // Hooks
+
+    /// @dev Triggers the flow as `_caller`, returning the revert data on failure
+    function _callTrigger(address _caller, bytes[] memory _data)
+        internal
+        virtual
+        returns (bool _success, bytes memory _returnData)
+    {
+        vm.prank(_caller);
+        (_success, _returnData) = address(plugin).call(abi.encodeCall(CapitalTreePlugin.trigger, ("", _data)));
+    }
+
+    /// @dev The node data for an OpenFill node offered `_offered` of A. None by default.
+    function _fillData(uint256 _offered) internal view virtual returns (bytes memory) {}
 
     function _balancesOf(ERC20Mock _token, address[] storage _holders)
         internal

@@ -7,7 +7,6 @@ import {BaseHandler} from "./base/BaseHandler.sol";
 import {BaseInvariant} from "./base/BaseInvariant.sol";
 import {BalanceBudgetHandler} from "./handlers/BalanceBudgetHandler.sol";
 
-/// @notice Random BalanceBudget flows fuzzed by `BalanceBudgetHandler`, checked against its model
 contract BalanceBudgetInvariantTest is BaseInvariant {
     function setUp() public override {
         super.setUp();

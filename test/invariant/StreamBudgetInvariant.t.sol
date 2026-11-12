@@ -7,7 +7,6 @@ import {BaseHandler} from "./base/BaseHandler.sol";
 import {BaseInvariant} from "./base/BaseInvariant.sol";
 import {StreamBudgetHandler} from "./handlers/StreamBudgetHandler.sol";
 
-/// @notice Random StreamBudget flows with OpenFill nodes, fuzzed by `StreamBudgetHandler`
 contract StreamBudgetInvariantTest is BaseInvariant {
     StreamBudget internal stream;
 
@@ -20,7 +19,7 @@ contract StreamBudgetInvariantTest is BaseInvariant {
         plugin = _deployPlugin(budget, _one(keep));
         handler = new StreamBudgetHandler(_deps(_openFill));
 
-        bytes4[] memory _selectors = new bytes4[](9);
+        bytes4[] memory _selectors = new bytes4[](10);
         _selectors[0] = StreamBudgetHandler.trigger.selector;
         _selectors[1] = BaseHandler.rebuildTree.selector;
         _selectors[2] = BaseHandler.setWeights.selector;
@@ -30,6 +29,7 @@ contract StreamBudgetInvariantTest is BaseInvariant {
         _selectors[6] = StreamBudgetHandler.setMaxBudget.selector;
         _selectors[7] = StreamBudgetHandler.setRate.selector;
         _selectors[8] = StreamBudgetHandler.setDemandPerFill.selector;
+        _selectors[9] = StreamBudgetHandler.outflow.selector;
         _target(_selectors);
     }
 
@@ -41,13 +41,29 @@ contract StreamBudgetInvariantTest is BaseInvariant {
         if (stream.maxBudget() != 0) assertLe(_amount, stream.maxBudget(), "above the cap");
     }
 
+    /// The amount never jumps: since the last call it rose by at most the rate times the time that
+    /// passed, and it is 0 after a fill or a demand change. Not checked between an outflow and the
+    /// sync that should follow it, where the stream documents that a jump can happen.
+    function invariant_NoJump() public view {
+        assertLe(_available(stream), _streamHandler().ghostCeiling(), "the amount jumped");
+    }
+
+    /// The sink holds exactly the A that left the DAO outside the flow
+    function invariant_SinkHoldsOutflows() public view {
+        assertEq(tokenA.balanceOf(handler.sink()), _streamHandler().ghostToSink());
+    }
+
     /// The filler holds exactly the A it was offered
     function invariant_FillerHoldsWhatItWasOffered() public view {
-        assertEq(tokenA.balanceOf(address(handler)), handler.ghostToFiller());
+        assertEq(tokenA.balanceOf(handler.filler()), handler.ghostToFiller());
     }
 
     /// No approval to the filler outlives a fill
     function invariant_NoApprovalSurvives() public view {
-        assertEq(tokenA.allowance(address(dao), address(handler)), 0);
+        assertEq(tokenA.allowance(address(dao), handler.filler()), 0);
+    }
+
+    function _streamHandler() internal view returns (StreamBudgetHandler) {
+        return StreamBudgetHandler(address(handler));
     }
 }

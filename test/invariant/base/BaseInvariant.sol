@@ -69,12 +69,13 @@ abstract contract BaseInvariant is Fixture {
         }
     }
 
-    /// Nobody outside the flow holds a token: the DAO, the recipients, the beneficiaries and the
-    /// filler hold the whole supply. Real balances only, no model.
+    /// Nobody outside the flow holds a token: the DAO, the recipients, the beneficiaries, the
+    /// filler and the sink (outflows outside the flow) hold the whole supply. Real balances only, no model.
     function invariant_NoTokenLeavesTheFlow() public view {
         for (uint256 t; t < 2; ++t) {
             ERC20Mock _tok = _token(t);
-            uint256 _held = _tok.balanceOf(address(dao)) + _tok.balanceOf(address(handler));
+            uint256 _held = _tok.balanceOf(address(dao)) + _tok.balanceOf(handler.filler())
+                + _tok.balanceOf(handler.sink());
             for (uint256 r; r < handler.recipientCount(); ++r) {
                 _held += _tok.balanceOf(handler.recipientAt(r));
             }
