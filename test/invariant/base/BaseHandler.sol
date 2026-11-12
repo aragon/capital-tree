@@ -33,7 +33,7 @@ abstract contract BaseHandler is Test {
         OpenFill // sells its A to the filler for B; its one child runs on B
     }
 
-    /// @dev One node of the model. Weights are the model's own copy, never read from the splitter.
+    /// @dev One node of the model.
     struct ModelNode {
         Kind kind;
         bool skip;
@@ -41,8 +41,8 @@ abstract contract BaseHandler is Test {
         uint256 token; // the token it receives: A, or B below an OpenFill
         uint256 recipient; // index into `recipients`, for a Transfer leaf
         WeightSplitter splitter; // for a Branch
-        uint32[] children;
-        uint32[] weights;
+        uint32[] children; // for a Branch
+        uint32[] weights; // for a Branch
     }
 
     /// @dev What a trigger should do, computed by walking the model
@@ -74,6 +74,7 @@ abstract contract BaseHandler is Test {
         ERC20Mock tokenA;
         ERC20Mock tokenB;
         address[] recipients;
+        // actions
         INodeAction[] transfers; // transfers[i] pays recipients[i]
         INodeAction burn;
         INodeAction keep;
@@ -188,40 +189,17 @@ abstract contract BaseHandler is Test {
 
     // Views for the invariants
 
-    function recipientCount() external view returns (uint256) {
-        return recipients.length;
+    function getRecipients() external view returns (address[] memory) {
+        return recipients;
     }
 
-    function recipientAt(uint256 _r) external view returns (address) {
-        return recipients[_r];
+    function getBeneficiaries() external view returns (address[] memory) {
+        return beneficiaries;
     }
 
-    function ghostMinted(uint256 _token) external view returns (uint256) {
-        return _ghostOf(_token).minted;
-    }
-
-    function ghostBurned(uint256 _token) external view returns (uint256) {
-        return _ghostOf(_token).burned;
-    }
-
-    function ghostDao(uint256 _token) external view returns (uint256) {
-        return _ghostOf(_token).dao;
-    }
-
-    function receivedByRecipient(uint256 _token, uint256 _r) external view returns (uint256) {
-        return _ghostOf(_token).recipients[_r];
-    }
-
-    function beneficiaryCount() external view returns (uint256) {
-        return beneficiaries.length;
-    }
-
-    function beneficiaryAt(uint256 _b) external view returns (address) {
-        return beneficiaries[_b];
-    }
-
-    function receivedByBeneficiary(uint256 _token, uint256 _b) external view returns (uint256) {
-        return _ghostOf(_token).beneficiaries[_b];
+    /// @notice A copy of the totals of token `_t` (A or B), for reading
+    function ghostOf(uint256 _t) external view returns (Totals memory) {
+        return _ghostOf(_t);
     }
 
     function nodeCount() external view returns (uint256) {
@@ -229,10 +207,10 @@ abstract contract BaseHandler is Test {
     }
 
     function _trigger(address _caller, uint256 _amount, uint256 _seed) internal returns (bool _ok) {
-        // Check if tree contains transferToBeneficiaryAction:
-        // If so, set the addresses for each action beneficiary. 
         Run memory _run = _simulate(_amount);
 
+        // Check if tree contains transferToBeneficiaryAction:
+        // If so, set the addresses for each action beneficiary. 
         uint256[] memory _beneficiaryOf = new uint256[](tree.length);
         bytes[] memory _data = new bytes[](tree.length);
         for (uint256 i; i < tree.length; ++i) {
@@ -241,7 +219,9 @@ abstract contract BaseHandler is Test {
                 _data[i] = abi.encode(beneficiaries[_beneficiaryOf[i]]);
             }
             // An OpenFill node's data tells the filler what to do with the offer it gets
-            if (tree[i].kind == Kind.OpenFill && _run.input[i] != 0) _data[i] = _fillData(_run.input[i]);
+            if (tree[i].kind == Kind.OpenFill && _run.input[i] != 0) {
+                _data[i] = _fillData(_run.input[i]);
+            }
         }
 
         if (_run.reverts) {
@@ -380,7 +360,7 @@ abstract contract BaseHandler is Test {
         return uint256(int256(demand) + fillDelta);
     }
 
-    /// @dev The totals of token `_t`. A storage reference: writing to it writes to `ghostA` or `ghostB`.
+    /// @dev The totals of token `_t`, for writing. A storage reference: writing to it writes to `ghostA` or `ghostB`.
     function _ghostOf(uint256 _t) internal view returns (Totals storage) {
         return _t == A ? ghostA : ghostB;
     }
@@ -402,7 +382,7 @@ abstract contract BaseHandler is Test {
         bool _atMaxDepth = _depth == MAX_DEPTH;
 
         // A branch half the time, unless it's already as deep as allowed
-        // create a branch with 2/3/4 children.
+        // create a branch with 2/3 children.
         if (!_atMaxDepth && _seed % 2 == 0) {
             uint256 _childCount = 2 + (_seed >> 32) % (MAX_CHILDREN - 1);
             _node.kind = Kind.Branch;

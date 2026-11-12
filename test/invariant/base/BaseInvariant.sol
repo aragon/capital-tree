@@ -40,8 +40,10 @@ abstract contract BaseInvariant is Fixture {
     /// Each recipient got exactly what the model's walk of the trees gave them
     function invariant_RecipientsMatchModel() public view {
         for (uint256 t; t < 2; ++t) {
-            for (uint256 r; r < handler.recipientCount(); ++r) {
-                assertEq(_token(t).balanceOf(handler.recipientAt(r)), handler.receivedByRecipient(t, r), "recipient");
+            BaseHandler.Totals memory _ghost = handler.ghostOf(t);
+            address[] memory _recipients = handler.getRecipients();
+            for (uint256 r; r < _recipients.length; ++r) {
+                assertEq(_token(t).balanceOf(_recipients[r]), _ghost.recipients[r], "recipient");
             }
         }
     }
@@ -49,8 +51,10 @@ abstract contract BaseInvariant is Fixture {
     /// Each beneficiary got exactly what the Beneficiary nodes that named it were given
     function invariant_BeneficiariesMatchModel() public view {
         for (uint256 t; t < 2; ++t) {
-            for (uint256 b; b < handler.beneficiaryCount(); ++b) {
-                assertEq(_token(t).balanceOf(handler.beneficiaryAt(b)), handler.receivedByBeneficiary(t, b), "beneficiary");
+            BaseHandler.Totals memory _ghost = handler.ghostOf(t);
+            address[] memory _beneficiaries = handler.getBeneficiaries();
+            for (uint256 b; b < _beneficiaries.length; ++b) {
+                assertEq(_token(t).balanceOf(_beneficiaries[b]), _ghost.beneficiaries[b], "beneficiary");
             }
         }
     }
@@ -58,14 +62,15 @@ abstract contract BaseInvariant is Fixture {
     /// The DAO holds exactly what the model says
     function invariant_DaoBalanceMatchesModel() public view {
         for (uint256 t; t < 2; ++t) {
-            assertEq(_token(t).balanceOf(address(dao)), handler.ghostDao(t), "dao");
+            assertEq(_token(t).balanceOf(address(dao)), handler.ghostOf(t).dao, "dao");
         }
     }
 
     /// Only burn leaves burn, and only their shares
     function invariant_SupplyMatchesModel() public view {
         for (uint256 t; t < 2; ++t) {
-            assertEq(_token(t).totalSupply(), handler.ghostMinted(t) - handler.ghostBurned(t), "supply");
+            BaseHandler.Totals memory _ghost = handler.ghostOf(t);
+            assertEq(_token(t).totalSupply(), _ghost.minted - _ghost.burned, "supply");
         }
     }
 
@@ -76,11 +81,13 @@ abstract contract BaseInvariant is Fixture {
             ERC20Mock _tok = _token(t);
             uint256 _held = _tok.balanceOf(address(dao)) + _tok.balanceOf(handler.filler())
                 + _tok.balanceOf(handler.sink());
-            for (uint256 r; r < handler.recipientCount(); ++r) {
-                _held += _tok.balanceOf(handler.recipientAt(r));
+            address[] memory _recipients = handler.getRecipients();
+            for (uint256 r; r < _recipients.length; ++r) {
+                _held += _tok.balanceOf(_recipients[r]);
             }
-            for (uint256 b; b < handler.beneficiaryCount(); ++b) {
-                _held += _tok.balanceOf(handler.beneficiaryAt(b));
+            address[] memory _beneficiaries = handler.getBeneficiaries();
+            for (uint256 b; b < _beneficiaries.length; ++b) {
+                _held += _tok.balanceOf(_beneficiaries[b]);
             }
             assertEq(_held, _tok.totalSupply(), "tokens outside the flow");
         }
