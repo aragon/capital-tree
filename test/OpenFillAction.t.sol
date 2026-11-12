@@ -133,7 +133,7 @@ contract OpenFillActionTest is Fixture {
         action.postconditions(filler, _in, _output, _snapshot);
     }
 
-    /// Kept failing: no offered tokens were spent, but the sum in the guard overflows.
+    /// No offered tokens were spent, so a guard that adds the offer to the balance would overflow.
     function test_Regression_UntouchedLargeOfferOverflowsBalanceGuard() public {
         uint256 _amount = type(uint256).max / 2 + 1;
         deal(address(tokenA), address(dao), _amount, true);
