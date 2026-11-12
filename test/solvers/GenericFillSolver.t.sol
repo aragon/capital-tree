@@ -35,16 +35,18 @@ contract GenericFillSolverTest is Fixture {
         assertEq(address(solver.plugin()), address(plugin));
     }
 
-    function test_FillPaysDaoClearsAllowanceAndCommitsStream() public {
-        solver.trigger(_data(_calls(RATE, DEMAND, address(dao))));
+    function testFuzz_FillPaysDaoClearsAllowanceAndCommitsStream(uint256 offered, uint128 extra) public {
+        offered = bound(offered, 0, RATE);
+        tokenB.mint(address(solver), extra);
+        solver.trigger(_data(_calls(offered, DEMAND + extra, address(dao))));
 
-        assertEq(tokenA.balanceOf(address(dao)), DAO_A - RATE);
-        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
-        assertEq(tokenA.balanceOf(address(solver)), RATE);
+        assertEq(tokenA.balanceOf(address(dao)), DAO_A - offered);
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND + extra);
+        assertEq(tokenA.balanceOf(address(solver)), offered);
         assertEq(tokenB.balanceOf(address(solver)), 0);
         assertEq(tokenA.allowance(address(dao), address(solver)), 0);
         assertEq(_available(budget), 0);
-        assertEq(budget.lastSeenBalance(), DAO_A - RATE);
+        assertEq(budget.lastSeenBalance(), DAO_A - offered);
         assertEq(budget.baseTimestamp(), block.timestamp);
     }
 
@@ -107,21 +109,21 @@ contract GenericFillSolverTest is Fixture {
         assertEq(_available(budget), 0);
     }
 
-    function test_RevertWhen_UnderpaidRestoresBalancesAndStream() public {
-        bytes[] memory data = _data(_calls(RATE, DEMAND - 1, address(dao)));
+    function testFuzz_RevertWhen_UnderpaidRestoresBalancesAndStream(uint256 paid) public {
+        paid = bound(paid, 0, DEMAND - 1);
+        bytes[] memory data = _data(_calls(RATE, paid, address(dao)));
         uint256 checkpoint = budget.baseTimestamp();
 
-        vm.expectRevert(
-            abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + DEMAND - 1)
-        );
+        vm.expectRevert(abi.encodeWithSelector(OpenFillAction.DemandNotMet.selector, DAO_B + DEMAND, DAO_B + paid));
         solver.trigger(data);
 
         _assertUnfilled(checkpoint);
     }
 
-    function test_RevertWhen_ACallbackCallFailsRollsBackEarlierCalls() public {
+    function testFuzz_RevertWhen_ACallbackCallFailsRollsBackEarlierCalls(uint128 excess) public {
+        uint256 payment = DEMAND + uint256(excess) + 1;
         // The input pull succeeds, then paying more B than the solver owns fails.
-        bytes[] memory data = _data(_calls(RATE, DEMAND + 1, address(dao)));
+        bytes[] memory data = _data(_calls(RATE, payment, address(dao)));
         uint256 checkpoint = budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
@@ -130,8 +132,8 @@ contract GenericFillSolverTest is Fixture {
         _assertUnfilled(checkpoint);
     }
 
-    function test_RevertWhen_StaleQuotePullsMoreThanTheOffer() public {
-        bytes[] memory data = _data(_calls(RATE + 1, DEMAND, address(dao)));
+    function testFuzz_RevertWhen_StaleQuotePullsMoreThanTheOffer(uint128 excess) public {
+        bytes[] memory data = _data(_calls(RATE + uint256(excess) + 1, DEMAND, address(dao)));
         uint256 checkpoint = budget.baseTimestamp();
 
         vm.expectRevert(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
@@ -218,43 +220,47 @@ contract GenericFillSolverTest is Fixture {
         solver.trigger(data);
     }
 
-    function test_RevertWhen_TriggerReceivesEth() public {
+    function testFuzz_RevertWhen_TriggerReceivesEth(uint128 value) public {
+        vm.assume(value > 0);
         bytes memory data = abi.encodeCall(solver.trigger, (_data(_calls(RATE, DEMAND, address(dao)))));
-        vm.deal(address(this), 1 ether);
-        (bool ok,) = address(solver).call{value: 1 ether}(data);
+        vm.deal(address(this), value);
+        (bool ok,) = address(solver).call{value: value}(data);
         assertFalse(ok);
-        assertEq(address(this).balance, 1 ether);
+        assertEq(address(this).balance, value);
         assertEq(address(solver).balance, 0);
         _assertUnfilled(budget.baseTimestamp());
     }
 
-    function test_RevertWhen_DaoCallbackReceivesEth() public {
+    function testFuzz_RevertWhen_DaoCallbackReceivesEth(uint128 value) public {
+        vm.assume(value > 0);
         bytes memory data = abi.encodeCall(solver.fillOffer, (tokenA, 0, tokenB, 0, abi.encode(new Action[](0))));
-        vm.deal(address(dao), 1 ether);
+        vm.deal(address(dao), value);
         vm.prank(address(dao));
-        (bool ok,) = address(solver).call{value: 1 ether}(data);
+        (bool ok,) = address(solver).call{value: value}(data);
         assertFalse(ok);
-        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(dao).balance, value);
         assertEq(address(solver).balance, 0);
     }
 
-    function test_BatchIgnoresActionValueEvenWithForcedBalance() public {
-        vm.deal(address(solver), 1 ether);
+    function testFuzz_BatchIgnoresActionValueEvenWithForcedBalance(uint128 value, uint256 amount) public {
+        amount = bound(amount, 1, DEMAND);
+        vm.deal(address(solver), value);
         Action[] memory calls = new Action[](2);
-        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, 1)));
-        calls[1] = Action(bob, 1 ether, "");
+        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, amount)));
+        calls[1] = Action(bob, value, "");
         bytes memory data = abi.encode(calls);
         vm.prank(address(dao));
         solver.fillOffer(tokenA, 0, tokenB, 0, data);
-        assertEq(address(solver).balance, 1 ether);
+        assertEq(address(solver).balance, value);
         assertEq(bob.balance, 0);
-        assertEq(tokenB.balanceOf(alice), 1);
-        assertEq(tokenB.balanceOf(address(solver)), DEMAND - 1);
+        assertEq(tokenB.balanceOf(alice), amount);
+        assertEq(tokenB.balanceOf(address(solver)), DEMAND - amount);
     }
 
-    function test_RevertWhen_PlainEthTransfer() public {
-        vm.deal(address(this), 1 ether);
-        (bool ok,) = address(solver).call{value: 1 ether}("");
+    function testFuzz_RevertWhen_PlainEthTransfer(uint128 value) public {
+        vm.assume(value > 0);
+        vm.deal(address(this), value);
+        (bool ok,) = address(solver).call{value: value}("");
         assertFalse(ok);
         assertEq(address(solver).balance, 0);
     }
@@ -275,13 +281,16 @@ contract GenericFillSolverTest is Fixture {
         _assertUnfilled(budget.baseTimestamp());
     }
 
-    function test_RevertWhen_DaoCallbackCallFailsReportsIndexAndRollsBack() public {
-        Action[] memory calls = new Action[](2);
-        calls[0] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, 1)));
-        calls[1] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, DEMAND)));
+    function testFuzz_RevertWhen_DaoCallbackCallFailsReportsIndexAndRollsBack(uint8 prefix) public {
+        prefix = uint8(bound(prefix, 1, 16));
+        Action[] memory calls = new Action[](uint256(prefix) + 1);
+        for (uint256 i; i < prefix; ++i) {
+            calls[i] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, 1)));
+        }
+        calls[prefix] = Action(address(tokenB), 0, abi.encodeCall(IERC20.transfer, (alice, DEMAND)));
         bytes memory data = abi.encode(calls);
 
-        vm.expectRevert(abi.encodeWithSelector(GenericFillSolver.CallFailed.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(GenericFillSolver.CallFailed.selector, uint256(prefix)));
         vm.prank(address(dao));
         solver.fillOffer(tokenA, 0, tokenB, 0, data);
 
@@ -289,17 +298,19 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(solver)), DEMAND);
     }
 
-    function test_RevertWhen_UnauthorizedTrigger() public {
+    function testFuzz_RevertWhen_UnauthorizedTrigger(address caller) public {
+        vm.assume(caller != address(this) && caller != address(solver));
         bytes[] memory data = _data(_calls(RATE, DEMAND, address(dao)));
         vm.expectRevert(GenericFillSolver.Unauthorized.selector);
-        vm.prank(bob);
+        vm.prank(caller);
         solver.trigger(data);
         _assertUnfilled(budget.baseTimestamp());
     }
 
-    function test_RevertWhen_UnauthorizedSweep() public {
+    function testFuzz_RevertWhen_UnauthorizedSweep(address caller) public {
+        vm.assume(caller != address(this) && caller != address(solver));
         vm.expectRevert(GenericFillSolver.Unauthorized.selector);
-        vm.prank(bob);
+        vm.prank(caller);
         solver.sweep(tokenB, bob);
         assertEq(tokenB.balanceOf(address(solver)), DEMAND);
     }
@@ -324,8 +335,8 @@ contract GenericFillSolverTest is Fixture {
         assertEq(tokenB.balanceOf(address(solver)), DEMAND, "other tokens untouched");
     }
 
-    function test_PermissionedBatchSweepsErc20Surplus() public {
-        tokenB.mint(address(solver), 2 ether);
+    function testFuzz_PermissionedBatchSweepsErc20Surplus(uint128 surplus) public {
+        tokenB.mint(address(solver), surplus);
         Action[] memory calls = new Action[](3);
         Action[] memory fill = _calls(RATE, DEMAND, address(dao));
         calls[0] = fill[0];
@@ -335,7 +346,7 @@ contract GenericFillSolverTest is Fixture {
         solver.trigger(_data(calls));
 
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
-        assertEq(tokenB.balanceOf(alice), 2 ether);
+        assertEq(tokenB.balanceOf(alice), surplus);
         assertEq(tokenB.balanceOf(address(solver)), 0);
         assertEq(_available(budget), 0);
     }

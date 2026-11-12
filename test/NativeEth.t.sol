@@ -80,23 +80,24 @@ contract NativeEthTest is Fixture {
         assertEq(address(_target).balance, 0);
     }
 
-    function test_NodeCallsPayableFunctionWithDaoEth() public {
-        _assertPayableCall(NativeAction.Mode.Work, false);
+    function testFuzz_NodeCallsPayableFunctionWithDaoEth(uint256 balance) public {
+        _assertPayableCall(NativeAction.Mode.Work, false, balance);
     }
 
-    function test_PayableCallbackCannotReenterTrigger() public {
-        _assertPayableCall(NativeAction.Mode.Work, true);
+    function testFuzz_PayableCallbackCannotReenterTrigger(uint256 balance) public {
+        _assertPayableCall(NativeAction.Mode.Work, true, balance);
     }
 
-    function _assertPayableCall(NativeAction.Mode _mode, bool _reenter) internal {
-        vm.deal(address(dao), 2 ether);
+    function _assertPayableCall(NativeAction.Mode _mode, bool _reenter, uint256 balance) internal {
+        balance = bound(balance, 1 ether, type(uint256).max);
+        vm.deal(address(dao), balance);
         PayableTarget _target = new PayableTarget();
         NativeAction _action = new NativeAction(address(dao), _mode);
         _action.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
         if (_reenter) _target.setPlugin(_plugin);
         _plugin.trigger("", noData);
-        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(dao).balance, balance - 1 ether);
         assertEq(address(_target).balance, 1 ether);
         assertEq(_target.sender(), address(dao));
         assertEq(tokenA.balanceOf(address(dao)), DAO_A, "ERC20 movement does not account for ETH fees");
@@ -107,25 +108,26 @@ contract NativeEthTest is Fixture {
         }
     }
 
-    function test_BudgetCommitCallsPayableFunctionWithDaoEth() public {
-        vm.deal(address(dao), 2 ether);
+    function testFuzz_BudgetCommitCallsPayableFunctionWithDaoEth(uint256 balance) public {
+        balance = bound(balance, 1 ether, type(uint256).max);
+        vm.deal(address(dao), balance);
         PayableTarget _target = new PayableTarget();
         NativeCommitBudget _budget = new NativeCommitBudget(address(dao), tokenA);
         _budget.setCall(address(_target), abi.encodeCall(PayableTarget.pay, ()));
         CapitalTreePlugin _plugin = _deployPlugin(_budget, _one(_deployTransfer(alice)));
         _plugin.trigger("", noData);
-        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(dao).balance, balance - 1 ether);
         assertEq(address(_target).balance, 1 ether);
         assertEq(_target.sender(), address(dao));
         assertEq(tokenA.balanceOf(alice), DAO_A);
     }
 
-    function test_Erc20FlowLeavesNativeBalanceUntouched() public {
-        vm.deal(address(dao), 1 ether);
+    function testFuzz_Erc20FlowLeavesNativeBalanceUntouched(uint256 balance) public {
+        vm.deal(address(dao), balance);
         CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(_deployTransfer(alice)));
         _plugin.trigger("", noData);
         assertEq(tokenA.balanceOf(alice), DAO_A);
-        assertEq(address(dao).balance, 1 ether);
+        assertEq(address(dao).balance, balance);
     }
 }
 

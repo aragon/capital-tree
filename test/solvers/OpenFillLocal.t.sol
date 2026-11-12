@@ -38,16 +38,18 @@ contract OpenFillLocalTest is Test {
         _fill(data);
     }
 
-    function test_sweepSurplusAfterPayingDAO() public {
+    function testFuzz_sweepSurplusAfterPayingDAO(uint128 surplus) public {
         address recipient = address(0xB0B);
-        ERC20Mock(address(d.buy)).mint(address(router), 2 ether);
+        ERC20Mock(address(d.buy)).mint(address(router), surplus);
         Action[] memory calls = new Action[](6);
         calls[0] = Action(
             address(d.sell), 0, abi.encodeCall(IERC20.transferFrom, (address(d.dao), address(d.solver), 100 ether))
         );
         calls[1] = Action(address(d.sell), 0, abi.encodeCall(IERC20.approve, (address(router.spender()), 100 ether)));
         calls[2] = Action(
-            address(router), 0, abi.encodeCall(LocalRouter.swap, (d.sell, d.buy, 100 ether, 7 ether, address(d.solver)))
+            address(router),
+            0,
+            abi.encodeCall(LocalRouter.swap, (d.sell, d.buy, 100 ether, 5 ether + uint256(surplus), address(d.solver)))
         );
         calls[3] = Action(address(d.sell), 0, abi.encodeCall(IERC20.approve, (address(router.spender()), 0)));
         calls[4] = Action(address(d.buy), 0, abi.encodeCall(IERC20.transfer, (address(d.dao), 5 ether)));
@@ -57,7 +59,7 @@ contract OpenFillLocalTest is Test {
         d.solver.trigger(perNode);
 
         assertEq(d.buy.balanceOf(address(d.dao)), 5 ether);
-        assertEq(d.buy.balanceOf(recipient), 2 ether);
+        assertEq(d.buy.balanceOf(recipient), surplus);
         assertEq(d.buy.balanceOf(address(d.solver)), 0);
         assertEq(d.sell.balanceOf(address(d.solver)), 0);
         assertEq(d.sell.allowance(address(d.dao), address(d.solver)), 0);
@@ -69,9 +71,10 @@ contract OpenFillLocalTest is Test {
         d.solver.sweep(d.buy, address(this));
     }
 
-    function test_quoteRejectsNativeCallValue() public {
+    function testFuzz_quoteRejectsNativeCallValue(uint128 value) public {
+        vm.assume(value > 0);
         vm.serializeAddress("paidTx", "to", address(router));
-        vm.serializeString("paidTx", "value", "1000000000000000");
+        vm.serializeString("paidTx", "value", vm.toString(uint256(value)));
         string memory transaction = vm.serializeBytes(
             "paidTx", "data", abi.encodeCall(LocalRouter.swap, (d.sell, d.buy, 100 ether, 5 ether, address(d.dao)))
         );
@@ -86,11 +89,12 @@ contract OpenFillLocalTest is Test {
         quotes.fromOneInch(oneInchJson, spender, address(d.dao), address(d.solver), d.sell, 100 ether);
     }
 
-    function test_misdirectedQuoteRollsBackSwapAndCheckpoint() public {
+    function testFuzz_misdirectedQuoteRollsBackSwapAndCheckpoint(address recipient) public {
+        vm.assume(recipient != address(0) && recipient != address(d.dao) && recipient != address(router));
         vm.serializeAddress("wrongTx", "to", address(router));
         vm.serializeString("wrongTx", "value", "0");
         string memory transaction = vm.serializeBytes(
-            "wrongTx", "data", abi.encodeCall(LocalRouter.swap, (d.sell, d.buy, 100 ether, 5 ether, address(this)))
+            "wrongTx", "data", abi.encodeCall(LocalRouter.swap, (d.sell, d.buy, 100 ether, 5 ether, recipient))
         );
         vm.serializeAddress("wrongQuote", "allowanceTarget", address(router.spender()));
         string memory json = vm.serializeString("wrongQuote", "transaction", transaction);
@@ -103,7 +107,7 @@ contract OpenFillLocalTest is Test {
 
         assertEq(d.sell.balanceOf(address(d.dao)), 100 ether);
         assertEq(d.buy.balanceOf(address(router)), 5 ether);
-        assertEq(d.buy.balanceOf(address(this)), 0);
+        assertEq(d.buy.balanceOf(recipient), 0);
         assertEq(d.sell.balanceOf(address(router)), 0);
         assertEq(d.sell.allowance(address(d.dao), address(d.solver)), 0);
         assertEq(d.sell.allowance(address(d.solver), address(router.spender())), 0);
@@ -121,9 +125,10 @@ contract OpenFillLocalTest is Test {
         );
     }
 
-    function test_forNodeRejectsInvalidIndex() public {
+    function testFuzz_forNodeRejectsInvalidIndex(uint8 length, uint256 index, bytes memory data) public {
+        index = bound(index, length, type(uint256).max);
         vm.expectRevert("Invalid node position");
-        quotes.forNode(2, 2, "");
+        quotes.forNode(length, index, data);
     }
 
     function _transactionJson() internal returns (string memory) {

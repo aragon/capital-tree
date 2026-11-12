@@ -71,8 +71,9 @@ contract VaultDonateActionTest is BuybackDonateFixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
-    function test_DonationFailureAlsoRollsBackFee() public {
-        _install(10);
+    function testFuzz_DonationFailureAlsoRollsBackFee(uint256 _bps) public {
+        _bps = bound(_bps, 1, 9_999);
+        _install(_bps);
         vault.setMode(1);
         _expectRollback(abi.encodeWithSelector(DAO.ActionFailed.selector, 1));
         assertEq(tokenB.balanceOf(fee), 0);
@@ -85,13 +86,24 @@ contract VaultDonateActionTest is BuybackDonateFixture {
         assertEq(tokenB.balanceOf(fee), 0);
     }
 
-    function testFuzz_FeeAndDonationConserveProceeds(uint256 _bps) public {
+    function testFuzz_FeeAndDonationConserveProceeds(uint256 _bps, uint96 _demand, uint96 _surplus) public {
         _bps = bound(_bps, 1, 9_999);
+        // At least 10,000 wei keeps both branches nonempty even at a one-bp weight.
+        _demand = uint96(bound(_demand, 10_000, type(uint96).max));
         _install(_bps);
+        OpenFillAction _action = OpenFillAction(address(plugin.nodes()[0].action));
+        vm.prank(manager);
+        _action.setDemandPerFill(_demand);
+        tokenB.mint(address(filler), uint256(_demand) + _surplus);
+        filler.setFillDelta(int256(uint256(_surplus)));
+        vm.warp(block.timestamp + EPOCH);
         filler.fill("");
-        uint256 _fee = DEMAND * _bps / 10_000;
+        uint256 _proceeds = uint256(_demand) + _surplus;
+        uint256 _fee = _proceeds * _bps / 10_000;
+        // The larger branch gets rounding dust; the fee wins an exact weight tie.
+        if (_bps >= 5_000 && (_proceeds * _bps) % 10_000 != 0) ++_fee;
         assertEq(tokenB.balanceOf(fee), _fee);
-        _assertDonation(DEMAND - _fee);
+        _assertDonation(_proceeds - _fee);
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
         assertEq(budget.available(address(filler), ""), 0);
     }
@@ -147,10 +159,13 @@ contract VaultDonateActionTest is BuybackDonateFixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B);
     }
 
-    function test_NoOpDonationRollsBack() public {
-        _install(10);
+    function testFuzz_NoOpDonationRollsBack(uint256 _bps) public {
+        _bps = bound(_bps, 1, 9_999);
+        _install(_bps);
         vault.setMode(2);
-        _expectRollback(abi.encodeWithSelector(VaultDonateAction.AssetsNotIncreased.selector, 999 ether, 0));
+        _expectRollback(
+            abi.encodeWithSelector(VaultDonateAction.AssetsNotIncreased.selector, DEMAND - DEMAND * _bps / 10_000, 0)
+        );
     }
 
     function test_WrongAssetReverts() public {
