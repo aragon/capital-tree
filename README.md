@@ -423,16 +423,26 @@ deploys Aragon's plugin repo registry, factory and PluginSetupProcessor locally,
 - Ethereum fork tests using the direct Uniswap route at the latest block.
 - Katana fork tests at block 47,557,066, including donation and rollback.
 
-Fork jobs use public RPC endpoints by default. Optional GitHub Actions secrets
-`MAINNET_RPC_URL` and `KATANA_RPC_URL` override them with dedicated providers.
+CI secrets live in the 1Password vault `kv_capital-tree_infra`, not in GitHub.
+The fork and live-quote jobs load every **API Credential** item in that vault as
+an environment variable named after the item, with the value of its `credential`
+field. To add a variable, add an item; the next run picks it up without a
+workflow change. Item titles must be valid variable names (`ZERO_EX_API_KEY`),
+and the vault must hold secrets only, because every value is masked in the logs.
+The repository needs one GitHub secret, `OP_SERVICE_ACCOUNT_TOKEN`, for a
+1Password service account scoped to that vault.
+
+Fork jobs use public RPC endpoints by default. `MAINNET_RPC_URL` (or
+`ALCHEMY_API_KEY`) and `KATANA_RPC_URL` in the vault override them with
+dedicated providers.
 RPC failures fail the job; the workflow does not silently skip the fork suites.
 Ethereum uses recent state because the default public RPC requires credentials
 for archive requests. Katana keeps the historical block used by its fixture.
 
 Use **Actions → Tests → Run workflow → live_quotes** to also run live aggregator
 quotes at the latest Ethereum block. This optional job enables FFI for `curl`
-and `jq`. Set the `ZERO_EX_API_KEY` and `ONEINCH_API_KEY` repository secrets to
-include those providers; their tests explicitly skip when their key is absent.
+and `jq`. Add `ZERO_EX_API_KEY` and `ONEINCH_API_KEY` to the vault to include
+those providers; their tests explicitly skip when their key is absent.
 KyberSwap and Velora do not need quote API keys. Manual dispatch becomes
 available after the workflow reaches the repository's default branch.
 

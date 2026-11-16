@@ -1,3 +1,12 @@
+# Secrets come from 1Password, not from GitHub secrets. The jobs that reach the network load every
+# "API Credential" item in kv_capital-tree_infra as a masked env var named after the item (value:
+# its `credential` field), through aragon/github-templates' credential-retrieval. So a new item in
+# the vault reaches the tests on the next run, with no change here. The only GitHub secret is
+# OP_SERVICE_ACCOUNT_TOKEN, a service account scoped to that vault. The vault holds secrets only:
+# every value is masked in the logs, wherever it appears.
+#
+# Without the token (PRs from forks or Dependabot, or before it is set) the vault is skipped and the
+# fork tests fall back to public RPCs.
 name: Tests
 
 on:
@@ -55,11 +64,10 @@ jobs:
       RUN_FORK_TESTS: 'true'
       RUN_KATANA_FORK_TESTS: 'true'
       RUN_LIVE_QUOTES: 'false'
-      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL || 'https://ethereum-rpc.publicnode.com' }}
-      KATANA_RPC_URL: ${{ secrets.KATANA_RPC_URL || 'https://rpc.katana.network' }}
       # Public Ethereum RPC serves recent state; archive access needs a provider key.
       FORK_BLOCK: '0'
       KATANA_FORK_BLOCK: '47557066'
+      HAS_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,8 +78,21 @@ jobs:
           version: v1.8.6
           cache-key: fork-${{ matrix.network }}-${{ github.sha }}
           cache-restore-keys: fork-${{ matrix.network }}-
+      - name: Load the CI vault
+        if: env.HAS_OP_TOKEN == 'true'
+        uses: aragon/github-templates/steps/credential-retrieval@v1
+        with:
+          mode: alltoenv
+          op-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          op-vault: kv_capital-tree_infra
       - name: Run fork suite
-        run: forge test --match-contract '${{ matrix.contract }}' --no-match-test 'test_Fork_.*LiveQuote' -vv
+        run: |
+          # The Ethereum fork reads ALCHEMY_API_KEY itself when MAINNET_RPC_URL is unset; with
+          # neither in the vault, use the public RPC. The Katana fork defaults its RPC in the test.
+          if [[ -z "${MAINNET_RPC_URL:-}" && -z "${ALCHEMY_API_KEY:-}" ]]; then
+            export MAINNET_RPC_URL='https://ethereum-rpc.publicnode.com'
+          fi
+          forge test --match-contract '${{ matrix.contract }}' --no-match-test 'test_Fork_.*LiveQuote' -vv
 
   live-quotes:
     name: Live aggregator quotes
@@ -81,10 +102,8 @@ jobs:
     env:
       RUN_FORK_TESTS: 'true'
       RUN_LIVE_QUOTES: 'true'
-      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL || 'https://ethereum-rpc.publicnode.com' }}
-      ZERO_EX_API_KEY: ${{ secrets.ZERO_EX_API_KEY }}
-      ONEINCH_API_KEY: ${{ secrets.ONEINCH_API_KEY }}
       FORK_BLOCK: '0'
+      HAS_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,13 +112,27 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
         with:
           version: v1.8.6
+      - name: Load the CI vault
+        if: env.HAS_OP_TOKEN == 'true'
+        uses: aragon/github-templates/steps/credential-retrieval@v1
+        with:
+          mode: alltoenv
+          op-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          op-vault: kv_capital-tree_infra
       - name: Report optional quote credentials
         run: |
-          if [[ -z "$ZERO_EX_API_KEY" ]]; then
+          if [[ "$HAS_OP_TOKEN" != 'true' ]]; then
+            echo '::warning::OP_SERVICE_ACCOUNT_TOKEN is unset; no credentials were loaded from 1Password.'
+          fi
+          if [[ -z "${ZERO_EX_API_KEY:-}" ]]; then
             echo '::notice::ZERO_EX_API_KEY is unset; the 0x test will skip.'
           fi
-          if [[ -z "$ONEINCH_API_KEY" ]]; then
+          if [[ -z "${ONEINCH_API_KEY:-}" ]]; then
             echo '::notice::ONEINCH_API_KEY is unset; the 1inch test will skip.'
           fi
       - name: Run live quote suite at the latest block
-        run: forge test --match-contract GenericOpenFillForkTest --match-test 'test_Fork_.*LiveQuote' --ffi -vv
+        run: |
+          if [[ -z "${MAINNET_RPC_URL:-}" && -z "${ALCHEMY_API_KEY:-}" ]]; then
+            export MAINNET_RPC_URL='https://ethereum-rpc.publicnode.com'
+          fi
+          forge test --match-contract GenericOpenFillForkTest --match-test 'test_Fork_.*LiveQuote' --ffi -vv
