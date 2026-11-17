@@ -81,12 +81,12 @@ contract InstallationTest is Fixture {
     }
 
     /// The stream starts when the proposal executes, not when the installation is prepared
-    function test_TheStreamDoesNotGrowWhileTheProposalIsVoted() public {
+    function testFuzz_TheStreamDoesNotGrowWhileTheProposalIsVoted(uint32 _delay) public {
         (address _plugin, Action[] memory _actions) =
             installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
         IBudget _budget = CapitalTreePlugin(_plugin).budget();
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + _delay);
         _executeProposal(_actions);
         assertEq(_available(_budget), 0, "no backlog from the vote");
 
@@ -95,7 +95,7 @@ contract InstallationTest is Fixture {
     }
 
     /// A proposal without the start action installs a flow that pays nothing, instead of a backlog
-    function test_WithoutTheStartActionNothingFlows() public {
+    function testFuzz_WithoutTheStartActionNothingFlows(uint32 _delay) public {
         (address _plugin, Action[] memory _actions) =
             installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP));
         Action[] memory _withoutStart = new Action[](3);
@@ -104,19 +104,21 @@ contract InstallationTest is Fixture {
         }
 
         _executeProposal(_withoutStart);
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + _delay);
 
         assertEq(_available(CapitalTreePlugin(_plugin).budget()), 0);
     }
 
     /// Someone who prepares another recipe first can't take the plugin address the proposal names
-    function test_FrontRunningThePreparationDoesNotChangeWhatTheProposalInstalls() public {
+    function testFuzz_FrontRunningThePreparationDoesNotChangeWhatTheProposalInstalls(uint256 _otherCap) public {
+        _otherCap = bound(_otherCap, 1, type(uint128).max);
+        vm.assume(_otherCap != STREAM_CAP);
         string memory _honest = _buyAndBurnConfig(STREAM_CAP);
         uint256 _beforeSending = vm.snapshotState();
         (address _printed, Action[] memory _actions) = installer.install(psp, repo, address(dao), _honest);
         vm.revertToState(_beforeSending);
 
-        (address _attacker,) = installer.install(psp, repo, address(dao), _buyAndBurnConfig(STREAM_CAP * 1000));
+        (address _attacker,) = installer.install(psp, repo, address(dao), _buyAndBurnConfig(_otherCap));
         (address _plugin,) = installer.install(psp, repo, address(dao), _honest);
         dao.grant(address(dao), address(dao), dao.ROOT_PERMISSION_ID());
         dao.grant(address(dao), address(this), dao.EXECUTE_PERMISSION_ID());
@@ -146,12 +148,13 @@ contract InstallationTest is Fixture {
         );
     }
 
-    function test_ConfigBuildsTheSameRecipe() public view {
-        Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, STREAM_CAP, EPOCH);
+    function testFuzz_ConfigBuildsTheSameRecipe(uint256 _cap) public view {
+        _cap = bound(_cap, 1, type(uint256).max);
+        Recipes.Stream memory _stream = Recipes.Stream(IERC20(tokenA), RATE, _cap, EPOCH);
         Recipes.Swap memory _swap = Recipes.Swap(IERC20(tokenB), DEMAND);
 
         assertEq(
-            abi.encode(installer.recipe(_buyAndBurnConfig(STREAM_CAP))),
+            abi.encode(installer.recipe(_buyAndBurnConfig(_cap))),
             abi.encode(Recipes.buyAndBurn(manager, guardian, _stream, _swap))
         );
     }

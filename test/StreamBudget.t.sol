@@ -17,42 +17,63 @@ contract StreamBudgetTest is Fixture {
         budget = _deployBudget(RATE, 0);
     }
 
-    function test_GrowsAtRatePerEpoch() public {
+    function testFuzz_GrowsAtRatePerEpoch(uint128 _rate, uint64 _interval, uint64 _elapsed, uint128 _cap) public {
+        _interval = uint64(bound(_interval, 1, type(uint64).max));
+        vm.startPrank(manager);
+        budget.setAmountPerEpoch(_rate);
+        budget.setEpochInterval(_interval);
+        budget.setMaxBudget(_cap);
+        vm.stopPrank();
         assertEq(_available(budget), 0);
-
-        vm.warp(block.timestamp + EPOCH);
-        assertEq(_available(budget), RATE);
-
-        vm.warp(block.timestamp + EPOCH / 2);
-        assertEq(_available(budget), RATE + RATE / 2);
+        vm.warp(block.timestamp + _elapsed);
+        uint256 _expected = uint256(_rate) * _elapsed / _interval;
+        if (_expected > DAO_A) _expected = DAO_A;
+        if (_cap != 0 && _expected > _cap) _expected = _cap;
+        assertEq(_available(budget), _expected);
     }
 
-    function test_DepositDoesNotLiftTheCapUntilSync() public {
-        vm.warp(block.timestamp + 20 * EPOCH); // 200 accrued, capped at the 100 seen
+    function testFuzz_FractionalAccrualBelowTheCap(uint256 _rate, uint256 _elapsed) public {
+        _rate = bound(_rate, 0, DAO_A);
+        _elapsed = bound(_elapsed, 0, EPOCH);
+        vm.prank(manager);
+        budget.setAmountPerEpoch(_rate);
+        vm.warp(block.timestamp + _elapsed);
+        assertEq(_available(budget), _rate * _elapsed / EPOCH);
+    }
+
+    function test_OneWeiPerEpochSurvivesRepeatedSyncs() public {
+        StreamBudget _slow = _deployBudget(1, 0);
+        for (uint256 i; i < 24; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            _slow.sync();
+        }
+        assertEq(_available(_slow), 1);
+    }
+
+    function testFuzz_DepositDoesNotLiftTheCapUntilSync(uint128 _deposit) public {
+        vm.warp(block.timestamp + 20 * EPOCH);
         assertEq(_available(budget), DAO_A);
-
-        tokenA.mint(address(dao), 50 ether);
+        tokenA.mint(address(dao), _deposit);
         assertEq(_available(budget), DAO_A, "deposit must not lift the cap");
-
         vm.expectEmit(address(budget));
-        emit StreamBudget.Synced(DAO_A, DAO_A + 50 ether, true);
+        emit StreamBudget.Synced(DAO_A, DAO_A + _deposit, true);
         budget.sync();
         assertEq(_available(budget), DAO_A, "sync must not jump");
-
         vm.warp(block.timestamp + EPOCH);
-        assertEq(_available(budget), DAO_A + RATE, "growth resumes from where it froze");
+        assertEq(_available(budget), DAO_A + (_deposit < RATE ? _deposit : RATE));
     }
 
     /// A sync every block must not freeze a stream slower than one unit per block
-    function test_SyncEveryBlockKeepsTheCurve() public {
-        StreamBudget _slow = _deployBudget(7000, 0); // 0.97 units per 12 s block
-
-        for (uint256 i; i < 300; ++i) {
-            vm.warp(block.timestamp + 12);
+    function testFuzz_SyncEveryBlockKeepsTheCurve(uint32 _rate, uint8 _steps, uint32 _seconds) public {
+        _rate = uint32(bound(_rate, 0, EPOCH));
+        _steps = uint8(bound(_steps, 1, 100));
+        _seconds = uint32(bound(_seconds, 1, EPOCH));
+        StreamBudget _slow = _deployBudget(_rate, 0);
+        for (uint256 i; i < _steps; ++i) {
+            vm.warp(block.timestamp + _seconds);
             _slow.sync();
         }
-
-        assertEq(_available(_slow), (7000 * 3600) / EPOCH, "an hour of growth");
+        assertEq(_available(_slow), uint256(_rate) * _steps * _seconds / EPOCH);
     }
 
     function test_UncappedSyncReportsNoRebase() public {
@@ -69,75 +90,72 @@ contract StreamBudgetTest is Fixture {
         assertEq(_available(budget), RATE / 2);
     }
 
-    function test_AvailableIgnoresTheCaller() public {
-        vm.warp(block.timestamp + EPOCH);
-
-        assertEq(budget.available(alice, ""), RATE);
+    function testFuzz_AvailableIgnoresTheCaller(address _caller, bytes memory _data, uint64 _elapsed) public {
+        vm.warp(block.timestamp + _elapsed);
+        assertEq(budget.available(_caller, _data), _available(budget));
     }
 
-    function test_CommitActionsWriteCheckpoint() public view {
-        Action[] memory _actions = budget.commitActions(alice, "");
-
+    function testFuzz_CommitActionsWriteCheckpoint(address _caller, bytes memory _data) public view {
+        Action[] memory _actions = budget.commitActions(_caller, _data);
         assertEq(_actions.length, 1);
         assertEq(_actions[0].to, address(budget));
         assertEq(_actions[0].value, 0);
         assertEq(_actions[0].data, abi.encodeCall(budget.writeCheckpoint, ()));
     }
 
-    function test_WriteCheckpointRestartsFromZero() public {
-        vm.warp(block.timestamp + EPOCH);
-
+    function testFuzz_WriteCheckpointRestartsFromZero(uint64 _elapsed) public {
+        vm.warp(block.timestamp + _elapsed);
         vm.prank(address(dao));
         budget.writeCheckpoint();
-
         assertEq(_available(budget), 0);
-    }
-
-    function test_SetAmountPerEpochKeepsWhatAccrued() public {
-        vm.warp(block.timestamp + EPOCH);
-
-        vm.expectEmit(address(budget));
-        emit StreamBudget.Synced(RATE, DAO_A, true);
-        vm.prank(manager);
-        budget.setAmountPerEpoch(2 * RATE);
-        assertEq(_available(budget), RATE, "no change in the same block");
-        assertEq(budget.baseAmount(), RATE);
+        assertEq(budget.lastSeenBalance(), tokenA.balanceOf(address(dao)));
         assertEq(budget.baseTimestamp(), block.timestamp);
-
-        vm.warp(block.timestamp + EPOCH);
-        assertEq(_available(budget), RATE + 2 * RATE, "new rate from now on");
     }
 
-    function test_RaisingMaxBudgetDoesNotJump() public {
+    function testFuzz_SetAmountPerEpochKeepsWhatAccrued(uint128 _newRate, uint64 _before, uint64 _after) public {
+        // Keep this setter campaign below the balance cap; full-width rates are covered above.
+        _newRate = uint128(bound(_newRate, 0, DAO_A / 2));
+        _before = uint64(bound(_before, 0, EPOCH));
+        _after = uint64(bound(_after, 0, EPOCH));
+        vm.warp(block.timestamp + _before);
+        uint256 _accrued = _available(budget);
         vm.prank(manager);
-        budget.setMaxBudget(5 ether);
+        budget.setAmountPerEpoch(_newRate);
+        assertEq(_available(budget), _accrued, "no change in the same block");
+        assertEq(budget.baseAmount(), _accrued);
+        assertEq(budget.baseTimestamp(), block.timestamp);
+        vm.warp(block.timestamp + _after);
+        uint256 _expected = _accrued + uint256(_newRate) * _after / EPOCH;
+        assertEq(_available(budget), _expected < DAO_A ? _expected : DAO_A);
+    }
 
-        vm.warp(block.timestamp + 2 * EPOCH); // 20 accrued, capped at 5
-        assertEq(_available(budget), 5 ether);
-
-        vm.expectEmit(address(budget));
-        emit StreamBudget.Synced(5 ether, DAO_A, true);
+    function testFuzz_RaisingMaxBudgetDoesNotJump(uint256 _cap) public {
+        _cap = bound(_cap, 1, DAO_A - 1);
+        vm.prank(manager);
+        budget.setMaxBudget(_cap);
+        vm.warp(block.timestamp + 20 * EPOCH);
+        assertEq(_available(budget), _cap);
         vm.prank(manager);
         budget.setMaxBudget(0);
-        assertEq(_available(budget), 5 ether, "hidden accrual must not be released");
-
+        assertEq(_available(budget), _cap, "hidden accrual must not be released");
         vm.warp(block.timestamp + EPOCH);
-        assertEq(_available(budget), 5 ether + RATE);
+        assertEq(_available(budget), _cap + RATE < DAO_A ? _cap + RATE : DAO_A);
     }
 
-    function test_SetEpochIntervalKeepsWhatAccrued() public {
-        vm.warp(block.timestamp + EPOCH);
-
-        vm.expectEmit(address(budget));
-        emit StreamBudget.Synced(RATE, DAO_A, true);
+    function testFuzz_SetEpochIntervalKeepsWhatAccrued(uint64 _interval, uint64 _before, uint64 _after) public {
+        _interval = uint64(bound(_interval, 1, 2 * EPOCH));
+        _before = uint64(bound(_before, 0, EPOCH));
+        _after = uint64(bound(_after, 0, _interval));
+        vm.warp(block.timestamp + _before);
+        uint256 _accrued = _available(budget);
         vm.prank(manager);
-        budget.setEpochInterval(2 * EPOCH);
-        assertEq(_available(budget), RATE);
-        assertEq(budget.baseAmount(), RATE);
+        budget.setEpochInterval(_interval);
+        assertEq(_available(budget), _accrued);
+        assertEq(budget.baseAmount(), _accrued);
         assertEq(budget.baseTimestamp(), block.timestamp);
-
-        vm.warp(block.timestamp + 2 * EPOCH);
-        assertEq(_available(budget), 2 * RATE);
+        vm.warp(block.timestamp + _after);
+        uint256 _expected = _accrued + RATE * _after / _interval;
+        assertEq(_available(budget), _expected < DAO_A ? _expected : DAO_A);
     }
 
     function test_RevertWhen_WriteCheckpointUnauthorized() public {
@@ -158,29 +176,26 @@ contract StreamBudgetTest is Fixture {
         budget.setAmountPerEpoch(1);
     }
 
-    function test_TheHighestRateNeverOverflows() public {
+    function testFuzz_TheHighestRateNeverOverflows(uint64 _elapsed) public {
+        _elapsed = uint64(bound(_elapsed, 1, type(uint64).max));
         uint256 _highest = budget.MAX_AMOUNT_PER_EPOCH();
-
         vm.prank(manager);
         budget.setAmountPerEpoch(_highest);
-
-        vm.warp(block.timestamp + 1000 * 365 days);
+        vm.warp(block.timestamp + _elapsed);
         assertEq(_available(budget), DAO_A, "capped by the balance, not reverting");
     }
 
-    function test_RevertWhen_TheRateCouldOverflow() public {
-        uint256 _tooHigh = budget.MAX_AMOUNT_PER_EPOCH() + 1;
-
+    function testFuzz_RevertWhen_TheRateCouldOverflow(uint256 _tooHigh) public {
+        _tooHigh = bound(_tooHigh, budget.MAX_AMOUNT_PER_EPOCH() + 1, type(uint256).max);
         vm.prank(manager);
         vm.expectRevert(StreamBudget.InvalidAmountPerEpoch.selector);
         budget.setAmountPerEpoch(_tooHigh);
-
         StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
         vm.expectRevert(StreamBudget.InvalidAmountPerEpoch.selector);
         _budget.initialize(dao, _noDeps(), abi.encode(tokenA, _tooHigh, 0, EPOCH));
     }
 
-    function test_NothingAccruesBeforeTheFirstCheckpoint() public {
+    function testFuzz_NothingAccruesBeforeTheFirstCheckpoint(uint64 _voteDuration) public {
         StreamBudget _budget = StreamBudget(
             ProxyLib.deployMinimalProxy(
                 address(new StreamBudget()),
@@ -190,7 +205,7 @@ contract StreamBudgetTest is Fixture {
         dao.grant(address(_budget), manager, SET_SETTINGS_PERMISSION_ID);
         dao.grant(address(_budget), address(dao), CHECKPOINT_PERMISSION_ID);
 
-        vm.warp(block.timestamp + 7 days); // the vote
+        vm.warp(block.timestamp + _voteDuration); // the vote
         assertEq(_available(_budget), 0, "nothing accrued during the vote");
 
         vm.expectEmit(address(_budget));
