@@ -267,6 +267,38 @@ contract CapitalTreePluginTest is Fixture {
         assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND, "the proceeds stay in the treasury");
     }
 
+    /// Above half the uint256 range, `balance + spend` overflows: the balance checks must not add
+    function test_AnUntouchedOfferAboveHalfTheRangePassesTheBalanceChecks() public {
+        uint256 _huge = type(uint256).max / 2 + 1;
+        deal(address(tokenA), address(dao), _huge, true);
+        BalanceBudget _budget = _deployBalanceBudget(tokenA);
+        OpenFillAction _action = OpenFillAction(
+            ProxyLib.deployMinimalProxy(
+                address(new OpenFillAction()),
+                abi.encodeCall(OpenFillAction.initialize, (dao, _deps(address(_budget)), abi.encode(tokenB, DEMAND)))
+            )
+        );
+        MockFiller _filler = new MockFiller(_deployPlugin(_budget, _chain(_action, keep)));
+        _filler.setSkipOffer(true);
+        tokenB.mint(address(_filler), DEMAND);
+
+        _filler.fillWithoutData();
+
+        assertEq(tokenA.balanceOf(address(dao)), _huge, "the offer was not taken");
+        assertEq(tokenB.balanceOf(address(dao)), DAO_B + DEMAND);
+    }
+
+    /// Above half the uint256 range, `balance + input` overflows: a one-token node must not add them
+    function test_AOneTokenFlowAboveHalfTheRangeRuns() public {
+        uint256 _huge = type(uint256).max / 2 + 1;
+        deal(address(tokenA), address(dao), _huge, true);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_bad(BadAction.Mode.Pass), keep));
+
+        _plugin.trigger("", noData);
+
+        assertEq(tokenA.balanceOf(address(dao)), _huge);
+    }
+
     function test_BudgetCommitsOnceAfterTheWholeTree() public {
         StreamBudget _budget = _deployBudget(RATE, 0);
         CapitalTreePlugin _plugin =
@@ -883,6 +915,18 @@ contract CapitalTreePluginTest is Fixture {
             )
         );
         _plugin.trigger("", noData);
+    }
+
+    /// A node is only checked on its own tokens: the budget check catches one spending the budget's token
+    function test_RevertWhen_ANodeSpendsTheBudgetTokenItWasNotGiven() public {
+        StreamBudget _budget = _deployStream(tokenB, RATE, 0);
+        OpenFillAction _sell = _deployOpenFill(_budget, tokenA);
+        MockFiller _filler = new MockFiller(_deployPlugin(_budget, _chain(_sell, _bad(BadAction.Mode.DrainB))));
+        tokenA.mint(address(_filler), DEMAND);
+        vm.warp(block.timestamp + EPOCH);
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.BudgetExceeded.selector, RATE, RATE + 1));
+        _filler.fillWithoutData();
     }
 
     // =========================================================================================
