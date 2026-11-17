@@ -30,8 +30,11 @@ CONFIRMED FAILURES
    Deterministic reproduction: test_Regression_UntouchedLargeOfferOverflowsBalanceGuard
 
 Both are numeric-domain failures at enormous token quantities. Neither is a
-demonstrated practical exploit with ordinary token supplies. Failing tests are
-retained to expose the issues; no production fix has been made.
+demonstrated practical exploit with ordinary token supplies.
+
+Fixed on fix/overflow-guards: WeightSplitter computes each share with
+Math.mulDiv, and the OpenFill guard subtracts instead of adding. Both
+reproductions now pass and stay as regression tests.
 
 WHAT HELD UP
 
@@ -79,8 +82,6 @@ RAW LOGS
 /tmp/fuzz-combined-4096.log
 
 FOLLOW-UP
-Review whether to support the complete uint256 domain in splitter arithmetic
-and the OpenFill balance guard. Keep these reproductions when implementing
-any fixes. Build the recipe-driven stateful invariant harness separately;
+Build the recipe-driven stateful invariant harness separately;
 passing these per-test fuzz campaigns does not establish arbitrary-sequence
 correctness.

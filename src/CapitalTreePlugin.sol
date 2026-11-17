@@ -308,14 +308,20 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     ) internal view returns (uint256 _arrived) {
         (uint256 _inAfter, uint256 _outAfter) = _readBalances(_input, _output, _forwardSurplus);
         if (_output.token == _input.token) {
-            _checkMinBalance(_index, _input.token, _inAfter, _inBefore + _output.amount, _input.amount);
+            // Floor `before + output - input`, subtracting first so two balances are never added
+            if (_output.amount <= _input.amount) {
+                _checkMinBalance(_index, _input.token, _inAfter, _inBefore, _input.amount - _output.amount);
+            } else {
+                _checkMinBalance(_index, _input.token, _inAfter, _inBefore + (_output.amount - _input.amount), 0);
+            }
 
             // The input never left the DAO, so it counts too: input + net change. Example: the DAO
             // holds 5000 USDC, 100 of them are the node's input. The node pays a 2 USDC fee, so the
             // DAO holds 4998. `4998 - 5000` loses the node's 100; adding the input back gives
-            // `(4998 + 100) - 5000 = 98`, what's left for the children. The check above keeps it
-            // from underflowing.
-            return _inAfter + _input.amount - _inBefore;
+            // `100 - (5000 - 4998) = 98`, what's left for the children. The check above keeps the
+            // loss within the input.
+            return
+                _inAfter >= _inBefore ? _input.amount + (_inAfter - _inBefore) : _input.amount - (_inBefore - _inAfter);
         }
         _checkMinBalance(_index, _input.token, _inAfter, _inBefore, _input.amount);
         if (_output.amount != 0) _checkMinBalance(_index, _output.token, _outAfter, _outBefore + _output.amount, 0);
@@ -331,8 +337,8 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
         internal
         pure
     {
-        if (_actual + _maxSpend < _target) {
-            revert UnexpectedBalance(_index, address(_token), _target > _maxSpend ? _target - _maxSpend : 0, _actual);
+        if (_target > _maxSpend && _actual < _target - _maxSpend) {
+            revert UnexpectedBalance(_index, address(_token), _target - _maxSpend, _actual);
         }
     }
 
@@ -340,8 +346,7 @@ contract CapitalTreePlugin is PluginCloneable, PausableUpgradeable, ReentrancyGu
     ///      `_before`. Each node is checked on its own; this catches anything that slips between them.
     function _checkBudgetSpend(IERC20 _token, uint256 _maxSpend, uint256 _before) internal view {
         uint256 _after = _token.balanceOf(address(dao()));
-        if (_after + _maxSpend < _before) {
-            // Safe: the condition implies `_before > _maxSpend`
+        if (_before > _maxSpend && _after < _before - _maxSpend) {
             revert BudgetExceeded(_maxSpend, _before - _after);
         }
     }

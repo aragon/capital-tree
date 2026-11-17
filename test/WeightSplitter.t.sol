@@ -58,8 +58,7 @@ contract WeightSplitterTest is Fixture {
         }
     }
 
-    /// Minimal overflowing input for a valid 50/50 split; each quotient still fits uint256.
-    /// Kept failing until the production multiplication is made overflow-safe.
+    /// Minimal input where `amount * weight` overflows for a valid 50/50 split; each share still fits uint256.
     function test_Regression_SplitOverflowsBeforeDivision() public {
         uint256 _out = type(uint256).max / 500_000 + 1;
         uint256[] memory _amounts =
