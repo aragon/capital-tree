@@ -414,41 +414,6 @@ Never set `via_ir = true`; fix stack-too-deep errors by restructuring the code.
 `lib/ens-contracts` is only there so Aragon's framework contracts compile. The installation test
 deploys Aragon's plugin repo registry, factory and PluginSetupProcessor locally, without ENS.
 
-### Continuous integration
-
-[Tests](.github/workflows/tests.yml) runs on pull requests and pushes to `dev` and
-`main`. It uses Foundry v1.8.6 and runs these independent checks:
-
-- Unit, fuzz and invariant tests, excluding fork files.
-- Ethereum fork tests using the direct Uniswap route at the latest block.
-- Katana fork tests at block 47,557,066, including donation and rollback.
-- Live aggregator quote tests on pull requests only, using the latest Ethereum block.
-
-CI secrets live in the 1Password vault `kv_capital-tree_infra`, not in GitHub.
-The fork and live-quote jobs load every **API Credential** item in that vault as
-an environment variable named after the item, with the value of its `credential`
-field. To add a variable, add an item; the next run picks it up without a
-workflow change. Item titles must be valid variable names (`ZERO_EX_API_KEY`),
-and the vault must hold secrets only, because every value is masked in the logs.
-The repository needs one GitHub secret, `OP_SERVICE_ACCOUNT_TOKEN`, for a
-1Password service account scoped to that vault.
-
-Fork jobs use public RPC endpoints by default. `MAINNET_RPC_URL` (or
-`ALCHEMY_API_KEY`) and `KATANA_RPC_URL` in the vault override them with
-dedicated providers.
-RPC failures fail the job; the workflow does not silently skip the fork suites.
-Ethereum uses recent state because the default public RPC requires credentials
-for archive requests. Katana keeps the historical block used by its fixture.
-
-The live quote job runs automatically on pull requests targeting `dev` or `main`,
-and can also be run with **Actions → Tests → Run workflow → live_quotes**. It
-does not run on pushes. The job enables FFI for `curl` and `jq`; quote or assertion
-failures fail the job. KyberSwap and Velora do not need quote API keys and always
-run in this job. Set the `ZERO_EX_API_KEY` and `ONEINCH_API_KEY` repository secrets
-to include those providers; missing keys produce notices and skip their tests.
-Manual dispatch becomes available after the workflow reaches the repository's
-default branch.
-
 ## Deploy
 
 Once per network:
