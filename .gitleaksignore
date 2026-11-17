@@ -1,0 +1,11 @@
+# Reviewed gitleaks false positives, by fingerprint (commit:file:rule:line).
+
+# Token contract addresses in an install example, not keys.
+4de6439df21c365014e0f3355d5ff85af2d8544a:installs/buyback-and-donate.example.json:generic-api-key:6
+4de6439df21c365014e0f3355d5ff85af2d8544a:installs/buyback-and-donate.example.json:generic-api-key:12
+
+# The WETH address.
+9574bf53bc08cdf214d46dc580615f631cb946d9:script/open-fill/PublicQuotes.s.sol:generic-api-key:84
+
+# The key of Anvil's first default account, which is public; only used on a local chain.
+82613db2fdf40fe05f1ffdacf9c868cef7423d25:script/playground/Playground.s.sol:generic-api-key:28

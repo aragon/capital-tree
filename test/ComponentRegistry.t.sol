@@ -24,13 +24,15 @@ contract ComponentRegistryTest is Fixture {
         assertGt(_openFill.code.length, 0);
     }
 
-    function test_ManagingDaoRegistersMore() public {
+    function testFuzz_ManagingDaoRegistersMore(bytes32 id, bytes memory metadata) public {
+        (address existing,) = registry.entries(id);
+        vm.assume(existing == address(0));
         vm.prank(manager);
-        registry.register(ComponentRegistry.Registration("KeepAction@2", newKeep, "ipfs://keep"));
+        registry.register(ComponentRegistry.Registration(id, newKeep, metadata));
 
-        assertEq(registry.implementation("KeepAction@2"), newKeep);
-        (, bytes memory _metadata) = registry.entries("KeepAction@2");
-        assertEq(_metadata, "ipfs://keep");
+        assertEq(registry.implementation(id), newKeep);
+        (, bytes memory _metadata) = registry.entries(id);
+        assertEq(_metadata, metadata);
     }
 
     function test_RevertWhen_TheIdIsTaken() public {
@@ -52,14 +54,17 @@ contract ComponentRegistryTest is Fixture {
         registry.register(ComponentRegistry.Registration("KeepAction@2", newKeep, ""));
     }
 
-    function test_RevertWhen_TheImplementationHasNoCode() public {
-        vm.expectRevert(abi.encodeWithSelector(ComponentRegistry.NotAContract.selector, address(0xBEEF)));
+    function testFuzz_RevertWhen_TheImplementationHasNoCode(address implementation) public {
+        vm.assume(implementation.code.length == 0);
+        vm.expectRevert(abi.encodeWithSelector(ComponentRegistry.NotAContract.selector, implementation));
         vm.prank(manager);
-        registry.register(ComponentRegistry.Registration("KeepAction@2", address(0xBEEF), ""));
+        registry.register(ComponentRegistry.Registration("KeepAction@2", implementation, ""));
     }
 
-    function test_RevertWhen_TheIdIsUnknown() public {
-        vm.expectRevert(abi.encodeWithSelector(ComponentRegistry.UnknownComponent.selector, bytes32("Unknown@1")));
-        registry.implementation("Unknown@1");
+    function testFuzz_RevertWhen_TheIdIsUnknown(bytes32 id) public {
+        (address existing,) = registry.entries(id);
+        vm.assume(existing == address(0));
+        vm.expectRevert(abi.encodeWithSelector(ComponentRegistry.UnknownComponent.selector, id));
+        registry.implementation(id);
     }
 }

@@ -18,6 +18,9 @@ contract MockFiller is IFiller {
     /// @notice The revert data of the last re-entry attempt
     bytes public reentryError;
 
+    /// @notice When true, pays the demand without taking the offer
+    bool public skipOffer;
+
     /// @notice Total demanded token delivered to the DAO
     uint256 public totalDelivered;
 
@@ -31,6 +34,10 @@ contract MockFiller is IFiller {
 
     function setReenter(bool _reenter) external {
         reenter = _reenter;
+    }
+
+    function setSkipOffer(bool _skipOffer) external {
+        skipOffer = _skipOffer;
     }
 
     /// @notice This contract becomes the trigger caller, so the DAO calls it back. `_data` goes to
@@ -60,7 +67,7 @@ contract MockFiller is IFiller {
             }
         }
 
-        _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
+        if (!skipOffer) _offeredToken.transferFrom(msg.sender, address(this), _offeredAmount);
 
         uint256 _amount = uint256(int256(_demandedAmount) + fillDelta);
         _demandedToken.transfer(msg.sender, _amount);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {ISplitter} from "../interfaces/ISplitter.sol";
 import {BaseComponent} from "../base/BaseComponent.sol";
@@ -61,7 +62,7 @@ contract WeightSplitter is ISplitter, BaseComponent {
         uint256 _assigned;
         uint256 _largest;
         for (uint256 k; k < _count; ++k) {
-            _amounts[k] = (_output.amount * _w[k]) / RATIO_BASE;
+            _amounts[k] = Math.mulDiv(_output.amount, _w[k], RATIO_BASE);
             _assigned += _amounts[k];
             if (_w[k] > _w[_largest]) _largest = k;
         }

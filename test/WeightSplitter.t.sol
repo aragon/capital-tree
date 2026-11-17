@@ -12,12 +12,12 @@ import {Fixture} from "./helpers/Fixture.sol";
 contract WeightSplitterTest is Fixture {
     address internal implementation = address(new WeightSplitter());
 
-    function test_StoresTheWeights() public {
-        WeightSplitter _splitter = _deployWeightSplitter(_pair(700_000, 300_000));
-
+    function testFuzz_StoresTheWeights(uint32 _a) public {
+        _a = uint32(bound(_a, 1, RATIO_BASE - 1));
+        WeightSplitter _splitter = _deployWeightSplitter(_pair(_a, uint32(RATIO_BASE) - _a));
         assertEq(address(_splitter.dao()), address(dao));
-        assertEq(_splitter.weights()[0], 700_000);
-        assertEq(_splitter.weights()[1], 300_000);
+        assertEq(_splitter.weights()[0], _a);
+        assertEq(_splitter.weights()[1], RATIO_BASE - _a);
     }
 
     function test_IsMadeForOneChildPerWeight() public {
@@ -36,16 +36,14 @@ contract WeightSplitterTest is Fixture {
         assertEq(_amounts[2], 3);
     }
 
-    function test_TheFirstLargestWeightTakesTheRemainderOnATie() public {
+    function testFuzz_TheFirstLargestWeightTakesTheRemainderOnATie(uint128 _out) public {
         uint256[] memory _amounts =
-            _deployWeightSplitter(_pair(500_000, 500_000)).split(address(this), _output(3), 2);
-
-        assertEq(_amounts[0], 2);
-        assertEq(_amounts[1], 1);
+            _deployWeightSplitter(_pair(500_000, 500_000)).split(address(this), _output(_out), 2);
+        assertEq(_amounts[0], uint256(_out) / 2 + _out % 2);
+        assertEq(_amounts[1], uint256(_out) / 2);
     }
 
     function testFuzz_AmountsAddUpToTheOutput(uint256 _out, uint32 _a, uint32 _b) public {
-        _out = bound(_out, 0, type(uint128).max);
         _a = uint32(bound(_a, 1, RATIO_BASE - 2));
         _b = uint32(bound(_b, 1, RATIO_BASE - 1 - _a));
         uint32[] memory _weights = new uint32[](3);
@@ -56,8 +54,17 @@ contract WeightSplitterTest is Fixture {
         assertEq(_amounts.length, 3);
         assertEq(_amounts[0] + _amounts[1] + _amounts[2], _out);
         for (uint256 k; k < 3; ++k) {
-            assertGe(_amounts[k], (_out * _weights[k]) / RATIO_BASE);
+            assertGe(_amounts[k], (_out / RATIO_BASE) * _weights[k] + ((_out % RATIO_BASE) * _weights[k]) / RATIO_BASE);
         }
+    }
+
+    /// Minimal input where `amount * weight` overflows for a valid 50/50 split; each share still fits uint256.
+    function test_Regression_SplitOverflowsBeforeDivision() public {
+        uint256 _out = type(uint256).max / 500_000 + 1;
+        uint256[] memory _amounts =
+            _deployWeightSplitter(_pair(500_000, 500_000)).split(address(this), _output(_out), 2);
+        assertEq(_amounts[0], _out / 2 + _out % 2);
+        assertEq(_amounts[1], _out / 2);
     }
 
     function test_RevertWhen_ThereIsOneWeight() public {
@@ -71,8 +78,9 @@ contract WeightSplitterTest is Fixture {
         _expectInitRevert(_pair(uint32(RATIO_BASE), 0));
     }
 
-    function test_RevertWhen_WeightsDoNotSumTo100() public {
-        _expectInitRevert(_pair(600_000, 300_000));
+    function testFuzz_RevertWhen_WeightsDoNotSumTo100(uint32 _a, uint32 _b) public {
+        vm.assume(uint256(_a) + _b != RATIO_BASE);
+        _expectInitRevert(_pair(_a, _b));
     }
 
     function test_RevertWhen_TheImplementationIsInitialized() public {
@@ -82,18 +90,21 @@ contract WeightSplitterTest is Fixture {
 
     // Changing the weights
 
-    function test_TheManagerChangesTheWeights() public {
+    function testFuzz_TheManagerChangesTheWeights(uint32 _a, uint128 _out) public {
+        _a = uint32(bound(_a, 1, RATIO_BASE - 1));
+        uint32 _b = uint32(RATIO_BASE) - _a;
         WeightSplitter _splitter = _deployWeightSplitter(_pair(700_000, 300_000));
         dao.grant(address(_splitter), manager, SET_SETTINGS_PERMISSION_ID);
-
         vm.expectEmit(address(_splitter));
-        emit WeightSplitter.WeightsUpdated(_pair(250_000, 750_000));
+        emit WeightSplitter.WeightsUpdated(_pair(_a, _b));
         vm.prank(manager);
-        _splitter.setWeights(_pair(250_000, 750_000));
-
-        uint256[] memory _amounts = _splitter.split(address(this), _output(100), 2);
-        assertEq(_amounts[0], 25);
-        assertEq(_amounts[1], 75);
+        _splitter.setWeights(_pair(_a, _b));
+        uint256[] memory _amounts = _splitter.split(address(this), _output(_out), 2);
+        uint256 _first = uint256(_out) * _a / RATIO_BASE;
+        uint256 _second = uint256(_out) * _b / RATIO_BASE;
+        uint256 _dust = uint256(_out) - _first - _second;
+        assertEq(_amounts[0], _first + (_a >= _b ? _dust : 0));
+        assertEq(_amounts[1], _second + (_b > _a ? _dust : 0));
     }
 
     function test_RevertWhen_SettingWeightsWithoutPermission() public {

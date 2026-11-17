@@ -124,8 +124,7 @@ contract OpenFillAction is BaseAction {
         address _dao = address(dao());
 
         uint256 _inBalance = _input.token.balanceOf(_dao);
-        if (_inBalance + _input.amount < _inBefore) {
-            // Safe: the condition implies `_inBefore > _input.amount`
+        if (_inBefore > _input.amount && _inBalance < _inBefore - _input.amount) {
             revert OfferExceeded(_inBefore - _input.amount, _inBalance);
         }
 

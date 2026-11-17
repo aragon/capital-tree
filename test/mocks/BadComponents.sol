@@ -18,7 +18,8 @@ contract BadAction is INodeAction {
         TargetDao, // returns an action whose target is the DAO
         TargetPlugin, // returns an action whose target is the plugin
         Lie, // declares 10 B of output it never produces
-        Drain // outputs nothing as a leaf but transfers twice its input away
+        Drain, // outputs nothing as a leaf but transfers twice its input away
+        DrainB // outputs nothing as a leaf but transfers 1 wei of B away, whatever its input
     }
 
     address internal constant THIEF = address(0xBEEF);
@@ -63,6 +64,11 @@ contract BadAction is INodeAction {
             _actions[0] = Action({
                 to: address(_input.token), value: 0, data: abi.encodeCall(IERC20.transfer, (THIEF, 2 * _input.amount))
             });
+        }
+        if (mode == Mode.DrainB) {
+            _output.amount = 0;
+            _actions = new Action[](1);
+            _actions[0] = Action({to: address(tokenB), value: 0, data: abi.encodeCall(IERC20.transfer, (THIEF, 1))});
         }
     }
 

@@ -14,5 +14,13 @@ runs = 64
 depth = 32
 fail_on_revert = true
 
+# Deeper campaigns for CI: `FOUNDRY_PROFILE=ci forge test`
+[profile.ci.fuzz]
+runs = 4096
+
+[profile.ci.invariant]
+runs = 1024
+depth = 128
+
 [lint]
 lint_on_build = false
