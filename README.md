@@ -417,11 +417,12 @@ deploys Aragon's plugin repo registry, factory and PluginSetupProcessor locally,
 ### Continuous integration
 
 [Tests](.github/workflows/tests.yml) runs on pull requests and pushes to `dev` and
-`main`. It uses Foundry v1.8.6 and runs three independent checks:
+`main`. It uses Foundry v1.8.6 and runs these independent checks:
 
 - Unit, fuzz and invariant tests, excluding fork files.
 - Ethereum fork tests using the direct Uniswap route at the latest block.
 - Katana fork tests at block 47,557,066, including donation and rollback.
+- Live aggregator quote tests on pull requests only, using the latest Ethereum block.
 
 Fork jobs use public RPC endpoints by default. Optional GitHub Actions secrets
 `MAINNET_RPC_URL` and `KATANA_RPC_URL` override them with dedicated providers.
@@ -429,12 +430,14 @@ RPC failures fail the job; the workflow does not silently skip the fork suites.
 Ethereum uses recent state because the default public RPC requires credentials
 for archive requests. Katana keeps the historical block used by its fixture.
 
-Use **Actions → Tests → Run workflow → live_quotes** to also run live aggregator
-quotes at the latest Ethereum block. This optional job enables FFI for `curl`
-and `jq`. Set the `ZERO_EX_API_KEY` and `ONEINCH_API_KEY` repository secrets to
-include those providers; their tests explicitly skip when their key is absent.
-KyberSwap and Velora do not need quote API keys. Manual dispatch becomes
-available after the workflow reaches the repository's default branch.
+The live quote job runs automatically on pull requests targeting `dev` or `main`,
+and can also be run with **Actions → Tests → Run workflow → live_quotes**. It
+does not run on pushes. The job enables FFI for `curl` and `jq`; quote or assertion
+failures fail the job. KyberSwap and Velora do not need quote API keys and always
+run in this job. Set the `ZERO_EX_API_KEY` and `ONEINCH_API_KEY` repository secrets
+to include those providers; missing keys produce notices and skip their tests.
+Manual dispatch becomes available after the workflow reaches the repository's
+default branch.
 
 ## Deploy
 

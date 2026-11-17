@@ -75,7 +75,7 @@ jobs:
 
   live-quotes:
     name: Live aggregator quotes
-    if: github.event_name == 'workflow_dispatch' && inputs.live_quotes
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.live_quotes)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
