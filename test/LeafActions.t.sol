@@ -52,6 +52,18 @@ contract LeafActionsTest is Fixture {
         _transfer.postconditions(address(0), _in, _out, _snapshot);
     }
 
+    /// The recipient may end up with more than the transfer, e.g. from another payment in the same block
+    function testFuzz_TransferPostconditionAcceptsMoreThanTheInput(uint128 _amount, uint128 _extra) public {
+        _amount = uint128(bound(_amount, 1, type(uint128).max));
+        _extra = uint128(bound(_extra, 1, type(uint128).max));
+        TransferAction _transfer = _deployTransfer(alice);
+        Asset memory _in = Asset(tokenA, _amount);
+        Asset memory _out = Asset(tokenA, 0);
+        bytes memory _snapshot = _transfer.preconditions(address(0), "", _in, _out);
+        tokenA.mint(alice, uint256(_amount) + _extra);
+        _transfer.postconditions(address(0), _in, _out, _snapshot);
+    }
+
     function testFuzz_RevertWhen_ATransferSilentlyFails(uint128 _amount) public {
         _amount = uint128(bound(_amount, 1, type(uint128).max));
         FalseReturnToken _token = new FalseReturnToken(0);
