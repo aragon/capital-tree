@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {DAO} from "@aragon/osx/core/dao/DAO.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
 import {DaoUnauthorized} from "@aragon/osx-commons-contracts/src/permission/auth/auth.sol";
+import {IExecutor} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/ProxyLib.sol";
 import {CapitalTreePlugin} from "../src/CapitalTreePlugin.sol";
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
@@ -148,6 +149,13 @@ contract CapitalTreePluginTest is Fixture {
         _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidChild.selector, 1, 2));
     }
 
+    function test_RevertWhen_AChildIsOutOfRange() public {
+        Node[] memory _tree = new Node[](2);
+        (_tree[0], _tree[1]) = (_then(keep, 2), _leaf(keep));
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidChild.selector, 0, 2));
+    }
+
     function test_RevertWhen_ANodeIsUnreachable() public {
         Node[] memory _tree = new Node[](2);
         (_tree[0], _tree[1]) = (_leaf(keep), _leaf(keep));
@@ -215,6 +223,15 @@ contract CapitalTreePluginTest is Fixture {
         );
     }
 
+    /// The bound budget must equal the flow's, whichever address is lower
+    function test_RevertWhen_TheRootIsBoundToAnotherBudgetInEitherOrder() public {
+        StreamBudget _other = _deployBudget(RATE, 0);
+        bytes memory _error = abi.encodeWithSelector(CapitalTreePlugin.BudgetMismatch.selector, 0);
+
+        _expectInitRevert(_other, _chain(action, keep), _error);
+        _expectInitRevert(budget, _chain(_deployAction(_other), keep), _error);
+    }
+
     // =========================================================================================
     // Running flows
     // =========================================================================================
@@ -268,6 +285,21 @@ contract CapitalTreePluginTest is Fixture {
     }
 
     /// Above half the uint256 range, `balance + spend` overflows: the balance checks must not add
+    /// A node and a budget without DAO actions don't call the DAO, and nothing is committed
+    function test_EmptyActionListsSkipTheDao() public {
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _one(keep));
+
+        vm.expectCall(address(dao), abi.encodeWithSelector(IExecutor.execute.selector), 0);
+        vm.recordLogs();
+        _plugin.trigger("", noData);
+
+        Vm.Log[] memory _logs = vm.getRecordedLogs();
+        for (uint256 i; i < _logs.length; ++i) {
+            if (_logs[i].topics.length == 0) continue;
+            assertTrue(_logs[i].topics[0] != CapitalTreePlugin.BudgetCommitted.selector, "nothing to commit");
+        }
+    }
+
     function test_AnUntouchedOfferAboveHalfTheRangePassesTheBalanceChecks() public {
         uint256 _huge = type(uint256).max / 2 + 1;
         deal(address(tokenA), address(dao), _huge, true);
@@ -455,6 +487,49 @@ contract CapitalTreePluginTest is Fixture {
         vm.expectRevert(
             abi.encodeWithSelector(
                 CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A, DAO_A - _loss
+            )
+        );
+        _plugin.trigger("", noData);
+    }
+
+    /// Income lets a one-token node declare more than its input; its child gets the declared amount
+    function testFuzz_AOneTokenNodeMayDeclareMoreThanItsInput(uint128 _incomeAmount, uint128 _extra) public {
+        _incomeAmount = uint128(bound(_incomeAmount, 1, type(uint128).max));
+        _extra = uint128(bound(_extra, 1, _incomeAmount));
+        CapitalTreePlugin _plugin = _deployPlugin(
+            _deployBalanceBudget(tokenA),
+            _chain(_income(NO_TOKEN, _incomeAmount, 0, int256(uint256(_extra))), _deployTransfer(alice))
+        );
+
+        _plugin.trigger("", noData);
+
+        assertEq(tokenA.balanceOf(alice), DAO_A + _extra);
+        assertEq(tokenA.balanceOf(address(dao)), _incomeAmount - _extra);
+    }
+
+    function testFuzz_RevertWhen_AOneTokenNodeDeclaresMoreThanArrived(uint128 _incomeAmount, uint128 _extra) public {
+        _extra = uint128(bound(_extra, 1, type(uint128).max));
+        _incomeAmount = uint128(bound(_incomeAmount, 0, _extra - 1));
+        CapitalTreePlugin _plugin = _deployPlugin(
+            _deployBalanceBudget(tokenA), _chain(_income(NO_TOKEN, _incomeAmount, 0, int256(uint256(_extra))), keep)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A + _extra, DAO_A + _incomeAmount
+            )
+        );
+        _plugin.trigger("", noData);
+    }
+
+    /// A one-token node may lose exactly its input minus its output: 2 here, so losing 3 reverts
+    function test_RevertWhen_AOneTokenNodeLosesMoreThanItsInputMinusItsOutput() public {
+        CapitalTreePlugin _plugin =
+            _deployPlugin(_deployBalanceBudget(tokenA), _chain(_income(NO_TOKEN, 0, 3, -2), keep));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapitalTreePlugin.UnexpectedBalance.selector, 0, address(tokenA), DAO_A - 2, DAO_A - 3
             )
         );
         _plugin.trigger("", noData);
@@ -694,6 +769,16 @@ contract CapitalTreePluginTest is Fixture {
         _plugin.trigger("", noData);
     }
 
+    function testFuzz_RevertWhen_ASplitExceedsTheOutput(uint256 _excess) public {
+        _excess = bound(_excess, 1, DAO_A);
+        uint256[] memory _amounts = new uint256[](2);
+        (_amounts[0], _amounts[1]) = (DAO_A / 2, DAO_A / 2 + _excess);
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _splitBy(_fixedSplitter(_amounts)));
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.InvalidSplit.selector, 0));
+        _plugin.trigger("", noData);
+    }
+
     function testFuzz_RevertWhen_ASplitHasTheWrongLength(uint256 _length) public {
         _length = bound(_length, 1, 64);
         if (_length == 2) _length = 3;
@@ -722,6 +807,19 @@ contract CapitalTreePluginTest is Fixture {
             _splitBy(_deployWeightSplitter(_weights)),
             abi.encodeWithSelector(CapitalTreePlugin.InvalidSplitter.selector, 0)
         );
+    }
+
+    /// Weights for 2 children on a 3-child branch are rejected too
+    function test_RevertWhen_WeightsAreForFewerChildren() public {
+        uint32[] memory _weights = new uint32[](2);
+        (_weights[0], _weights[1]) = (500_000, 500_000);
+        Node[] memory _tree = new Node[](4);
+        _tree[0].children = new uint32[](3);
+        (_tree[0].children[0], _tree[0].children[1], _tree[0].children[2]) = (1, 2, 3);
+        _tree[0].splitter = _deployWeightSplitter(_weights);
+        (_tree[1], _tree[2], _tree[3]) = (_leaf(keep), _leaf(keep), _leaf(keep));
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidSplitter.selector, 0));
     }
 
     function test_RevertWhen_ASplitterBelongsToAnotherDao() public {
