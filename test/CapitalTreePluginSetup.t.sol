@@ -268,12 +268,40 @@ contract CapitalTreePluginSetupTest is Fixture {
         }
     }
 
-    function test_RevertWhen_UninstallNamesAnotherDao() public {
+    /// Any other DAO is rejected, whichever address is lower
+    function testFuzz_RevertWhen_UninstallNamesAnotherDao(address _otherDao) public {
+        vm.assume(_otherDao != address(dao));
         (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
         vm.expectRevert(CapitalTreePluginSetup.WrongDao.selector);
         setup.prepareUninstallation(
-            alice, IPluginSetup.SetupPayload(address(_plugin), _helpers, installationPermissions)
+            _otherDao, IPluginSetup.SetupPayload(address(_plugin), _helpers, installationPermissions)
         );
+    }
+
+    /// Any altered permission is rejected, whether its list hashes above or below the stored one
+    function testFuzz_RevertWhen_AnUninstallPermissionIdIsAltered(bytes32 _permissionId) public {
+        (CapitalTreePlugin _plugin, address[] memory _helpers) = _install(_buyback());
+        PermissionLib.MultiTargetPermission[] memory _perms =
+            abi.decode(installationPermissions, (PermissionLib.MultiTargetPermission[]));
+        vm.assume(_permissionId != _perms[0].permissionId);
+        _perms[0].permissionId = _permissionId;
+
+        vm.expectRevert(CapitalTreePluginSetup.PermissionsMismatch.selector);
+        _prepareUninstall(_plugin, _helpers, _perms);
+    }
+
+    /// Every prepared permission is a real grant, however many the recipe declares: no blank entries
+    function testFuzz_PreparesNoBlankPermissions(uint8 _pluginGrants, uint8 _budgetGrants) public {
+        CapitalTreePluginSetup.InstallParams memory _params = _buyback();
+        _params.pluginPermissions = _grants(bound(_pluginGrants, 0, 7), PAUSE_PERMISSION_ID);
+        _params.budget.permissions = _grants(bound(_budgetGrants, 0, 7), SET_SETTINGS_PERMISSION_ID);
+        (, IPluginSetup.PreparedSetupData memory _prepared) =
+            setup.prepareInstallation(address(dao), abi.encode(_params));
+
+        for (uint256 i; i < _prepared.permissions.length; ++i) {
+            assertTrue(_prepared.permissions[i].where != address(0), "blank target");
+            assertTrue(_prepared.permissions[i].who != address(0), "blank grantee");
+        }
     }
 
     function test_IdenticalDeclarationsCreateIsolatedActionsAndSplitters() public {
@@ -407,6 +435,17 @@ contract CapitalTreePluginSetupTest is Fixture {
         }
 
         return (CapitalTreePlugin(_pluginAddress), _prepared.helpers);
+    }
+
+    function _grants(uint256 _count, bytes32 _permissionId)
+        internal
+        view
+        returns (CapitalTreePluginSetup.Grant[] memory _list)
+    {
+        _list = new CapitalTreePluginSetup.Grant[](_count);
+        for (uint256 i; i < _count; ++i) {
+            _list[i] = CapitalTreePluginSetup.Grant(manager, _permissionId);
+        }
     }
 
     function _expectInstallRevert(CapitalTreePluginSetup.InstallParams memory _params, bytes memory _error) internal {
