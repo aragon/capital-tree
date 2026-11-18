@@ -107,6 +107,23 @@ contract LeafActionsTest is Fixture {
         burn.postconditions(address(0), _in, _out, _snapshot);
     }
 
+    function testFuzz_RevertWhen_TheBurnTakesMoreThanItsInput(uint256 _amount, uint256 _extra) public {
+        _amount = bound(_amount, 1, DAO_A - 1);
+        _extra = bound(_extra, 1, DAO_A - _amount);
+        Asset memory _in = Asset(tokenA, _amount);
+        Asset memory _out = Asset(tokenA, 0);
+        bytes memory _snapshot = burn.preconditions(address(0), "", _in, _out);
+        vm.prank(address(dao));
+        tokenA.burn(_amount + _extra);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BurnAction.Overspent.selector, address(tokenA), DAO_A - _amount, DAO_A - _amount - _extra
+            )
+        );
+        burn.postconditions(address(0), _in, _out, _snapshot);
+    }
+
     function testFuzz_RevertWhen_TheTokenIgnoresBurn(uint128 _amount) public {
         _amount = uint128(bound(_amount, 1, type(uint128).max));
         FallbackToken _token = new FallbackToken();
