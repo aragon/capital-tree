@@ -24,3 +24,12 @@ depth = 128
 
 [lint]
 lint_on_build = false
+
+# `forge test --mutate <file>`: per-mutant wall-clock limit in seconds
+[mutation]
+timeout = 60
+
+# `forge test --symbolic`: runs `check*`/`prove*` tests; needs the z3 binary
+[profile.default.symbolic]
+solver = "z3"
+timeout = 30
