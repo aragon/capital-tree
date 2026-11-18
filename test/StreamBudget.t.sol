@@ -158,6 +158,48 @@ contract StreamBudgetTest is Fixture {
         assertEq(_available(budget), _expected < DAO_A ? _expected : DAO_A);
     }
 
+    /// A rate setter rebases even when a cap hides growth: a lower rate must not shrink what accrued
+    function testFuzz_SetAmountPerEpochKeepsWhatACapHides(uint128 _newRate) public {
+        uint256 _cap = DAO_A / 2;
+        _newRate = uint128(bound(_newRate, 0, 1 ether));
+        vm.prank(manager);
+        budget.setMaxBudget(_cap);
+        vm.warp(block.timestamp + 20 * EPOCH);
+        assertEq(_available(budget), _cap);
+
+        vm.prank(manager);
+        budget.setAmountPerEpoch(_newRate);
+        assertEq(_available(budget), _cap);
+        assertEq(budget.baseAmount(), _cap);
+        assertEq(budget.baseTimestamp(), block.timestamp);
+    }
+
+    /// A longer epoch lowers the rate: it must not shrink what a cap hides either
+    function testFuzz_SetEpochIntervalKeepsWhatACapHides(uint64 _interval) public {
+        uint256 _cap = DAO_A / 2;
+        _interval = uint64(bound(_interval, 5 * EPOCH, type(uint64).max));
+        vm.prank(manager);
+        budget.setMaxBudget(_cap);
+        vm.warp(block.timestamp + 20 * EPOCH);
+        assertEq(_available(budget), _cap);
+
+        vm.prank(manager);
+        budget.setEpochInterval(_interval);
+        assertEq(_available(budget), _cap);
+        assertEq(budget.baseAmount(), _cap);
+        assertEq(budget.baseTimestamp(), block.timestamp);
+    }
+
+    function test_RevertWhen_EpochIntervalIsZero() public {
+        vm.prank(manager);
+        vm.expectRevert(StreamBudget.InvalidEpochInterval.selector);
+        budget.setEpochInterval(0);
+
+        StreamBudget _budget = StreamBudget(ProxyLib.deployMinimalProxy(address(new StreamBudget()), ""));
+        vm.expectRevert(StreamBudget.InvalidEpochInterval.selector);
+        _budget.initialize(dao, _noDeps(), abi.encode(tokenA, RATE, 0, 0));
+    }
+
     function test_RevertWhen_WriteCheckpointUnauthorized() public {
         vm.expectRevert(
             abi.encodeWithSelector(
