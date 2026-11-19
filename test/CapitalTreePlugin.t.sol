@@ -142,6 +142,14 @@ contract CapitalTreePluginTest is Fixture {
         _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidChild.selector, 0, 0));
     }
 
+    /// The root is the only node without a parent, so only the index order stops a cycle back to it
+    function test_RevertWhen_AChildPointsBackToTheRoot() public {
+        Node[] memory _tree = new Node[](2);
+        (_tree[0], _tree[1]) = (_then(keep, 1), _then(keep, 0));
+
+        _expectInitRevert(budget, _tree, abi.encodeWithSelector(CapitalTreePlugin.InvalidChild.selector, 1, 0));
+    }
+
     function test_RevertWhen_ANodeHasTwoParents() public {
         Node[] memory _tree = new Node[](3);
         (_tree[0], _tree[1], _tree[2]) = (_branch(NO_ACTION, 1, 500_000, 2, 500_000), _then(keep, 2), _leaf(keep));
