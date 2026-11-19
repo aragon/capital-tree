@@ -16,6 +16,9 @@ contract VaultDonateAction is LeafAction {
     /// @notice The vault the input is donated to. Its asset must be the input token.
     IDonationVault public vault;
 
+    /// @notice Thrown when the vault is not a contract
+    error InvalidVault();
+
     /// @notice Thrown when the input token isn't the vault's asset
     error WrongAsset();
 
@@ -26,8 +29,11 @@ contract VaultDonateAction is LeafAction {
     /// @param _dao The DAO donating
     /// @param _settings `abi.encode(IDonationVault vault)`: the trusted vault, whose asset must match the input token
     function initialize(IDAO _dao, address[] calldata, bytes calldata _settings) external initializer {
+        IDonationVault _vault = abi.decode(_settings, (IDonationVault));
+        if (address(_vault).code.length == 0) revert InvalidVault();
+
         __DaoAuthorizableUpgradeable_init(_dao);
-        vault = abi.decode(_settings, (IDonationVault));
+        vault = _vault;
     }
 
     /// @notice Reverts unless the input token is the vault's asset

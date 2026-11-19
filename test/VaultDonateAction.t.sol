@@ -178,6 +178,14 @@ contract VaultDonateActionTest is BuybackDonateFixture {
         assertEq(tokenA.balanceOf(address(dao)), DAO_A);
     }
 
+    function test_RevertWhen_TheVaultHasNoCode() public {
+        VaultDonateAction _action = VaultDonateAction(ProxyLib.deployMinimalProxy(address(new VaultDonateAction()), ""));
+        vm.expectRevert(VaultDonateAction.InvalidVault.selector);
+        _action.initialize(dao, new address[](0), abi.encode(address(0)));
+        vm.expectRevert(VaultDonateAction.InvalidVault.selector);
+        _action.initialize(dao, new address[](0), abi.encode(makeAddr("notAVault")));
+    }
+
     /// The asset check is an equality, whichever token address is lower
     function test_RevertWhen_TheInputIsNotTheVaultAssetInEitherOrder() public {
         Asset memory _none;
