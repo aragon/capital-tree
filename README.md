@@ -394,9 +394,6 @@ just test
 commands provided by [`just-foundry`](https://github.com/aragon/just-foundry). Plain
 `forge build` and `forge test` still work without selecting a network.
 
-[`docs/mutation-report.md`](docs/mutation-report.md) explains how to run mutation testing
-(`forge test --mutate`) to check the suite's strength, with the latest scores.
-
 `just switch <network>` changes the active network. Its RPC, chain and OSx addresses come from
 `lib/just-foundry/networks/`; `just switch <network> override` creates an editable local
 `.env.<network>` copy. Local `.env` files and generated logs are ignored by Git.
