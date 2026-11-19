@@ -1027,6 +1027,19 @@ contract CapitalTreePluginTest is Fixture {
         _filler.fillWithoutData();
     }
 
+    /// The error reports everything the DAO lost, even when that's most of its balance
+    function test_BudgetExceededReportsTheWholeSpend() public {
+        deal(address(tokenB), address(dao), RATE + 5 ether);
+        StreamBudget _budget = _deployStream(tokenB, RATE, 0);
+        OpenFillAction _sell = _deployOpenFill(_budget, tokenA);
+        MockFiller _filler = new MockFiller(_deployPlugin(_budget, _chain(_sell, _bad(BadAction.Mode.DrainB))));
+        tokenA.mint(address(_filler), DEMAND);
+        vm.warp(block.timestamp + EPOCH);
+
+        vm.expectRevert(abi.encodeWithSelector(CapitalTreePlugin.BudgetExceeded.selector, RATE, RATE + 1));
+        _filler.fillWithoutData();
+    }
+
     // =========================================================================================
     // Helpers
     // =========================================================================================
