@@ -52,6 +52,18 @@ contract LeafActionsTest is Fixture {
         _transfer.postconditions(address(0), _in, _out, _snapshot);
     }
 
+    /// The recipient may end up with more than the transfer, e.g. from another payment in the same block
+    function testFuzz_TransferPostconditionAcceptsMoreThanTheInput(uint128 _amount, uint128 _extra) public {
+        _amount = uint128(bound(_amount, 1, type(uint128).max));
+        _extra = uint128(bound(_extra, 1, type(uint128).max));
+        TransferAction _transfer = _deployTransfer(alice);
+        Asset memory _in = Asset(tokenA, _amount);
+        Asset memory _out = Asset(tokenA, 0);
+        bytes memory _snapshot = _transfer.preconditions(address(0), "", _in, _out);
+        tokenA.mint(alice, uint256(_amount) + _extra);
+        _transfer.postconditions(address(0), _in, _out, _snapshot);
+    }
+
     function testFuzz_RevertWhen_ATransferSilentlyFails(uint128 _amount) public {
         _amount = uint128(bound(_amount, 1, type(uint128).max));
         FalseReturnToken _token = new FalseReturnToken(0);
@@ -104,6 +116,23 @@ contract LeafActionsTest is Fixture {
         burn.postconditions(address(0), _in, _out, _snapshot);
         vm.prank(address(dao));
         tokenA.burn(_amount);
+        burn.postconditions(address(0), _in, _out, _snapshot);
+    }
+
+    function testFuzz_RevertWhen_TheBurnTakesMoreThanItsInput(uint256 _amount, uint256 _extra) public {
+        _amount = bound(_amount, 1, DAO_A - 1);
+        _extra = bound(_extra, 1, DAO_A - _amount);
+        Asset memory _in = Asset(tokenA, _amount);
+        Asset memory _out = Asset(tokenA, 0);
+        bytes memory _snapshot = burn.preconditions(address(0), "", _in, _out);
+        vm.prank(address(dao));
+        tokenA.burn(_amount + _extra);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BurnAction.Overspent.selector, address(tokenA), DAO_A - _amount, DAO_A - _amount - _extra
+            )
+        );
         burn.postconditions(address(0), _in, _out, _snapshot);
     }
 

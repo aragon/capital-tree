@@ -8,6 +8,7 @@ import {ProxyLib} from "@aragon/osx-commons-contracts/src/utils/deployment/Proxy
 import {StreamBudget} from "../src/budgets/StreamBudget.sol";
 import {OpenFillAction} from "../src/actions/OpenFillAction.sol";
 import {IFiller} from "../src/interfaces/IFiller.sol";
+import {IComponent} from "../src/interfaces/IComponent.sol";
 import {Asset} from "../src/lib/types.sol";
 import {SET_SETTINGS_PERMISSION_ID} from "../src/lib/constants.sol";
 import {Fixture} from "./helpers/Fixture.sol";
@@ -98,6 +99,23 @@ contract OpenFillActionTest is Fixture {
         _action.initialize(dao, _deps(address(budget)), abi.encode(IERC20(address(0xBEEF)), DEMAND));
     }
 
+    function test_RevertWhen_DependencyCountIsNotOne() public {
+        OpenFillAction _action = _clone();
+        address[] memory _two = new address[](2);
+        (_two[0], _two[1]) = (address(budget), address(budget));
+        vm.expectRevert(abi.encodeWithSelector(IComponent.WrongDependencyCount.selector, 1, 2));
+        _action.initialize(dao, _two, abi.encode(tokenB, DEMAND));
+
+        vm.expectRevert(abi.encodeWithSelector(IComponent.WrongDependencyCount.selector, 1, 0));
+        _action.initialize(dao, _noDeps(), abi.encode(tokenB, DEMAND));
+    }
+
+    function test_RevertWhen_BudgetIsZero() public {
+        OpenFillAction _action = _clone();
+        vm.expectRevert(OpenFillAction.NoBudget.selector);
+        _action.initialize(dao, _deps(address(0)), abi.encode(tokenB, DEMAND));
+    }
+
     function test_RevertWhen_ZeroDemand() public {
         vm.expectRevert(OpenFillAction.ZeroDemand.selector);
         vm.prank(manager);
@@ -126,6 +144,16 @@ contract OpenFillActionTest is Fixture {
         _balance = bound(_balance, 1, type(uint256).max);
         _offered = bound(_offered, 0, _balance);
         deal(address(tokenA), address(dao), _balance, true);
+        Asset memory _in = _input(_offered);
+        (Asset memory _output,) = action.build(filler, "", _in);
+        bytes memory _snapshot = action.preconditions(filler, "", _in, _output);
+        tokenB.mint(address(dao), DEMAND);
+        action.postconditions(filler, _in, _output, _snapshot);
+    }
+
+    /// An offer above the balance seen before leaves no floor to check, and must not underflow
+    function testFuzz_PostconditionsAcceptAnOfferAboveTheBalanceBefore(uint256 _offered) public {
+        _offered = bound(_offered, DAO_A + 1, type(uint256).max);
         Asset memory _in = _input(_offered);
         (Asset memory _output,) = action.build(filler, "", _in);
         bytes memory _snapshot = action.preconditions(filler, "", _in, _output);

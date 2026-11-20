@@ -139,6 +139,17 @@ contract WeightSplitterTest is Fixture {
         _splitter.setWeights(_three);
     }
 
+    function test_RevertWhen_NewWeightsShrinkTheCount() public {
+        uint32[] memory _three = new uint32[](3);
+        (_three[0], _three[1], _three[2]) = (400_000, 300_000, 300_000);
+        WeightSplitter _splitter = _deployWeightSplitter(_three);
+        dao.grant(address(_splitter), manager, SET_SETTINGS_PERMISSION_ID);
+
+        vm.expectRevert(abi.encodeWithSelector(WeightSplitter.WeightCountChanged.selector, 3, 2));
+        vm.prank(manager);
+        _splitter.setWeights(_pair(700_000, 300_000));
+    }
+
     function _expectInitRevert(uint32[] memory _weights) internal {
         WeightSplitter _splitter = WeightSplitter(ProxyLib.deployMinimalProxy(implementation, ""));
         vm.expectRevert(WeightSplitter.InvalidWeights.selector);

@@ -88,6 +88,20 @@ contract NativeEthTest is Fixture {
         _assertPayableCall(NativeAction.Mode.Work, true, balance);
     }
 
+    /// A value call longer than a selector carries arguments and goes through
+    function test_NodeCallsPayableFunctionWithArguments() public {
+        vm.deal(address(dao), 1 ether);
+        PayableTarget _target = new PayableTarget();
+        NativeAction _action = new NativeAction(address(dao), NativeAction.Mode.Work);
+        _action.setCall(address(_target), abi.encodeCall(PayableTarget.payWith, (42)));
+        CapitalTreePlugin _plugin = _deployPlugin(_deployBalanceBudget(tokenA), _chain(_action, keep));
+
+        _plugin.trigger("", noData);
+
+        assertEq(address(_target).balance, 1 ether);
+        assertEq(_target.argument(), 42);
+    }
+
     function _assertPayableCall(NativeAction.Mode _mode, bool _reenter, uint256 balance) internal {
         balance = bound(balance, 1 ether, type(uint256).max);
         vm.deal(address(dao), balance);
@@ -210,6 +224,12 @@ contract PayableTarget {
 
     function setPlugin(CapitalTreePlugin _plugin) external {
         plugin = _plugin;
+    }
+
+    uint256 public argument;
+
+    function payWith(uint256 _argument) external payable {
+        argument = _argument;
     }
 
     function pay() external payable {
